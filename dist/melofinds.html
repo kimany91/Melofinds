@@ -515,6 +515,34 @@ body.mobile.has-mini .toast { bottom: calc(158px + env(safe-area-inset-bottom, 0
 body.mobile.has-mini main { padding-bottom: 170px; }
 @media (prefers-reduced-motion: reduce) { .play .eq i { animation: none; } .mini { transition: none; } }
 
+/* Lien YouTube toujours visible sur chaque carte */
+.yt-link { position: absolute; right: 14px; bottom: 14px; z-index: 2; display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; border-radius: 999px; font-size: 12px; font-weight: 800; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); text-decoration: none; transition: color .2s, border-color .2s, background .2s; }
+.yt-link svg { width: 12px; height: 12px; }
+.yt-link:hover, .yt-link:focus-visible { color: var(--text); border-color: var(--line-2); background: var(--panel-3); }
+.card .meta .more { display: none; }
+.card .meta { padding-right: 96px; min-height: 26px; align-items: center; }
+.mini-ext { display: inline-flex; align-items: center; gap: 6px; }
+.mini-ext svg { width: 13px; height: 13px; }
+.mini.loading .mini-toggle { animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .55; } }
+body.mobile .mini-ext { padding: 9px; font-size: 0; gap: 0; }
+body.mobile .mini-ext svg { width: 16px; height: 16px; }
+
+/* Clé YouTube (version web) */
+.key-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.key-row input { flex: 1 1 220px; min-width: 0; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--text); font: 600 14px var(--f-mono); }
+.key-row input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Page Claude : renvoi vers la version web pour écouter */
+.web-tip { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; margin: 4px 0 0; font-size: 13px; color: var(--muted); text-align: center; }
+.web-tip svg { width: 14px; height: 14px; color: var(--accent); }
+.web-tip a { color: var(--accent); font-weight: 800; }
+.hero.compact .web-tip { display: none; }
+.notice .hint { margin: 2px 0 14px; }
+body.mobile .yt-link { right: 10px; bottom: 10px; padding: 6px; font-size: 0; gap: 0; }
+body.mobile .yt-link svg { width: 14px; height: 14px; }
+body.mobile .card .meta { padding-right: 34px; }
+
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -642,7 +670,7 @@ body.mobile.has-mini main { padding-bottom: 170px; }
     <div class="mini-text"><b id="miniTitle"></b><span id="miniSub"></span></div>
     <div class="mini-bar" id="miniBar" role="slider" aria-label="Position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0"><i id="miniFill"></i></div>
   </div>
-  <a class="mini-ext" id="miniExt" target="_blank" rel="noopener" hidden>Ouvrir sur YouTube</a>
+  <a class="mini-ext" id="miniExt" target="_blank" rel="noopener" aria-label="Ouvrir sur YouTube">YouTube<svg aria-hidden="true"><use href="#i-ext"/></svg></a>
   <button type="button" class="icon-btn mini-close" id="miniClose" aria-label="Arrêter la lecture"><svg><use href="#i-x"/></svg></button>
 </div>
 <div class="yt-host" id="ytHost" aria-hidden="true"></div>
@@ -2516,6 +2544,11 @@ const h = (tag, attrs = {}, ...kids) => {
   return el;
 };
 
+// Deux versions : la page Claude (recherche via le connecteur Parallel Search,
+// pas de lecteur possible) et la version web (API YouTube + lecteur intégré).
+const WEB = window.MF_TARGET === 'web';
+const WEB_URL = 'https://kimany91.github.io/Melofinds/';
+
 const local = {
   get(k, fallback) { try { const v = localStorage.getItem(`mf.${k}`); return v == null ? fallback : JSON.parse(v); } catch { return fallback; } },
   set(k, v) { try { localStorage.setItem(`mf.${k}`, JSON.stringify(v)); } catch { /* indisponible */ } },
@@ -2539,7 +2572,7 @@ function toast(msg, action) {
 
 const state = { history: local.get('history', []), beats: local.get('beats', []) };
 const MAX = { history: 80, beats: 120 };
-const DESC_MAX = 2500;
+const DESC_MAX = WEB ? 5000 : 2500;
 
 const persist = {
   mode: 'local', refs: {}, timers: {},
@@ -2605,7 +2638,11 @@ window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => { const d = detectDevice(); if (d !== device) { device = d; applyDevice(); } }, 200);
 });
-const LIMITS = () => (device === 'mobile' ? { firstQueries: 3, moreQueries: 3, read: 36 } : { firstQueries: 5, moreQueries: 4, read: 60 });
+// Version web : chaque recherche YouTube coûte 100 unités de quota (10 000 / jour),
+// mais elle rapporte 50 vidéos dont on lit toutes les descriptions.
+const LIMITS = () => (WEB
+  ? (device === 'mobile' ? { firstQueries: 3, moreQueries: 2, read: 120 } : { firstQueries: 4, moreQueries: 3, read: 160 })
+  : (device === 'mobile' ? { firstQueries: 3, moreQueries: 3, read: 36 } : { firstQueries: 5, moreQueries: 4, read: 60 }));
 
 // ---------------------------------------------------------------------------
 // Navigation
@@ -2723,7 +2760,10 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
   const vid = ytIdOf(item);
   const card = h('article', { class: `card cat-${cat}${isNew ? ' new' : ''}${item.status === 'unread' ? ' unread' : ''}${vid && vid === player.vid ? ' playing' : ''}`, style: `--i:${index}`, 'data-vid': vid });
   const style = r.styles?.[0]?.label || 'Type beat';
-  card.append(h('button', { type: 'button', class: 'cover', 'aria-label': `Écouter « ${item.title} »`, onclick: () => playItem(item) },
+  const coverAttrs = WEB
+    ? { type: 'button', class: 'cover', 'aria-label': `Écouter « ${item.title} »`, onclick: () => playItem(item), onpointerenter: () => warmPlayer(item), onpointerdown: () => warmPlayer(item), onfocus: () => warmPlayer(item) }
+    : { class: 'cover', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Écouter « ${item.title} » sur YouTube` };
+  card.append(h(WEB ? 'button' : 'a', coverAttrs,
     h('span', { class: 'lic-chip' }, chipLabel(L)),
     item.status === 'unread' ? h('span', { class: 'unread-chip' }, 'non vérifiée') : null,
     h('span', { class: 'play' }, icon('play'), icon('pause'), h('span', { class: 'eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'))),
@@ -2738,6 +2778,7 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
     h('h3', { class: 'title' }, item.title),
     line.text ? h('p', { class: `line${line.warn ? ' warn' : ''}` }, line.text) : null,
     h('div', { class: 'meta' }, h('span', {}, meta || ' '), h('span', { class: 'more' }, 'Détails →')));
+  card.append(h('a', { class: 'yt-link', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Ouvrir « ${item.title} » sur YouTube` }, 'YouTube', icon('ext')));
   const open = () => openBeat(item, plan);
   main.addEventListener('click', open);
   main.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
@@ -2746,47 +2787,44 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Lecteur intégré : un lecteur YouTube invisible (rien ne s'ouvre, rien ne
-// s'agrandit), piloté par la mini-barre en bas. Si le navigateur ou la page
-// bloquent la lecture, on le détecte et on le dit au lieu de rester muet.
+// Lecteur intégré (version web) : un lecteur YouTube invisible, piloté par la
+// mini-barre. Il reste chargé : passer d'une prod à l'autre est instantané.
+// Il se prépare dès que la souris passe sur une prod (ou au toucher).
+// La page Claude interdit tout lecteur externe : là-bas, on ouvre YouTube.
 
 function ytIdOf(item) {
   const m = (item?.url || '').match(/[?&]v=([\w-]{11})/);
   if (m) return m[1];
   return /^[\w-]{11}$/.test(item?.id || '') ? item.id : null;
 }
+const ytWatchUrl = (item) => item?.url || (ytIdOf(item) ? `https://www.youtube.com/watch?v=${ytIdOf(item)}` : ytSearchUrl(item?.title || ''));
 const YT_ERRORS = {
   2: 'Vidéo introuvable.',
   5: 'Ce navigateur ne peut pas lire cette vidéo.',
   100: 'Vidéo supprimée ou privée.',
-  101: 'Le beatmaker a désactivé la lecture en dehors de YouTube.',
-  150: 'Le beatmaker a désactivé la lecture en dehors de YouTube.',
+  101: 'Le beatmaker a interdit la lecture en dehors de YouTube.',
+  150: 'Le beatmaker a interdit la lecture en dehors de YouTube.',
   153: 'YouTube refuse la lecture intégrée sur cette page.',
 };
-const player = { item: null, vid: null, frame: null, ready: false, state: -1, time: 0, dur: 0, status: 'idle', timers: [], listen: null };
+const player = { item: null, vid: null, frame: null, ready: false, loadedVid: null, state: -1, time: 0, dur: 0, status: 'idle', message: '', timers: [], listen: null };
 const fmtTime = (s) => (s > 0 ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '0:00');
 const isPlaying = () => player.state === 1 || player.state === 3;
 
 function ytSend(func, args = []) {
   try { player.frame?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func, args, id: 1, channel: 'widget' }), '*'); } catch { /* cadre parti */ }
 }
-function playerReset() {
-  player.timers.forEach(clearTimeout);
+function later(fn, ms) { player.timers.push(setTimeout(fn, ms)); }
+function clearLater() { player.timers.forEach(clearTimeout); player.timers = []; }
+function destroyFrame() {
   clearInterval(player.listen);
-  player.timers = [];
   player.listen = null;
   player.frame?.remove();
-  Object.assign(player, { frame: null, ready: false, state: -1, time: 0, dur: 0 });
+  Object.assign(player, { frame: null, ready: false, loadedVid: null, state: -1 });
 }
-function later(fn, ms) { player.timers.push(setTimeout(fn, ms)); }
 
-function playItem(item) {
-  const vid = ytIdOf(item);
-  if (!vid) { toast('Pas de vidéo YouTube pour cette prod'); return; }
-  if (player.vid === vid && player.frame) { togglePlay(); return; }
-  playerReset();
-  Object.assign(player, { item, vid, status: 'loading' });
-  const params = new URLSearchParams({ autoplay: '1', enablejsapi: '1', controls: '0', playsinline: '1', rel: '0', iv_load_policy: '3', fs: '0', disablekb: '1' });
+function createFrame(vid, autoplay) {
+  destroyFrame();
+  const params = new URLSearchParams({ autoplay: autoplay ? '1' : '0', enablejsapi: '1', controls: '0', playsinline: '1', rel: '0', iv_load_policy: '3', fs: '0', disablekb: '1' });
   if (location.origin && location.origin !== 'null') params.set('origin', location.origin);
   const f = document.createElement('iframe');
   f.src = `https://www.youtube-nocookie.com/embed/${vid}?${params}`;
@@ -2795,46 +2833,86 @@ function playItem(item) {
   f.title = 'Lecteur audio';
   f.tabIndex = -1;
   // Comme l'API officielle : on se signale jusqu'à ce que le lecteur réponde.
-  const hello = () => { try { f.contentWindow?.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*'); } catch { /* pas encore prêt */ } };
+  const hello = () => { try { f.contentWindow?.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*'); } catch { /* pas prêt */ } };
   f.addEventListener('load', hello);
-  player.listen = setInterval(hello, 300);
+  player.listen = setInterval(hello, 250);
   $('#ytHost').replaceChildren(f);
   player.frame = f;
-  later(() => { if (!player.ready) playerBlocked('La page bloque le lecteur YouTube.'); }, 8000);
+  player.loadedVid = vid;
+}
+
+// Préparer le lecteur avant le clic (survol, toucher, focus)
+function warmPlayer(item) {
+  if (!WEB || player.frame) return;
+  const vid = ytIdOf(item);
+  if (vid) createFrame(vid, false);
+}
+// Dès que des prods s'affichent, on charge le lecteur en avance (sans son)
+function prewarmPlayer() {
+  if (!WEB || player.frame) return;
+  setTimeout(() => {
+    const first = $('#grid .card[data-vid]') || $('#savedGrid .card[data-vid]');
+    if (first && !player.frame) createFrame(first.dataset.vid, false);
+  }, 1200);
+}
+
+function playItem(item) {
+  const vid = ytIdOf(item);
+  if (!vid) { toast('Pas de vidéo YouTube pour cette prod'); return; }
+  if (player.item && player.vid === vid && player.frame && player.status !== 'blocked') { togglePlay(); return; }
+  clearLater();
+  Object.assign(player, { item, vid, status: 'loading', message: '', time: 0, dur: 0 });
+  if (!player.frame) createFrame(vid, true);
+  else if (player.ready) startVideo();
+  // sinon : le lecteur finit de charger, onPlayerReady lancera la vidéo
+  later(() => { if (!player.ready) playerBlocked('Le lecteur YouTube ne répond pas. Vérifie ta connexion.', true); }, 9000);
   renderMini();
+}
+
+function startVideo() {
+  if (player.loadedVid !== player.vid) {
+    player.state = -1;
+    ytSend('loadVideoById', [player.vid, 0]);
+    player.loadedVid = player.vid;
+  } else {
+    ytSend('playVideo');
+  }
+  // Lecture auto refusée (souvent sur iPhone) : on relance, puis on demande un toucher.
+  later(() => { if (player.item && !isPlaying() && player.state !== 0 && player.state !== 2) ytSend('playVideo'); }, 2200);
+  later(() => { if (player.item && !isPlaying() && player.state !== 0 && player.state !== 2) { player.status = 'tap'; renderMini(); } }, 4500);
 }
 
 function onPlayerReady() {
   if (player.ready) return;
   player.ready = true;
   clearInterval(player.listen);
-  player.status = 'ready';
-  // Lecture auto refusée (souvent sur iPhone) : on relance, puis on demande un toucher.
-  later(() => { if (!isPlaying() && player.state !== 0 && player.state !== 2) ytSend('playVideo'); }, 1800);
-  later(() => { if (!isPlaying() && player.state !== 0 && player.state !== 2) { player.status = 'tap'; renderMini(); } }, 4200);
+  if (player.item && player.status !== 'blocked') startVideo();
   renderMini();
 }
 
 function togglePlay() {
-  if (!player.frame) { if (player.item) playItem(player.item); return; }
+  if (!player.item) return;
+  if (!player.frame || player.status === 'blocked') { const it = player.item; player.item = null; playItem(it); return; }
   if (isPlaying()) { ytSend('pauseVideo'); player.state = 2; renderMini(); return; }
   if (player.state === 0) ytSend('seekTo', [0, true]);
   ytSend('playVideo');
   if (player.status === 'tap') {
-    later(() => { if (!isPlaying()) playerBlocked('Ton navigateur bloque la lecture dans cette page.'); }, 2500);
+    later(() => { if (player.item && !isPlaying()) playerBlocked('Ton navigateur bloque le son ici. Ouvre la prod sur YouTube.'); }, 2500);
   }
 }
 
-function playerBlocked(msg) {
-  playerReset();
+function playerBlocked(msg, killFrame = false) {
+  clearLater();
+  if (killFrame) destroyFrame(); else ytSend('stopVideo');
   player.status = 'blocked';
   player.message = msg;
   renderMini();
 }
 
 function stopPlayer() {
-  playerReset();
-  Object.assign(player, { item: null, vid: null, status: 'idle' });
+  clearLater();
+  ytSend('stopVideo');
+  Object.assign(player, { item: null, vid: null, status: 'idle', time: 0, dur: 0 });
   renderMini();
 }
 
@@ -2850,32 +2928,35 @@ window.addEventListener('message', (e) => {
     if (typeof i.playerState === 'number') player.state = i.playerState;
     if (typeof i.currentTime === 'number') player.time = i.currentTime;
     if (typeof i.duration === 'number' && i.duration > 0) player.dur = i.duration;
-    if (!player.ready && (i.playerState === 1 || typeof i.currentTime === 'number')) onPlayerReady();
+    if (!player.ready) onPlayerReady();
   }
   if (d.event === 'onStateChange' && typeof d.info === 'number') player.state = d.info;
-  if (d.event === 'onError') { playerBlocked(YT_ERRORS[d.info] || 'Lecture impossible ici.'); return; }
-  if (isPlaying() && player.status !== 'ready') player.status = 'ready';
-  renderMini();
+  if (d.event === 'onError') { if (player.item) playerBlocked(YT_ERRORS[d.info] || 'Lecture impossible ici. Ouvre la prod sur YouTube.'); return; }
+  if (isPlaying() && player.status !== 'blocked') player.status = 'ready';
+  if (player.item) renderMini();
 });
 
+let miniHideTimer = null;
 function renderMini() {
   const mini = $('#mini');
   const on = Boolean(player.item);
   document.body.classList.toggle('has-mini', on);
+  clearTimeout(miniHideTimer);
   if (!on) {
     mini.classList.remove('show');
-    later(() => { if (!player.item) mini.hidden = true; }, 320);
+    miniHideTimer = setTimeout(() => { if (!player.item) mini.hidden = true; }, 320);
   } else if (mini.hidden) {
     mini.hidden = false;
     requestAnimationFrame(() => mini.classList.add('show'));
-  }
+  } else mini.classList.add('show');
   if (on) {
     const playing = isPlaying();
     mini.classList.toggle('playing', playing);
     mini.classList.toggle('blocked', player.status === 'blocked');
+    mini.classList.toggle('loading', player.status === 'loading' && !playing);
     $('#miniTitle').textContent = player.item.title || 'Prod';
     const sub = player.status === 'blocked' ? player.message
-      : player.status === 'loading' ? 'Chargement…'
+      : player.status === 'loading' && !playing ? 'Chargement…'
       : player.status === 'tap' && !playing ? 'Touche ▶ pour lancer le son'
       : player.state === 0 ? 'Terminé'
       : `${fmtTime(player.time)} / ${fmtTime(player.dur)}`;
@@ -2883,9 +2964,7 @@ function renderMini() {
     const pct = player.dur ? Math.min(100, (player.time / player.dur) * 100) : 0;
     $('#miniFill').style.width = `${pct}%`;
     $('#miniBar').setAttribute('aria-valuenow', String(Math.round(pct)));
-    const ext = $('#miniExt');
-    ext.hidden = player.status !== 'blocked';
-    ext.href = player.item.url || `https://www.youtube.com/watch?v=${player.vid}`;
+    $('#miniExt').href = ytWatchUrl(player.item);
     const tg = $('#miniToggle');
     tg.hidden = player.status === 'blocked';
     tg.setAttribute('aria-label', playing ? 'Pause' : 'Lecture');
@@ -2919,7 +2998,7 @@ $('#miniBar').addEventListener('keydown', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.code !== 'Space' || !player.item || player.status === 'blocked') return;
-  if (e.target.closest('input, textarea, select, button, [contenteditable], [role="button"], [role="slider"]')) return;
+  if (e.target.closest('input, textarea, select, button, a, [contenteditable], [role="button"], [role="slider"]')) return;
   e.preventDefault();
   togglePlay();
 });
@@ -2977,10 +3056,11 @@ function openBeat(item, plan) {
     verdictBox(r.license, item.status === 'unread'),
     h('div', {}, h('h3', { class: 'd-title' }, item.title), h('p', { class: 'd-meta' }, [item.views ? `${item.views} vues` : null, item.age].filter(Boolean).join(' · ') || 'YouTube')),
     h('div', { class: 'd-actions' },
-      ytIdOf(item) ? h('button', { type: 'button', class: 'primary', onclick: () => playItem(item) }, icon('play'), 'Écouter') : null,
+      WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'primary', onclick: () => playItem(item) }, icon('play'), 'Écouter') : null,
+      !WEB ? h('a', { class: 'primary', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, icon('play'), 'Écouter sur YouTube') : null,
       saveBtn,
       item.url ? h('button', { type: 'button', class: 'ghost', onclick: () => copyText(item.url) }, 'Copier le lien') : null),
-    item.url ? h('a', { class: 'link d-yt', href: item.url, target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube', icon('ext')) : null,
+    WEB ? h('a', { class: 'link d-yt', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube', icon('ext')) : null,
     ...beatDetails(item, r, findTerms()),
     claude,
   ]);
@@ -3045,9 +3125,132 @@ function errorKind(e) {
     case 'server_not_connected': case 'server_not_found': case 'selection_required': return 'connect';
     case 'not_in_manifest': case 'approval_required': case 'consent_required': case 'blocked_by_policy': return 'denied';
     case 'needs_reauth': return 'reauth';
+    case 'yt_nokey': return 'ytkey';
+    case 'yt_key': return 'ytkey-bad';
+    case 'yt_quota': return 'quota';
+    case 'yt_disabled': return 'ytdisabled';
+    case 'yt_referer': return 'ytreferer';
     case 'not_granted': case 'capability_disabled': case 'capability_removed': return 'unavailable';
     default: return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Version web : YouTube Data API v3 (clé gratuite de l'utilisateur, gardée dans
+// ce navigateur). search.list → 50 vidéos par recherche, videos.list → la
+// description COMPLÈTE de chaque vidéo (rien d'illisible).
+
+const ytKey = () => String(local.get('ytKey', '') || '');
+async function ytApi(path, params) {
+  const url = new URL(`https://www.googleapis.com/youtube/v3/${path}`);
+  for (const [k, v] of Object.entries({ ...params, key: ytKey() })) url.searchParams.set(k, v);
+  let res;
+  try { res = await fetch(url); } catch { throw { code: 'yt_network', message: 'Pas de connexion à YouTube.' }; }
+  const body = await res.json().catch(() => ({}));
+  if (res.ok) return body;
+  const err = body?.error || {};
+  const reason = `${err.errors?.[0]?.reason || ''} ${err.status || ''} ${(err.details || []).map((d) => d.reason || '').join(' ')}`;
+  const msg = String(err.message || res.statusText || '');
+  let code = 'yt_error';
+  if (/quotaExceeded|dailyLimitExceeded|rateLimitExceeded/i.test(reason)) code = 'yt_quota';
+  else if (/REFERER|referer/i.test(`${reason} ${msg}`)) code = 'yt_referer';
+  else if (/accessNotConfigured|SERVICE_DISABLED|has not been used|is disabled/i.test(`${reason} ${msg}`)) code = 'yt_disabled';
+  else if (/keyInvalid|API_KEY_INVALID|API key not valid|badRequest/i.test(`${reason} ${msg}`)) code = 'yt_key';
+  throw { code, message: msg };
+}
+function decodeHtml(s) { const t = document.createElement('textarea'); t.innerHTML = s; return t.value; }
+function fmtViews(n) {
+  n = Number(n);
+  if (!Number.isFinite(n)) return null;
+  if (n < 1000) return String(n);
+  if (n < 1e6) return `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0).replace(/\.0$/, '').replace('.', ',')} k`;
+  return `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0).replace(/\.0$/, '').replace('.', ',')} M`;
+}
+function ageFrom(iso) {
+  const t = Date.parse(iso || '');
+  if (!t) return null;
+  const d = Math.max(0, Math.floor((Date.now() - t) / 864e5));
+  if (d < 1) return 'aujourd’hui';
+  if (d < 7) return `il y a ${d} j`;
+  if (d < 31) return `il y a ${Math.floor(d / 7)} sem.`;
+  if (d < 365) return `il y a ${Math.floor(d / 30.4)} mois`;
+  const y = Math.floor(d / 365);
+  return `il y a ${y} an${y > 1 ? 's' : ''}`;
+}
+
+async function webSearch(queries, add, before) {
+  if (!ytKey()) throw { code: 'yt_nokey' };
+  let doneQ = 0;
+  let failures = 0;
+  let firstErr = null;
+  await pool(queries, 4, async (q) => {
+    try {
+      const b = await ytApi('search', { part: 'snippet', type: 'video', videoEmbeddable: 'true', maxResults: '50', q });
+      for (const it of b.items || []) if (it.id?.videoId) add({ id: it.id.videoId, title: decodeHtml(it.snippet?.title || '') }, q);
+    } catch (e) { if (errorKind(e)) throw e; failures++; firstErr ||= e; }
+    doneQ++;
+    setStatus(`Je cherche sur YouTube… ${session.items.size - before} vidéos trouvées`, 0.08 + 0.3 * (doneQ / queries.length));
+  });
+  const pending = [...session.items.values()].filter((i) => i.status === 'pending').slice(0, LIMITS().read);
+  if (!pending.length) {
+    if (failures === queries.length && firstErr) throw firstErr;
+    setStatus('Aucune nouvelle vidéo pour ces recherches. Essaie d’autres mots.', 1, true);
+    return false;
+  }
+  let read = 0;
+  const total = pending.length;
+  const progress = () => setStatus(`${total} vidéos trouvées · je lis les descriptions (${read}/${total})`, 0.4 + 0.6 * (read / total));
+  progress();
+  await pool(chunk(pending, 50), 4, async (batch) => {
+    let found = new Map();
+    try {
+      const b = await ytApi('videos', { part: 'snippet,statistics', id: batch.map((i) => i.id).join(','), maxResults: '50' });
+      found = new Map((b.items || []).map((v) => [v.id, v]));
+    } catch (e) { if (errorKind(e)) throw e; }
+    for (const item of batch) {
+      const v = found.get(item.id);
+      if (v) {
+        item.title = v.snippet?.title || item.title;
+        item.description = String(v.snippet?.description || '').slice(0, DESC_MAX);
+        item.views = fmtViews(v.statistics?.viewCount);
+        item.age = ageFrom(v.snippet?.publishedAt);
+        item.status = 'done';
+      } else item.status = 'unread';
+      read++;
+    }
+    progress();
+    renderResults();
+  });
+  return true;
+}
+
+function keyNotice(title, text) {
+  const input = h('input', { id: 'ytKeyInput', type: 'text', placeholder: 'AIza…', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Clé YouTube' });
+  input.value = ytKey();
+  const save = () => {
+    const v = input.value.trim();
+    if (!/^AIza[\w-]{20,}$/.test(v)) { toast('Une clé YouTube commence par « AIza »'); input.focus(); return; }
+    local.set('ytKey', v);
+    showNotice(null);
+    toast('Clé enregistrée');
+    if (promptEl.value.trim()) startSearch(); else promptEl.focus();
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+  return h('div', { class: 'notice' },
+    h('h3', {}, title),
+    h('p', {}, text),
+    h('ol', {},
+      h('li', {}, 'Ouvre Google Cloud (bouton ci-dessous) et connecte-toi avec ton compte Google. Crée un projet si on te le demande : c’est gratuit, sans carte bancaire.'),
+      h('li', {}, 'Sur la page « YouTube Data API v3 », clique sur Activer.'),
+      h('li', {}, 'Va dans Identifiants → Créer des identifiants → Clé API, puis copie la clé et colle-la ici.')),
+    h('div', { class: 'key-row' }, input, h('button', { type: 'button', class: 'primary', onclick: save }, 'Enregistrer')),
+    h('p', { class: 'hint' }, 'La clé reste dans ce navigateur. Pour la protéger : dans Google Cloud, ouvre la clé → Restrictions d’application → Sites web → ajoute kimany91.github.io/*'),
+    h('div', { class: 'actions' }, h('a', { class: 'ghost', href: 'https://console.cloud.google.com/apis/library/youtube.googleapis.com', target: '_blank', rel: 'noopener' }, 'Ouvrir Google Cloud', icon('ext'))));
+}
+function openKeySettings() {
+  showView('search');
+  $('#notice').replaceChildren(keyNotice('Ta clé YouTube', 'Colle une nouvelle clé pour la remplacer.'));
+  $('#notice').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 // ---------------------------------------------------------------------------
@@ -3206,7 +3409,21 @@ function showNotice(kind, extra) {
   if (!kind) { box.replaceChildren(); return; }
   const retry = h('button', { type: 'button', class: 'primary', onclick: () => { showNotice(null); startSearch(); } }, 'Réessayer');
   let n;
-  if (kind === 'connect') {
+  if (kind === 'ytkey') {
+    n = keyNotice('Dernière étape : ta clé YouTube gratuite', 'Melofinds cherche directement dans YouTube et lit la description complète de chaque prod. YouTube demande une clé gratuite (5 minutes, une seule fois).');
+  } else if (kind === 'ytkey-bad') {
+    n = keyNotice('Cette clé YouTube ne marche pas', 'YouTube refuse la clé. Vérifie que tu l’as copiée en entier, ou crée-en une nouvelle.');
+  } else if (kind === 'ytdisabled') {
+    n = keyNotice('Active « YouTube Data API v3 »', 'La clé existe, mais l’API YouTube n’est pas activée dans ton projet Google Cloud. Ouvre Google Cloud, clique sur Activer, attends une minute et réessaie.');
+    n.querySelector('.actions').prepend(retry);
+  } else if (kind === 'ytreferer') {
+    n = keyNotice('La clé est bloquée pour ce site', 'Dans Google Cloud, ouvre ta clé → Restrictions d’application → Sites web, et ajoute kimany91.github.io/* (ou retire la restriction).');
+    n.querySelector('.actions').prepend(retry);
+  } else if (kind === 'quota') {
+    n = h('div', { class: 'notice' }, h('h3', {}, 'Quota YouTube du jour épuisé'),
+      h('p', {}, 'YouTube donne 10 000 unités par jour et par clé, soit environ 25 recherches. Le compteur repart à zéro à 9 h (heure de Paris). Tes favoris et l’historique restent dispo.'),
+      h('div', { class: 'actions' }, h('button', { type: 'button', class: 'ghost', onclick: openKeySettings }, 'Utiliser une autre clé')));
+  } else if (kind === 'connect') {
     n = h('div', { class: 'notice' }, h('h3', {}, 'Branche Parallel Search pour lancer la recherche'),
       h('p', {}, 'C’est le connecteur gratuit qui permet à Melofinds de lire YouTube. Sans compte ni clé, à faire une seule fois :'),
       h('ol', {}, h('li', {}, 'claude.ai → Paramètres → Connecteurs'), h('li', {}, 'Parcourir les connecteurs → Parallel Search → Connecter'), h('li', {}, 'Reviens ici et clique sur Réessayer')),
@@ -3277,6 +3494,9 @@ async function runSearch(first) {
       if (cur) { if (!cur.foundBy.includes(q)) cur.foundBy.push(q); if (!cur.snippet && snippet) cur.snippet = snippet; return; }
       session.items.set(v.id, { id: v.id, url: `https://www.youtube.com/watch?v=${v.id}`, title: v.title || 'Vidéo YouTube', views: v.views || null, age: v.age || null, foundBy: [q], status: 'pending', description: '', snippet });
     };
+    if (WEB) {
+      if (!(await webSearch(queries, add, before))) return;
+    } else {
     const objective = `Vidéos YouTube de type beats (instrumentales rap) pour : ${session.prompt}. Avec les conditions de licence écrites dans la description.`;
     searchTask = searchSnippets(queries, objective)
       .then((list) => { list.forEach((v) => add(v, queries[0], v.text)); return null; })
@@ -3328,6 +3548,7 @@ async function runSearch(first) {
       progress();
       renderResults();
     });
+    }
     const all = [...session.items.values()].filter((i) => i.status !== 'pending');
     const unread = all.filter((i) => i.status === 'unread').length;
     setStatus(`${all.length} prods · ${all.length - unread} descriptions lues et vérifiées${unread ? ` · ${unread} illisibles` : ''}`, 1, true);
@@ -3344,6 +3565,7 @@ async function runSearch(first) {
     $('#moreBtn').disabled = false;
     clearSkeletons();
     renderResults();
+    prewarmPlayer();
   }
 }
 
@@ -3505,6 +3727,7 @@ function restoreSession() {
   const unread = s.items.filter((i) => i.status === 'unread').length;
   setStatus(`${s.items.length} prods · ${s.items.length - unread} descriptions lues et vérifiées`, 1, true);
   renderResults();
+  prewarmPlayer();
 }
 
 // ---------------------------------------------------------------------------
@@ -3709,6 +3932,19 @@ async function askClaude(item, slot) {
 // ---------------------------------------------------------------------------
 // Démarrage
 
+function setupTarget() {
+  document.body.classList.add(WEB ? 'web' : 'claude-page');
+  if (WEB) {
+    const keyBtn = h('button', { type: 'button', class: 'link', id: 'keyBtn', onclick: openKeySettings }, 'Clé YouTube');
+    $('.results-foot').append(keyBtn);
+    if (!ytKey()) showNotice('ytkey');
+    $('.hero-sub').textContent = 'Décris la vibe ou cite un rappeur (Luther, Damso, Bu$hi…). Je trouve les type beats sur YouTube, je lis chaque description pour vérifier la licence, et tu écoutes direct ici.';
+  } else {
+    $('#hero').append(h('p', { class: 'web-tip' }, icon('play'), 'Pour écouter les prods sans quitter l’app, ouvre ',
+      h('a', { href: WEB_URL, target: '_blank', rel: 'noopener' }, 'Melofinds Web'), '. La page Claude interdit les lecteurs vidéo.'));
+  }
+}
+
 applyDevice();
 syncBpmPill();
 syncVerifiedPill();
@@ -3719,6 +3955,7 @@ renderSavedSearches();
 updateDots();
 setSeg('prods');
 showView(location.hash.slice(1) || local.get('view', 'search'));
+setupTarget();
 persist.init();
 window.claude?.use?.('sample').then((s) => { sampleFn = s || null; }).catch(() => {});
 })();

@@ -53,6 +53,20 @@ dans le navigateur, sur PC comme sur mobile.
 Le code de cette page est dans `artifact/` ; `npm run build:artifact`
 produit `dist/melofinds.html` (même moteur que l'appli, tout en un fichier).
 
+## Version web (pour écouter les prods dans l'app)
+
+La page Claude interdit tout lecteur vidéo. La version web n'a pas cette limite :
+un clic sur une prod lance le son dans la page (lecteur YouTube caché + mini-barre),
+avec toujours un bouton « YouTube » pour ouvrir la vidéo.
+
+- Adresse : https://kimany91.github.io/Melofinds/
+- Fichier : `docs/index.html` (généré par `npm run build:artifact`)
+- Mise en ligne (une fois) : GitHub → Settings → Pages → « Deploy from a branch »
+  → choisir la branche qui contient `docs/` et le dossier `/docs` → Save.
+- Recherche : YouTube Data API v3 avec ta clé gratuite (collée dans l'app, gardée
+  dans ton navigateur). Chaque recherche lit la description complète de toutes les
+  vidéos. Quota : environ 25 recherches par jour et par clé.
+
 ## Lancer l'app complète (recherche YouTube automatique)
 
 Il faut [Node.js](https://nodejs.org) 18 ou plus. Aucune dépendance à installer.

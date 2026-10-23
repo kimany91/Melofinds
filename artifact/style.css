@@ -508,3 +508,31 @@ body.mobile .mini { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); gap: 
 body.mobile.has-mini .toast { bottom: calc(158px + env(safe-area-inset-bottom, 0px)); }
 body.mobile.has-mini main { padding-bottom: 170px; }
 @media (prefers-reduced-motion: reduce) { .play .eq i { animation: none; } .mini { transition: none; } }
+
+/* Lien YouTube toujours visible sur chaque carte */
+.yt-link { position: absolute; right: 14px; bottom: 14px; z-index: 2; display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; border-radius: 999px; font-size: 12px; font-weight: 800; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); text-decoration: none; transition: color .2s, border-color .2s, background .2s; }
+.yt-link svg { width: 12px; height: 12px; }
+.yt-link:hover, .yt-link:focus-visible { color: var(--text); border-color: var(--line-2); background: var(--panel-3); }
+.card .meta .more { display: none; }
+.card .meta { padding-right: 96px; min-height: 26px; align-items: center; }
+.mini-ext { display: inline-flex; align-items: center; gap: 6px; }
+.mini-ext svg { width: 13px; height: 13px; }
+.mini.loading .mini-toggle { animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .55; } }
+body.mobile .mini-ext { padding: 9px; font-size: 0; gap: 0; }
+body.mobile .mini-ext svg { width: 16px; height: 16px; }
+
+/* Clé YouTube (version web) */
+.key-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.key-row input { flex: 1 1 220px; min-width: 0; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--text); font: 600 14px var(--f-mono); }
+.key-row input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Page Claude : renvoi vers la version web pour écouter */
+.web-tip { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; margin: 4px 0 0; font-size: 13px; color: var(--muted); text-align: center; }
+.web-tip svg { width: 14px; height: 14px; color: var(--accent); }
+.web-tip a { color: var(--accent); font-weight: 800; }
+.hero.compact .web-tip { display: none; }
+.notice .hint { margin: 2px 0 14px; }
+body.mobile .yt-link { right: 10px; bottom: 10px; padding: 6px; font-size: 0; gap: 0; }
+body.mobile .yt-link svg { width: 14px; height: 14px; }
+body.mobile .card .meta { padding-right: 34px; }

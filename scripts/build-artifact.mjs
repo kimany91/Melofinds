@@ -1,8 +1,9 @@
 // Assemble la version « page Claude » de Melofinds en UN seul fichier HTML :
 // le moteur (src/core) + les prods d'exemple + l'interface (artifact/).
-//   node scripts/build-artifact.mjs   →   dist/melofinds.html
+//   node scripts/build-artifact.mjs   →   dist/melofinds.html (page Claude)
+//                                     →   docs/index.html (version web, GitHub Pages)
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
@@ -43,3 +44,31 @@ const html = read('artifact/template.html')
 mkdirSync(join(ROOT, 'dist'), { recursive: true });
 writeFileSync(join(ROOT, 'dist/melofinds.html'), html);
 console.log(`dist/melofinds.html (${(html.length / 1024).toFixed(0)} Ko)`);
+
+// Version web (GitHub Pages, dossier docs/) : même interface, page complète,
+// recherche via l'API YouTube et lecteur intégré (interdit dans la page Claude).
+const webHead = [
+  '<!doctype html>',
+  '<html lang="fr">',
+  '<head>',
+  '<meta charset="utf-8">',
+  '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">',
+  '<meta name="description" content="Trouve des prods rap sur YouTube, vérifie la licence (free for profit, up to, payant) et écoute-les direct.">',
+  '<meta name="theme-color" content="#0b0c10">',
+  '<link rel="icon" href="icon.svg" type="image/svg+xml">',
+  '<link rel="preconnect" href="https://www.googleapis.com">',
+  '<link rel="preconnect" href="https://www.youtube-nocookie.com">',
+  '<link rel="preconnect" href="https://www.youtube.com">',
+  '<link rel="preconnect" href="https://i.ytimg.com">',
+  '<link rel="preconnect" href="https://www.google.com">',
+  '<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>',
+  '<script>window.MF_TARGET = "web";</script>',
+  '</head>',
+  '<body>',
+].join('\n');
+const web = `${webHead}\n${html}\n</body>\n</html>\n`;
+mkdirSync(join(ROOT, 'docs'), { recursive: true });
+writeFileSync(join(ROOT, 'docs/index.html'), web);
+writeFileSync(join(ROOT, 'docs/.nojekyll'), '');
+copyFileSync(join(ROOT, 'public/icon.svg'), join(ROOT, 'docs/icon.svg'));
+console.log(`docs/index.html (${(web.length / 1024).toFixed(0)} Ko)`);
