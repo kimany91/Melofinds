@@ -63,9 +63,13 @@ avec toujours un bouton « YouTube » pour ouvrir la vidéo.
 - Fichier : `docs/index.html` (généré par `npm run build:artifact`)
 - Mise en ligne (une fois) : GitHub → Settings → Pages → « Deploy from a branch »
   → choisir la branche qui contient `docs/` et le dossier `/docs` → Save.
-- Recherche : YouTube Data API v3 avec ta clé gratuite (collée dans l'app, gardée
-  dans ton navigateur). Chaque recherche lit la description complète de toutes les
-  vidéos. Quota : environ 25 recherches par jour et par clé.
+- Recherche **sans clé** : via les serveurs publics Piped (miroirs libres de YouTube),
+  avec bascule automatique si l'un tombe. En octobre 2026, ils donnent les vidéos,
+  les vues, la date et le début de la description ; la description complète et les
+  likes sont souvent bloqués par YouTube (l'app le signale dans la fiche de la prod).
+- Facultatif : une clé YouTube Data API v3 gratuite (collée dans l'app, gardée dans
+  ton navigateur) pour lire toutes les descriptions et les likes. Quota : environ
+  25 recherches par jour et par clé.
 
 ## Lancer l'app complète (recherche YouTube automatique)
 
