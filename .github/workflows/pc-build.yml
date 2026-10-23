@@ -37,8 +37,10 @@ jobs:
           python -m pip install pyinstaller==6.11.1
           pyinstaller --onefile --noconsole --name MelofindsPC pc/melofinds_pc.py
 
-      - name: Auto-test (outils + fenêtre)
+      - name: Auto-test (outils + fenêtre + vrai téléchargement en WAV)
         shell: pwsh
+        env:
+          MELOFINDS_TEST_VIDEO: jNQXAC9IVRw
         run: |
           $p = Start-Process -FilePath dist\MelofindsPC.exe -ArgumentList '--selftest', "$PWD\selftest.json" -Wait -PassThru
           if (Test-Path selftest.json) { Get-Content selftest.json } else { Write-Host "selftest.json absent" }

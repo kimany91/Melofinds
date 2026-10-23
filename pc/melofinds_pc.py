@@ -869,6 +869,11 @@ def selftest(out):
         except (OSError, subprocess.SubprocessError) as e:
             res[name] = f"erreur {e}"
     res["name"] = build_name('[FREE FOR PROFIT] Luther Type Beat "TREE"', "F# min", 140)
+    vid = os.environ.get("MELOFINDS_TEST_VIDEO", "")
+    if VIDEO_ID.match(vid):  # vrai téléchargement (informatif : YouTube bloque souvent les serveurs)
+        with tempfile.TemporaryDirectory(prefix="melofinds-test-") as d:
+            ok, detail = download(vid, d, {})
+            res["download"] = {"ok": ok, "detail": detail, "files": [p.name for p in Path(d).iterdir()]}
     try:
         gui(selftest=True)
         res["gui"] = "ok"
