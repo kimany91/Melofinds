@@ -71,6 +71,7 @@ jobs:
 
       - name: Auto-test du programme (outils, fenêtre, téléchargement)
         shell: pwsh
+        timeout-minutes: 8
         env:
           MELOFINDS_TEST_VIDEO: jNQXAC9IVRw
         run: |
@@ -92,10 +93,14 @@ jobs:
 
       - name: Test d'installation + désinstallation
         shell: pwsh
+        timeout-minutes: 8
         run: |
+          # Attend uniquement le programme lancé (Start-Process -Wait attendrait aussi le
+          # programme en ligne qu'il démarre, qui tourne en continu).
+          function Run-Wait($exe, $argv) { $p = Start-Process -FilePath $exe -ArgumentList $argv -PassThru; $p.WaitForExit(); return $p }
           $dir = Join-Path $env:RUNNER_TEMP 'MF Install'
           $prods = Join-Path $env:RUNNER_TEMP 'MF Prods'
-          $p = Start-Process dist\MelofindsSetup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=desktopicon,autostart' -Wait -PassThru
+          $p = Run-Wait 'dist\MelofindsSetup.exe' @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=desktopicon,autostart')
           $r = [ordered]@{ setup_exit = $p.ExitCode }
           $r.exe = Test-Path "$dir\MelofindsPC.exe"
           $r.tools = (Test-Path "$dir\tools\yt-dlp.exe") -and (Test-Path "$dir\tools\ffmpeg.exe") -and (Test-Path "$dir\tools\deno.exe")
@@ -104,14 +109,14 @@ jobs:
           $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
           $r.autostart = $null -ne (Get-ItemProperty -Path $run -Name MelofindsPC -ErrorAction SilentlyContinue)
           $token = 'melofinds-' + [guid]::NewGuid().ToString('N') + '.' + [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
-          Start-Process "$dir\MelofindsPC.exe" -ArgumentList '--configure', '--dossier', "`"$prods`"", '--pair', $token -Wait
+          Run-Wait "$dir\MelofindsPC.exe" @('--configure', '--dossier', "`"$prods`"", '--pair', $token) | Out-Null
           $r.configured = (Get-Content "$dir\config.json" -Raw | ConvertFrom-Json).devices.Count -eq 1
-          Start-Process "$dir\MelofindsPC.exe" -ArgumentList '--start-if-configured' -Wait
+          Run-Wait "$dir\MelofindsPC.exe" @('--start-if-configured') | Out-Null
           $online = $false
           for ($i = 0; $i -lt 60 -and -not $online; $i++) { Start-Sleep -Milliseconds 500; $online = Test-Path "$dir\heartbeat" }
           $r.online = $online
           $u = Get-ChildItem "$dir\unins*.exe" | Select-Object -First 1
-          Start-Process $u.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
+          Run-Wait $u.FullName @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') | Out-Null
           for ($i = 0; $i -lt 90 -and (Test-Path "$dir\MelofindsPC.exe"); $i++) { Start-Sleep -Milliseconds 500 }
           Start-Sleep -Seconds 2
           $r.removed = -not (Test-Path "$dir\MelofindsPC.exe") -and -not (Test-Path "$dir\tools") -and -not (Test-Path "$dir\config.json")
