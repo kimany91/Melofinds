@@ -267,7 +267,8 @@ def stop_worker(timeout=20):
 
 def kill_other_instances():
     if C.WINDOWS:
-        subprocess.run(["taskkill", "/f", "/im", C.EXE_NAME, "/fi", f"PID ne {os.getpid()}"],
+        # Un .exe « un seul fichier » tourne en deux processus (lanceur + programme) : on épargne les deux.
+        subprocess.run(["taskkill", "/f", "/im", C.EXE_NAME, "/fi", f"PID ne {os.getpid()}", "/fi", f"PID ne {os.getppid()}"],
                        capture_output=True, creationflags=C.NO_WINDOW)
         time.sleep(1)
 
