@@ -8,7 +8,8 @@
     "start": "node server.js",
     "demo": "MELOFINDS_DEMO=1 node server.js",
     "test": "node --test test/*.test.js",
-    "build:artifact": "node scripts/build-artifact.mjs"
+    "build:artifact": "node scripts/build-artifact.mjs",
+    "test:pc": "python3 -m unittest pc/test_melofinds_pc.py"
   },
   "engines": {
     "node": ">=18"

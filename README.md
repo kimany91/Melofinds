@@ -75,9 +75,17 @@ avec toujours un bouton « YouTube » pour ouvrir la vidéo.
 
 Dans Melofinds Web, le bouton ⬇ d'une prod l'envoie à ton PC via ntfy.sh (messages
 gratuits, sans compte). Le programme `pc/melofinds-pc.py` tourne sur le PC, récupère
-les envois toutes les 15 s et télécharge l'audio avec yt-dlp, rangé par licence
-(Free for profit, Up to…), avec une fiche .txt (lien, licence, BPM, description).
+les envois toutes les 15 s et télécharge l'audio avec yt-dlp.
 Tout est expliqué dans l'app : bouton « Mon PC ».
+
+- Nom du fichier : `Titre [Clé, BPM].wav` (clé et BPM s'ils sont indiqués), jamais
+  « free », « free for profit », « FFP »…
+- Sécurité : envois signés (HMAC-SHA256, clé secrète qui ne passe jamais par ntfy) ;
+  un envoi ne contient qu'un identifiant de vidéo ; téléchargement et conversion dans
+  un dossier temporaire, puis seul un vrai .wav (en-tête RIFF/WAVE vérifié) entre dans
+  l'unique dossier choisi sur le PC ; 15 min max par vidéo, 40 par heure, envois de
+  plus de 48 h ou rejoués refusés.
+- Tests : `npm run test:pc`.
 
 ## Lancer l'app complète (recherche YouTube automatique)
 

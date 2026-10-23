@@ -1678,6 +1678,21 @@ function pcCode() {
   }
   return c;
 }
+const randHex = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, '0')).join('');
+// Clé secrète : elle ne passe JAMAIS par ntfy. Elle signe chaque envoi (HMAC-SHA256) ;
+// le programme du PC ignore tout envoi sans la bonne signature.
+function pcKey() {
+  let k = String(local.get('pcKey', '') || '');
+  if (!/^[a-f0-9]{64}$/.test(k)) { k = randHex(32); local.set('pcKey', k); }
+  return k;
+}
+async function signed(obj) {
+  const p = JSON.stringify({ mf: 2, ts: Date.now(), n: randHex(16), ...obj });
+  const raw = new Uint8Array(pcKey().match(/../g).map((x) => parseInt(x, 16)));
+  const key = await crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(p)));
+  return JSON.stringify({ p, s: Array.from(sig, (b) => b.toString(16).padStart(2, '0')).join('') });
+}
 const pc = { queue: local.get('pcQueue', {}) || {}, info: local.get('pcInfo', null), es: null, onPong: null };
 function savePc() {
   const ids = Object.keys(pc.queue).sort((a, b) => (pc.queue[b].at || 0) - (pc.queue[a].at || 0)).slice(0, 150);
@@ -1686,7 +1701,7 @@ function savePc() {
 }
 async function ntfyPublish(payload) {
   // Corps en texte brut, sans en-tête spécial : pas de requête préalable CORS.
-  const res = await fetch(`${NTFY}/${pcCode()}`, { method: 'POST', body: JSON.stringify(payload) });
+  const res = await fetch(`${NTFY}/${pcCode()}`, { method: 'POST', body: await signed(payload) });
   if (!res.ok) throw new Error(`ntfy ${res.status}`);
 }
 
@@ -1734,7 +1749,8 @@ async function sendToPc(item) {
   if (!pc.info) { openPcSetup(item); return; }
   let r = null;
   try { r = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
-  const msg = { mf: 1, v: id, t: String(item.title || '').slice(0, 200), cat: r?.license?.category || 'unknown', licence: r ? chipLabel(r.license) : '', bpm: r?.bpm || null, key: r?.key || null, force: pc.queue[id]?.state === 'error' || undefined };
+  // Le PC nomme le fichier « Titre [Clé, BPM].wav » (sans « free ») ; il relit aussi la description.
+  const msg = { v: id, t: String(item.title || '').slice(0, 200), bpm: r?.bpm || null, key: r?.key || null, force: pc.queue[id]?.state === 'error' || undefined };
   pc.queue[id] = { t: item.title || id, at: Date.now(), state: 'sending' };
   syncPcUi();
   try {
@@ -1797,18 +1813,17 @@ function cmdBlock(text) {
 function openPcSetup(pending) {
   listenPc();
   const code = pcCode();
-  const run = `python "$env:USERPROFILE\\Downloads\\melofinds-pc.py" --code ${code} --demarrage`;
+  const run = `python "$env:USERPROFILE\\Downloads\\melofinds-pc.py" --code ${code} --cle ${pcKey()} --demarrage`;
   const test = h('button', { type: 'button', class: 'primary' }, 'Tester la connexion');
   test.addEventListener('click', async () => {
     test.disabled = true;
     test.textContent = 'J’attends ton PC… (jusqu’à 30 s)';
-    const ping = Date.now();
     const timer = setTimeout(() => { pc.onPong = null; test.disabled = false; test.textContent = 'Tester la connexion'; toast('Pas de réponse : le programme tourne-t-il sur ton PC ?'); }, 35e3);
     pc.onPong = () => {
       clearTimeout(timer); pc.onPong = null; test.disabled = false; test.textContent = 'Tester la connexion'; toast('PC connecté !');
       if (pending) { const p = pending; pending = null; sendToPc(p); }
     };
-    try { await ntfyPublish({ mf: 1, ping }); } catch { clearTimeout(timer); pc.onPong = null; test.disabled = false; test.textContent = 'Tester la connexion'; toast('Envoi impossible : vérifie ta connexion'); }
+    try { await ntfyPublish({ ping: 1 }); } catch { clearTimeout(timer); pc.onPong = null; test.disabled = false; test.textContent = 'Tester la connexion'; toast('Envoi impossible : vérifie ta connexion'); }
   });
   openDrawer('Télécharger sur mon PC', [
     h('p', { class: 'muted', style: 'margin:0' }, 'Touche ', icon('down'), ' sur une prod : elle se télécharge toute seule sur ton PC, rangée par licence, même si tu es loin (5G ou Wi-Fi). Il faut juste que le PC soit allumé.'),
@@ -1823,11 +1838,17 @@ function openPcSetup(pending) {
       h('p', { class: 'hint' }, 'Ouvre ce lien sur ton PC (envoie-toi la page). Le fichier arrive dans « Téléchargements ».')),
     h('div', { class: 'd-sec' }, h('h4', {}, '3. Le lancer avec ton code'),
       cmdBlock(run),
-      h('p', { class: 'hint' }, '« --demarrage » le relance tout seul à chaque allumage du PC. Les sons arrivent dans Musique\\Melofinds, en WAV. Pour changer : ajoute --dossier "D:\\Prods" ou --format mp3.')),
+      h('p', { class: 'hint' }, '« --demarrage » le relance tout seul à chaque allumage du PC. Les prods arrivent en .wav uniquement, dans un seul dossier : Musique\\Melofinds (pour en choisir un autre, ajoute --dossier "D:\\Prods"). Nom du fichier : « Titre [Clé, BPM].wav », sans « free ».')),
     h('div', { class: 'actions' }, test),
     h('div', { class: 'd-sec' }, h('h4', {}, 'Envois récents'), h('div', { id: 'pcList', class: 'pc-list' })),
-    h('p', { class: 'hint' }, 'Ton code est secret : quiconque l’a peut envoyer des prods à ton PC. ',
-      h('button', { type: 'button', class: 'link', onclick: () => { local.set('pcCode', ''); pc.info = null; local.set('pcInfo', null); pc.es?.close(); pc.es = null; openPcSetup(); toast('Nouveau code : relance le programme avec la nouvelle commande'); } }, 'Changer de code')),
+    h('div', { class: 'd-sec' }, h('h4', {}, 'Sécurité'),
+      h('ul', { class: 'reasons' },
+        h('li', {}, 'Chaque envoi est signé avec ta clé secrète, qui ne quitte jamais ce téléphone et ton PC. Sans elle, le PC ignore l’envoi.'),
+        h('li', {}, 'Un envoi contient seulement l’identifiant de la vidéo : jamais de lien, de chemin ou de commande.'),
+        h('li', {}, 'Le PC n’écrit que des .wav vérifiés, dans le seul dossier choisi sur le PC (impossible à changer à distance).'),
+        h('li', {}, 'Limites : vidéos de 15 min max, 40 téléchargements par heure, envois de plus de 48 h refusés.'))),
+    h('p', { class: 'hint' }, 'Ne partage pas la commande de l’étape 3 : elle contient ta clé. ',
+      h('button', { type: 'button', class: 'link', onclick: () => { local.set('pcCode', ''); local.set('pcKey', ''); pc.info = null; local.set('pcInfo', null); pc.es?.close(); pc.es = null; openPcSetup(); toast('Nouvelle clé : relance le programme avec la nouvelle commande'); } }, 'Changer de code et de clé')),
     h('p', { class: 'hint' }, 'L’audio YouTube contient souvent le tag du beatmaker ; la version sans tag s’obtient via le lien de sa description. Si le PC est éteint plus de 12 h, renvoie la prod.'),
   ]);
   renderPcStatus();
