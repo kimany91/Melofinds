@@ -604,11 +604,26 @@ let lastFocus = null;
 // ce navigateur (IndexedDB) et se téléchargent.
 
 const rec = { state: 'idle', stream: null, ctx: null, analyser: null, recorder: null, chunks: [], mime: '', offset: 0, startAt: 0, beat: null, raf: 0, tick: 0, autoStop: 0 };
-const take = { id: null, audio: null, url: '', offset: 0, sync: 0, beatId: null, gainNode: null };
+const take = { id: null, audio: null, url: '', offset: 0, sync: 0, beatId: null, gainNode: null, duration: 0 };
+const takePos = new Map(); // position de lecture de chaque prise (pause / reprise, barre)
 
-// --- Volume de la voix : gain par prise (jusqu'à 400 %), réglage auto (voix le plus
-// fort possible sans saturer), export .wav avec le volume appliqué.
-const MAX_GAIN = 4;
+// --- Volume de la voix. Échelle affichée : 150 % = gain ×3,1 ; jusqu'à 300 % (×6,2).
+// Un compresseur-limiteur suit le gain (à l'écoute comme dans le .wav exporté) : la voix
+// monte vraiment sans grésiller.
+const GAIN_PER_PCT = 3.1 / 150;
+const MAX_PCT = 300;
+const MAX_GAIN = MAX_PCT * GAIN_PER_PCT;
+const AUTO_MAX_GAIN = 4;
+const gainToPct = (g) => Math.round((g || 0) / GAIN_PER_PCT);
+function makeLimiter(ctx) {
+  const c = ctx.createDynamicsCompressor();
+  c.threshold.value = -10;
+  c.knee.value = 6;
+  c.ratio.value = 12;
+  c.attack.value = 0.003;
+  c.release.value = 0.15;
+  return c;
+}
 let audioCtxRef = null;
 const audioCtx = () => (audioCtxRef ||= new (window.AudioContext || window.webkitAudioContext)());
 async function decodeTake(r) {
@@ -626,7 +641,7 @@ function peakOf(ab) {
   }
   return peak;
 }
-const autoGainFor = (peak) => (peak > 0.002 ? Math.min(MAX_GAIN, Math.max(1, 0.89 / peak)) : 1); // ≈ -1 dB
+const autoGainFor = (peak) => (peak > 0.002 ? Math.min(AUTO_MAX_GAIN, Math.max(1, 0.89 / peak)) : 1); // ≈ -1 dB
 async function measureTake(r) {
   try { const peak = peakOf(await decodeTake(r)); return { peak, autoGain: autoGainFor(peak) }; } catch { return { peak: null, autoGain: 1 }; }
 }
@@ -850,24 +865,52 @@ function stopTake() {
   take.audio.pause();
   URL.revokeObjectURL(take.url);
   try { take.gainNode?.disconnect(); } catch { /* déjà débranché */ }
-  Object.assign(take, { id: null, audio: null, url: '', sync: 0, beatId: null, gainNode: null });
+  Object.assign(take, { id: null, audio: null, url: '', sync: 0, beatId: null, gainNode: null, duration: 0 });
   if (isPlaying()) { ytSend('pauseVideo'); player.state = 2; }
   ytSend('setVolume', [100]);
   renderMini();
-  $$('.take-play').forEach((b) => { b.classList.remove('on'); b.replaceChildren(icon('play')); });
+  $$('.take-play').forEach((b) => { b.classList.remove('on'); b.replaceChildren(icon('play')); b.setAttribute('aria-label', 'Réécouter sur la prod'); });
 }
-async function playTake(r, btn) {
-  if (take.id === r.id) { stopTake(); return; }
+function updateTakeUi(id) {
+  const r0 = $(`.take-row[data-take="${id}"]`);
+  if (!r0) return;
+  const dur = Number(r0.dataset.dur) || 0;
+  const t = Math.min(dur, takePos.get(id) || 0);
+  $$(`.take-row[data-take="${id}"]`).forEach((row) => {
+    const pctPos = dur ? (t / dur) * 100 : 0;
+    row.querySelector('.take-fill').style.width = `${pctPos}%`;
+    row.querySelector('.take-knob').style.left = `${pctPos}%`;
+    row.querySelector('.take-time').textContent = `${fmtDur(t)} / ${fmtDur(dur)}`;
+    row.querySelector('.take-bar').setAttribute('aria-valuenow', String(Math.round(t)));
+  });
+}
+// Aller à un moment de la prise (et de la prod, au même endroit)
+function seekTake(r, t, btn) {
+  const dur = r.duration || 0;
+  t = Math.max(0, Math.min(Math.max(0, dur - 0.05), t));
+  takePos.set(r.id, t);
+  updateTakeUi(r.id);
+  if (take.id === r.id && take.audio) {
+    seekBeat(r.offset + t - recLatency());
+    take.audio.currentTime = t;
+  } else if (btn) {
+    playTake(r, btn, t);
+  }
+}
+async function playTake(r, btn, startAt = null) {
+  if (take.id === r.id && startAt == null) { stopTake(); return; } // pause : la position est gardée
   stopTake();
   if (rec.state !== 'idle') return;
+  let from = startAt ?? takePos.get(r.id) ?? 0;
+  if (from >= (r.duration || 0) - 0.3) from = 0;
   const beat = { id: r.beatId, url: r.beatUrl, title: r.beatTitle };
-  btn?.classList.add('on');
-  btn?.replaceChildren(icon('stop'));
+  $$(`.take-row[data-take="${r.id}"] .take-play`).forEach((b) => { b.classList.add('on'); b.replaceChildren(icon('pause')); b.setAttribute('aria-label', 'Pause'); });
   take.id = r.id;
+  take.duration = r.duration || 0;
   if (!(await loadBeat(beat))) { stopTake(); toast('La prod ne se lance pas : réécoute impossible'); return; }
   if (take.id !== r.id) return;
   ytSend('pauseVideo');
-  seekBeat(r.offset);
+  seekBeat(r.offset + from - recLatency());
   take.url = URL.createObjectURL(r.blob);
   take.audio = new Audio(take.url);
   try {
@@ -875,12 +918,12 @@ async function playTake(r, btn) {
     await ctx.resume();
     take.gainNode = ctx.createGain();
     take.gainNode.gain.value = r.gain ?? 1;
-    ctx.createMediaElementSource(take.audio).connect(take.gainNode).connect(ctx.destination);
+    ctx.createMediaElementSource(take.audio).connect(take.gainNode).connect(makeLimiter(ctx)).connect(ctx.destination);
   } catch { take.gainNode = null; take.audio.volume = 1; } // sans Web Audio : volume normal
   ytSend('setVolume', [beatVol()]);
   take.offset = r.offset;
   take.beatId = r.beatId;
-  take.audio.addEventListener('ended', () => { if (take.id === r.id) stopTake(); });
+  take.audio.addEventListener('ended', () => { if (take.id === r.id) { takePos.set(r.id, 0); stopTake(); updateTakeUi(r.id); } });
   ytSend('playVideo');
   await waitFor(() => isPlaying(), 8000);
   if (take.id !== r.id || !take.audio) return;
@@ -896,13 +939,30 @@ async function playTake(r, btn) {
     if (target < 0) return;
     if (a.paused && !a.ended) a.play().catch(() => {});
     if (Math.abs(a.currentTime - target) > 0.12) a.currentTime = target;
+    takePos.set(take.id, a.currentTime);
+    updateTakeUi(take.id);
+    if (take.duration && a.currentTime >= take.duration - 0.05) { takePos.set(take.id, 0); const id = take.id; stopTake(); updateTakeUi(id); }
   }, 250);
 }
 
+// La prise avec son volume et le même limiteur qu'à l'écoute, en .wav
+async function renderTake(r) {
+  const ab = await decodeTake(r);
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!OAC) return wavFrom(ab, r.gain ?? 1);
+  const oc = new OAC(ab.numberOfChannels, ab.length, ab.sampleRate);
+  const src = oc.createBufferSource();
+  src.buffer = ab;
+  const g = oc.createGain();
+  g.gain.value = r.gain ?? 1;
+  src.connect(g).connect(makeLimiter(oc)).connect(oc.destination);
+  src.start();
+  return wavFrom(await oc.startRendering(), 1);
+}
 async function downloadTake(r) {
   let blob = r.blob;
   let ext = recExt(r.mime);
-  try { blob = wavFrom(await decodeTake(r), r.gain ?? 1); ext = 'wav'; } catch { toast('Export WAV impossible ici : fichier d’origine téléchargé'); }
+  try { blob = await renderTake(r); ext = 'wav'; } catch { toast('Export WAV impossible ici : fichier d’origine téléchargé'); }
   const url = URL.createObjectURL(blob);
   const a = h('a', { href: url, download: `${displayTitle(r.beatTitle || 'Prod').slice(0, 60)} - ${r.name}.${ext}` });
   document.body.append(a);
@@ -912,8 +972,33 @@ async function downloadTake(r) {
 }
 
 function takeRow(r, refresh, { showBeat = false } = {}) {
-  const play = h('button', { type: 'button', class: `icon-btn take-play${take.id === r.id ? ' on' : ''}`, 'aria-label': 'Réécouter sur la prod' }, icon(take.id === r.id ? 'stop' : 'play'));
+  const playing = take.id === r.id;
+  const play = h('button', { type: 'button', class: `icon-btn take-play${playing ? ' on' : ''}`, 'aria-label': playing ? 'Pause' : 'Réécouter sur la prod' }, icon(playing ? 'pause' : 'play'));
   play.addEventListener('click', () => playTake(r, play));
+  // Barre de progression (cliquable / glissable) + début / fin
+  const dur = r.duration || 0;
+  const bar = h('div', { class: 'take-bar', role: 'slider', tabindex: '0', 'aria-label': `Position dans ${r.name}`, 'aria-valuemin': '0', 'aria-valuemax': String(Math.round(dur)), 'aria-valuenow': '0' },
+    h('i', { class: 'take-fill' }), h('b', { class: 'take-knob' }));
+  const posAt = (x) => { const b = bar.getBoundingClientRect(); return Math.max(0, Math.min(1, (x - b.left) / b.width)) * dur; };
+  bar.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    bar.setPointerCapture?.(e.pointerId);
+    takePos.set(r.id, posAt(e.clientX));
+    updateTakeUi(r.id);
+    const move = (ev) => { takePos.set(r.id, posAt(ev.clientX)); updateTakeUi(r.id); };
+    const up = (ev) => { bar.removeEventListener('pointermove', move); bar.removeEventListener('pointerup', up); bar.removeEventListener('pointercancel', up); seekTake(r, posAt(ev.clientX), play); };
+    bar.addEventListener('pointermove', move);
+    bar.addEventListener('pointerup', up);
+    bar.addEventListener('pointercancel', up);
+  });
+  bar.addEventListener('keydown', (e) => {
+    const step = e.key === 'ArrowRight' ? 5 : e.key === 'ArrowLeft' ? -5 : 0;
+    if (!step) return;
+    e.preventDefault();
+    seekTake(r, (takePos.get(r.id) || 0) + step, take.id === r.id ? play : null);
+  });
+  const toStart = h('button', { type: 'button', class: 'icon-btn take-jump', 'aria-label': 'Aller au début', title: 'Début', onclick: () => seekTake(r, 0, take.id === r.id ? play : null) }, '⏮');
+  const toEnd = h('button', { type: 'button', class: 'icon-btn take-jump', 'aria-label': 'Aller à la fin (dernières secondes)', title: 'Fin', onclick: () => seekTake(r, Math.max(0, dur - Math.min(5, dur * 0.2)), play) }, '⏭');
   let armed = null;
   const del = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Supprimer la prise' }, icon('trash'));
   del.addEventListener('click', async () => {
@@ -924,35 +1009,38 @@ function takeRow(r, refresh, { showBeat = false } = {}) {
     toast(`${r.name} supprimée`);
     refresh();
   });
-  // Volume de la voix
-  const pct = (g) => `${Math.round(g * 100)} %`;
-  const vol = h('input', { type: 'range', min: '0', max: String(MAX_GAIN), step: '0.05', 'aria-label': `Volume de la voix (${r.name})` });
-  vol.value = String(r.gain ?? 1);
+  // Volume de la voix (échelle 0–300 %, 150 % = gain ×3,1)
+  const pct = (g) => `${gainToPct(g)} %`;
+  const vol = h('input', { type: 'range', min: '0', max: String(MAX_PCT), step: '5', 'aria-label': `Volume de la voix (${r.name})` });
+  vol.value = String(gainToPct(r.gain ?? 1));
   const volTxt = h('span', { class: 'take-vol-val mono' }, pct(r.gain ?? 1));
   let saveT = null;
   const setGain = (g) => {
     r.gain = Math.max(0, Math.min(MAX_GAIN, g));
-    vol.value = String(r.gain);
+    vol.value = String(gainToPct(r.gain));
     volTxt.textContent = pct(r.gain);
     if (take.id === r.id && take.gainNode) take.gainNode.gain.value = r.gain;
     clearTimeout(saveT);
     saveT = setTimeout(() => recStore.put(r), 400);
   };
-  vol.addEventListener('input', () => setGain(Number(vol.value)));
+  vol.addEventListener('input', () => setGain(Number(vol.value) * GAIN_PER_PCT));
   const auto = h('button', { type: 'button', class: 'ghost take-auto', title: 'Voix le plus fort possible sans saturer' }, 'Auto');
   auto.addEventListener('click', async () => {
     if (r.autoGain == null) { const m = await measureTake(r); r.peak = m.peak; r.autoGain = m.autoGain; }
     setGain(r.autoGain);
     toast(`Voix réglée à ${pct(r.autoGain)}`);
   });
-  return h('div', { class: 'take-row' },
+  const row = h('div', { class: 'take-row', 'data-take': r.id, 'data-dur': String(dur) },
     h('div', { class: 'take-top' }, play,
       h('div', { class: 'take-main' },
         h('b', {}, r.name, showBeat ? h('span', { class: 'take-beat' }, ` · ${displayTitle(r.beatTitle || '')}`) : null),
         h('span', {}, `${fmtDur(r.duration)} · ${new Date(r.at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}`)),
       h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Télécharger la prise (.wav, avec le volume réglé)', title: 'Télécharger en .wav (avec le volume réglé)', onclick: () => downloadTake(r) }, icon('down')),
       del),
+    h('div', { class: 'take-seek' }, toStart, bar, h('span', { class: 'take-time mono' }, ''), toEnd),
     h('div', { class: 'take-vol' }, h('span', {}, icon('mic'), 'Voix'), vol, volTxt, auto));
+  requestAnimationFrame(() => updateTakeUi(r.id));
+  return row;
 }
 
 // --- Panneau Rec
