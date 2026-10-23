@@ -68,30 +68,30 @@
       <div class="results-col" id="planCol">
         <div class="plan-head">
           <div>
-            <p class="eyebrow">Ce que l’algo a compris</p>
+            <p class="eyebrow">Ta recherche</p>
             <h2 id="planTitle">Ta recherche</h2>
           </div>
           <button type="button" id="favNow" class="mini" hidden>☆ Mettre en favori</button>
         </div>
-        <div id="planNotes"></div>
-        <div class="plan-grid">
-          <div class="plan-card"><h4>Ambiances</h4><div id="pMoods" class="tags"></div><div id="pInstr" class="small-note"></div></div>
-          <div class="plan-card"><h4>Courants de rap</h4><div id="pGenres" class="tags"></div></div>
-          <div class="plan-card"><h4>Artistes US « type beat »</h4><div id="pArtists" class="tags"></div></div>
-          <div class="plan-card bpm-card"><h4>BPM conseillé</h4><div id="pBpm" class="bpm-big"></div><div id="pBpmWhy" class="small-note"></div></div>
+        <div id="searchStatus" class="search-status" hidden></div>
+        <div id="setupCard" class="setup" hidden></div>
+        <div id="searchIntro" class="search-intro">
+          <b>Clique sur « Lancer la recherche ».</b>
+          <span>L’algo cherche les type beats sur YouTube, ouvre chaque vidéo, lit toute sa description et te range les prods avec leur lien : Free for profit, Up to, Free, Payant.</span>
         </div>
-        <div class="queries-head">
-          <h3 id="qTitle">Recherches YouTube</h3>
-          <span class="small-note">Ouvre chaque recherche sur YouTube, puis vérifie les prods qui te plaisent.</span>
-        </div>
-        <ol id="queries" class="queries"></ol>
-        <div class="next-step">
-          <div>
-            <b>Ensuite : vérifie la licence d’une prod.</b>
-            <span>Sur YouTube, ouvre la vidéo, déplie la description (« …plus »), copie le titre et la description, puis colle-les dans <b>Vérifier</b>. L’algo lit tout et te dit si elle est vraiment libre pour Spotify.</span>
+        <div id="searchBoard"></div>
+        <details class="plan-box" id="planBox" open>
+          <summary>🧠 Ce que l’algo utilise pour chercher <span id="planSummary" class="small-note"></span></summary>
+          <div id="planNotes"></div>
+          <div class="plan-grid">
+            <div class="plan-card"><h4>Ambiances</h4><div id="pMoods" class="tags"></div><div id="pInstr" class="small-note"></div></div>
+            <div class="plan-card"><h4>Courants de rap</h4><div id="pGenres" class="tags"></div></div>
+            <div class="plan-card"><h4>Artistes US « type beat »</h4><div id="pArtists" class="tags"></div></div>
+            <div class="plan-card bpm-card"><h4>BPM conseillé</h4><div id="pBpm" class="bpm-big"></div><div id="pBpmWhy" class="small-note"></div></div>
           </div>
-          <button type="button" class="primary small" id="goVerify">📖 Vérifier une prod</button>
-        </div>
+          <div class="queries-head"><h3 id="qTitle">Recherches</h3></div>
+          <ol id="queries" class="queries"></ol>
+        </details>
       </div>
     </div>
   </section>
@@ -152,43 +152,7 @@
         <span><b>Exemples.</b> Ta liste est vide : voici des prods fictives pour voir comment l’algo les range. Elles disparaissent dès que tu ajoutes ta première prod.</span>
         <button type="button" class="mini" id="hideExamples">Masquer les exemples</button>
       </div>
-      <div class="stats" id="stats"></div>
-      <div class="toolbar">
-        <div class="search-desc">
-          <span class="ico" aria-hidden="true">🔎</span>
-          <input id="descSearch" type="search" placeholder="Chercher dans les descriptions… (spotify, wav, -lease)" aria-label="Chercher dans les descriptions">
-        </div>
-        <div class="quick" id="quickTerms"></div>
-        <div class="tools">
-          <label for="sort"><span>Tri</span>
-            <select id="sort">
-              <option value="pertinence">Pertinence</option>
-              <option value="bpm-asc">BPM ↑</option>
-              <option value="bpm-desc">BPM ↓</option>
-              <option value="limite">Limite de streams</option>
-              <option value="recent">Ajout récent</option>
-            </select>
-          </label>
-          <label for="styleFilter"><span>Style</span>
-            <select id="styleFilter"><option value="">Tous</option></select>
-          </label>
-        </div>
-      </div>
-      <div class="bpm-bar">
-        <label class="switch-row" for="bpmEnabled">
-          <span class="switch"><input type="checkbox" id="bpmEnabled"><span class="slider"></span></span>
-          <span>Trier / filtrer par BPM</span>
-        </label>
-        <div id="bpmBox" class="bpm-range" hidden>
-          <input type="number" id="bpmMin" min="50" max="220" inputmode="numeric" placeholder="min" aria-label="BPM minimum">
-          <span class="dash">→</span>
-          <input type="number" id="bpmMax" min="50" max="220" inputmode="numeric" placeholder="max" aria-label="BPM maximum">
-          <label class="row check" for="bpmRequire"><input type="checkbox" id="bpmRequire"> <span>Cacher sans BPM</span></label>
-        </div>
-        <label class="row check" for="noCredit"><input type="checkbox" id="noCredit"> <span>Cacher si crédit obligatoire</span></label>
-      </div>
-      <p id="count" class="count"></p>
-      <div id="listResults"></div>
+      <div id="listBoard"></div>
     </div>
   </section>
 

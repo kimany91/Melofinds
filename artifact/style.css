@@ -398,3 +398,24 @@ body.mobile .list-top { flex-wrap: wrap; }
   .logo i, .vu i { animation: none; }
   .view.active { animation: none; }
 }
+
+/* ============ Recherche automatique ============ */
+.search-intro { display: grid; gap: 4px; padding: 14px 16px; margin-bottom: 16px; border-radius: 16px; border: 1px dashed var(--line-2); background: var(--bg-2); font-size: 14px; }
+.search-intro span { color: var(--muted); }
+.search-status { padding: 12px 14px; margin-bottom: 14px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); font-size: 14px; }
+.search-status.error { border-color: color-mix(in srgb, var(--paid) 55%, transparent); background: color-mix(in srgb, var(--paid) 7%, var(--panel)); }
+.search-status .bar { height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden; margin-top: 8px; }
+.search-status .bar i { display: block; height: 100%; background: var(--grad); border-radius: 3px; transition: width .3s; }
+.search-status .row-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.setup { padding: 16px 18px; margin-bottom: 16px; border-radius: 18px; background: color-mix(in srgb, var(--accent) 9%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.setup h3 { margin: 0 0 6px; font: 800 19px/1.2 var(--f-display); }
+.setup p { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+.setup ol { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 4px; font-size: 14px; }
+.setup .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.plan-box { border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px; background: var(--panel); margin-top: 8px; }
+.plan-box > summary { cursor: pointer; font-weight: 700; font-size: 14.5px; }
+.plan-box[open] > summary { margin-bottom: 12px; }
+.plan-box .plan-grid { margin-bottom: 14px; }
+.board-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.board-head h3 { margin: 0; font: 800 20px/1.2 var(--f-display); }
+.act.saved { color: var(--ffp); border-color: color-mix(in srgb, var(--ffp) 50%, transparent); }

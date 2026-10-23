@@ -65,7 +65,7 @@ const LIMIT_PATTERNS = [
   // after 5k streams you must buy / au-delà de 10k écoutes
   new RegExp(String.raw`(?:after|over|above|beyond|exceed(?:ing)?|past|apres|au\s*-?\s*dela\s*de|plus\s*de|passe)\s*${NUM}\s*${UNIT}`, 'g'),
   // free for profit (5k streams) / ffp 10k streams
-  new RegExp(String.raw`(?:${FFP}|ffp|f4p)\s*[(\[:\-]?\s*${NUM}\s*${UNIT}`, 'g'),
+  new RegExp(String.raw`(?:${FFP}|ffp|f4p)[ \t]*[(\[:\-]?[ \t]*${NUM}[ \t]*${UNIT}`, 'g'),
 ];
 
 const NEGATION_BEFORE = /(?:\bnot|n't|\bno|\bpas|\bnon|\bnever|\bisnt|\barent|\bwithout)\s*(?:\w+\s*){0,2}$/;

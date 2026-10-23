@@ -141,3 +141,9 @@ test('liens Spotify du producteur ≠ obligation de payer', () => {
   assert.equal(cat('FREE FOR PROFIT Type Beat', 'Free for profit, just credit\nFollow me on Spotify: https://open.spotify.com/x | Buy untagged: beatstars.com/x'), 'ffp');
   assert.equal(cat('FREE FOR PROFIT Type Beat', 'Free for profit\nListen to my album on Spotify'), 'ffp');
 });
+
+test('« Free For Profit » en fin de titre + « 1.2K views » à la ligne suivante ≠ limite', () => {
+  const r = analyzeLicense('[FREE] Type Beat | Free For Profit', '1.2K views · 3 weeks ago\nFREE FOR PROFIT just credit');
+  assert.equal(r.category, 'ffp');
+  assert.equal(r.limit, null);
+});

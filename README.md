@@ -38,16 +38,15 @@ si tu peux vraiment sortir ton son sur Spotify sans payer.
 ## L'ouvrir dans Claude (sans rien installer)
 
 Une version de Melofinds est publiée comme page dans Claude : elle s'ouvre
-dans le navigateur, sur PC comme sur mobile. Une page Claude ne peut pas
-contacter YouTube elle-même, donc elle fonctionne ainsi :
+dans le navigateur, sur PC comme sur mobile.
 
-- **Recherche** : ta description → courants, artistes US, BPM conseillé et
-  recherches « type beat » prêtes, avec un bouton qui ouvre chaque recherche
-  sur YouTube.
-- **Vérifier** : colle le titre et la description d'une vidéo → verdict
-  immédiat (Free for profit, Up to, Free, Payant, titre trompeur), avec les
-  phrases qui le prouvent. Bouton facultatif « Avis de Claude ».
-- **Ma liste** : les prods vérifiées, triées par licence, BPM et style, avec
+- **Recherche** : tu décris ta prod, tu cliques « Lancer » → la page cherche
+  les type beats sur YouTube, ouvre chaque vidéo, lit sa description et
+  t'affiche les liens rangés : Free for profit, Up to, Free, Payant, titres
+  trompeurs. Elle passe par le connecteur gratuit **Parallel Search**
+  (à brancher une fois dans claude.ai → Paramètres → Connecteurs).
+- **Vérifier** : colle le titre et la description d'une vidéo → verdict immédiat.
+- **Ma liste** : les prods gardées, triées par licence, BPM et style, avec
   recherche dans les descriptions.
 - **Historique & favoris** : gardés dans ton compte Claude.
 
