@@ -533,6 +533,32 @@ body.mobile .mini-ext svg { width: 16px; height: 16px; }
 .web-tip a { color: var(--accent); font-weight: 800; }
 .hero.compact .web-tip { display: none; }
 .notice .hint { margin: 2px 0 14px; }
-body.mobile .yt-link { right: 10px; bottom: 10px; padding: 6px; font-size: 0; gap: 0; }
-body.mobile .yt-link svg { width: 14px; height: 14px; }
-body.mobile .card .meta { padding-right: 34px; }
+
+/* Miniatures YouTube (version web) */
+.cover .thumb { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; z-index: 0; transition: transform .5s var(--ease); }
+.card:hover .cover .thumb { transform: scale(1.04); }
+.cover.has-thumb::after { background: linear-gradient(to bottom, rgba(0,0,0,.45) 0%, transparent 32%, transparent 52%, rgba(0,0,0,.72) 100%); -webkit-mask: none; mask: none; z-index: 0; }
+body.web .cover { height: auto; aspect-ratio: 16 / 9; }
+
+/* Vues · âge · ratio likes */
+.card .meta { flex-wrap: wrap; justify-content: flex-start; row-gap: 4px; column-gap: 10px; }
+.card .meta .meta-txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ratio { display: inline-flex; align-items: center; gap: 4px; font-weight: 800; white-space: nowrap; color: var(--faint); font-variant-numeric: tabular-nums; }
+.ratio svg { width: 12px; height: 12px; }
+.ratio.hi { color: var(--ffp); }
+.ratio.mid { color: var(--text); }
+.notice .tech { margin: 0 0 12px; font-size: 12px; color: var(--faint); }
+.notice .tech summary { cursor: pointer; }
+.notice .tech code { display: block; margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--bg-2); white-space: pre-wrap; word-break: break-word; user-select: all; }
+
+/* Mobile : une prod par ligne, en grand */
+body.mobile .grid { grid-template-columns: 1fr; gap: 14px; }
+body.mobile .cover { height: 132px; }
+body.mobile.web .cover { height: auto; aspect-ratio: 16 / 9; }
+body.mobile .cover-bpm { font-size: 30px; }
+body.mobile .cover-meta { left: 14px; bottom: 12px; font-size: 13px; }
+body.mobile .card-main { padding: 13px 16px 15px; }
+body.mobile .card .title { font-size: 16px; }
+body.mobile .card .line { font-size: 13.5px; }
+body.mobile .play { opacity: 1; transform: scale(.9); width: 48px; height: 48px; margin: -24px 0 0 -24px; }
+body.mobile.claude-page .play { opacity: 0; }

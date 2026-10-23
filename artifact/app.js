@@ -76,7 +76,7 @@ const persist = {
           if (snap.metadata.hasPendingWrites) return;
           if (snap.exists) {
             const items = snap.data()?.items;
-            if (Array.isArray(items)) { state[key] = JSON.parse(JSON.stringify(items)); local.set(key, state[key]); refreshFor(key); }
+            if (Array.isArray(items)) { state[key] = JSON.parse(JSON.stringify(items)).filter((x) => x && typeof x === 'object' && (key === 'beats' ? x.id : true)); local.set(key, state[key]); refreshFor(key); }
           } else if (first && state[key].length) this.save(key);
           first = false;
         }, () => { this.mode = 'local'; });
@@ -207,6 +207,9 @@ function analyzed(item, plan) {
   Object.defineProperty(item, '_key', { value: key, writable: true, enumerable: false, configurable: true });
   return r;
 }
+function safeRow(item, plan) {
+  try { return { ...analyzed(item, plan), _item: item }; } catch (e) { console.error('Melofinds : prod ignorée', item?.id, e); return null; }
+}
 function cardLine(item, r) {
   if (item.status === 'unread') return { text: 'Description illisible : verdict d’après le titre.', warn: false };
   if (r.license.misleading) return { text: '⚠ Titre trompeur : licence payante pour Spotify.', warn: true };
@@ -224,8 +227,8 @@ function toggleSaved(item) {
     state.beats = state.beats.filter((b) => b.id !== item.id);
     toast('Retirée des favoris');
   } else {
-    const { id, url, title, description, views, age, status } = item;
-    state.beats = [{ id, url, title, description, views, age, status, savedAt: new Date().toISOString() }, ...state.beats];
+    const { id, url, title, description, views, viewCount, likeCount, age, status } = item;
+    state.beats = [{ id, url, title, description, views, viewCount, likeCount, age, status, savedAt: new Date().toISOString() }, ...state.beats];
     toast('Ajoutée aux favoris', { label: 'Voir', run: () => { showView('saved'); setSeg('prods'); } });
   }
   persist.save('beats');
@@ -244,9 +247,10 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
   const card = h('article', { class: `card cat-${cat}${isNew ? ' new' : ''}${item.status === 'unread' ? ' unread' : ''}${vid && vid === player.vid ? ' playing' : ''}`, style: `--i:${index}`, 'data-vid': vid });
   const style = r.styles?.[0]?.label || 'Type beat';
   const coverAttrs = WEB
-    ? { type: 'button', class: 'cover', 'aria-label': `Écouter « ${item.title} »`, onclick: () => playItem(item), onpointerenter: () => warmPlayer(item), onpointerdown: () => warmPlayer(item), onfocus: () => warmPlayer(item) }
+    ? { type: 'button', class: `cover${vid ? ' has-thumb' : ''}`, 'aria-label': `Écouter « ${item.title} »`, onclick: () => playItem(item), onpointerenter: () => warmPlayer(item), onpointerdown: () => warmPlayer(item), onfocus: () => warmPlayer(item) }
     : { class: 'cover', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Écouter « ${item.title} » sur YouTube` };
   card.append(h(WEB ? 'button' : 'a', coverAttrs,
+    WEB && vid ? h('img', { class: 'thumb', src: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`, alt: '', loading: 'lazy', decoding: 'async', onerror: (e) => { e.currentTarget.closest('.cover')?.classList.remove('has-thumb'); e.currentTarget.remove(); } }) : null,
     h('span', { class: 'lic-chip' }, chipLabel(L)),
     item.status === 'unread' ? h('span', { class: 'unread-chip' }, 'non vérifiée') : null,
     h('span', { class: 'play' }, icon('play'), icon('pause'), h('span', { class: 'eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'))),
@@ -256,11 +260,16 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
   heart.addEventListener('click', (e) => { e.stopPropagation(); toggleSaved(item); });
   card.append(heart);
   const line = cardLine(item, r);
+  const ratio = ratioOf(item);
+  const tier = ratio == null ? '' : ratio >= 5 ? ' hi' : ratio >= 2.5 ? ' mid' : ' lo';
   const meta = [item.views ? `${item.views} vues` : null, item.age].filter(Boolean).join(' · ');
   const main = h('div', { class: 'card-main', role: 'button', tabindex: '0', 'aria-label': `Détails de ${item.title}` },
-    h('h3', { class: 'title' }, item.title),
+    h('h3', { class: 'title', title: item.title }, displayTitle(item.title)),
     line.text ? h('p', { class: `line${line.warn ? ' warn' : ''}` }, line.text) : null,
-    h('div', { class: 'meta' }, h('span', {}, meta || ' '), h('span', { class: 'more' }, 'Détails →')));
+    h('div', { class: 'meta' },
+      h('span', { class: 'meta-txt' }, meta || ' '),
+      ratio != null ? h('span', { class: `ratio${tier}`, title: `${item.likeCount.toLocaleString('fr-FR')} likes pour ${(item.viewCount ?? parseCount(item.views)).toLocaleString('fr-FR')} vues` }, icon('heart'), `${fmtPct(ratio)} likes`) : null,
+      h('span', { class: 'more' }, 'Détails →')));
   card.append(h('a', { class: 'yt-link', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Ouvrir « ${item.title} » sur YouTube` }, 'YouTube', icon('ext')));
   const open = () => openBeat(item, plan);
   main.addEventListener('click', open);
@@ -437,7 +446,7 @@ function renderMini() {
     mini.classList.toggle('playing', playing);
     mini.classList.toggle('blocked', player.status === 'blocked');
     mini.classList.toggle('loading', player.status === 'loading' && !playing);
-    $('#miniTitle').textContent = player.item.title || 'Prod';
+    $('#miniTitle').textContent = displayTitle(player.item.title || 'Prod');
     const sub = player.status === 'blocked' ? player.message
       : player.status === 'loading' && !playing ? 'Chargement…'
       : player.status === 'tap' && !playing ? 'Touche ▶ pour lancer le son'
@@ -537,7 +546,7 @@ function openBeat(item, plan) {
   const claude = sampleFn && item.description ? h('div', { class: 'claude-ask' }, 'Une tournure bizarre ? ', h('button', { type: 'button', class: 'link', onclick: (e) => askClaude(item, e.currentTarget.parentElement) }, 'Demander l’avis de Claude')) : null;
   openDrawer('Détails de la prod', [
     verdictBox(r.license, item.status === 'unread'),
-    h('div', {}, h('h3', { class: 'd-title' }, item.title), h('p', { class: 'd-meta' }, [item.views ? `${item.views} vues` : null, item.age].filter(Boolean).join(' · ') || 'YouTube')),
+    h('div', {}, h('h3', { class: 'd-title' }, item.title), h('p', { class: 'd-meta' }, [item.views ? `${item.views} vues` : null, item.likeCount != null ? `${fmtViews(item.likeCount)} likes` : null, ratioOf(item) != null ? `ratio ${fmtPct(ratioOf(item))}` : null, item.age].filter(Boolean).join(' · ') || 'YouTube')),
     h('div', { class: 'd-actions' },
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'primary', onclick: () => playItem(item) }, icon('play'), 'Écouter') : null,
       !WEB ? h('a', { class: 'primary', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, icon('play'), 'Écouter sur YouTube') : null,
@@ -589,7 +598,7 @@ async function readPages(ids, host) {
   const out = new Map();
   for (const r of p.results || []) {
     const id = youtubeId(r.url);
-    if (id) out.set(id, { title: cleanTitle(r.title), text: resultText(r) });
+    if (id) { const text = resultText(r); out.set(id, { title: cleanTitle(r.title), text, stats: parseWatchStats(text) }); }
   }
   return out;
 }
@@ -649,6 +658,13 @@ function fmtViews(n) {
   if (n < 1e6) return `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0).replace(/\.0$/, '').replace('.', ',')} k`;
   return `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0).replace(/\.0$/, '').replace('.', ',')} M`;
 }
+function applyStats(item, st) {
+  if (!st) return;
+  if (st.likes != null && st.likes >= 0) item.likeCount = st.likes;
+  if (st.views != null && st.views > 0) { item.viewCount = st.views; item.views = fmtViews(st.views); }
+}
+const ratioOf = (item) => likeRatio(item?.likeCount, item?.viewCount ?? parseCount(item?.views));
+const fmtPct = (x) => `${x >= 10 ? Math.round(x) : x.toFixed(1).replace('.', ',')} %`;
 function ageFrom(iso) {
   const t = Date.parse(iso || '');
   if (!t) return null;
@@ -695,7 +711,7 @@ async function webSearch(queries, add, before) {
       if (v) {
         item.title = v.snippet?.title || item.title;
         item.description = String(v.snippet?.description || '').slice(0, DESC_MAX);
-        item.views = fmtViews(v.statistics?.viewCount);
+        applyStats(item, { views: parseCount(v.statistics?.viewCount), likes: parseCount(v.statistics?.likeCount) });
         item.age = ageFrom(v.snippet?.publishedAt);
         item.status = 'done';
       } else item.status = 'unread';
@@ -874,7 +890,8 @@ function openBrowse() {
 }
 
 // Filtres de licence (servent aussi à choisir « free for profit » dans les recherches)
-const searchPrefs = local.get('searchPrefs', { licenses: ['ffp', 'upto'], sort: 'licence', bpm: null });
+const searchPrefs = Object.assign({ licenses: ['ffp', 'upto'], sort: 'licence', bpm: null }, local.get('searchPrefs', null) || {});
+if (!Array.isArray(searchPrefs.licenses)) searchPrefs.licenses = ['ffp', 'upto'];
 let session = null; // { prompt, plan, done: [], items: Map, at }
 let searching = false;
 let rendered = new Set();
@@ -887,7 +904,11 @@ function setStatus(text, progress, done = false) {
   $('#statusText').textContent = text;
   $('#statusFill').style.width = `${Math.round(Math.max(0.04, progress) * 100)}%`;
 }
-function showNotice(kind, extra) {
+function techDetail(e) {
+  const where = String(e?.stack || '').split('\n').slice(0, 3).join(' | ');
+  return `${String(e?.message || e?.code || e).slice(0, 160)}${where ? ` — ${where.slice(0, 260)}` : ''}`;
+}
+function showNotice(kind, extra, detail) {
   const box = $('#notice');
   if (!kind) { box.replaceChildren(); return; }
   const retry = h('button', { type: 'button', class: 'primary', onclick: () => { showNotice(null); startSearch(); } }, 'Réessayer');
@@ -920,7 +941,9 @@ function showNotice(kind, extra) {
   } else if (kind === 'unavailable') {
     n = h('div', { class: 'notice' }, h('h3', {}, 'Recherche indisponible dans cette vue'), h('p', {}, 'Ouvre Melofinds sur claude.ai pour lancer la recherche automatique.'));
   } else {
-    n = h('div', { class: 'notice error' }, h('h3', {}, 'La recherche a coupé'), h('p', {}, extra || 'Parallel Search n’a pas répondu.'), h('div', { class: 'actions' }, retry));
+    n = h('div', { class: 'notice error' }, h('h3', {}, 'La recherche a coupé'), h('p', {}, extra || 'Parallel Search n’a pas répondu.'),
+      detail ? h('details', { class: 'tech' }, h('summary', {}, 'Détail technique (à me copier si ça revient)'), h('code', {}, detail)) : null,
+      h('div', { class: 'actions' }, retry));
   }
   box.replaceChildren(n);
 }
@@ -974,8 +997,14 @@ async function runSearch(first) {
     let firstErr = null;
     const add = (v, q, snippet = '') => {
       const cur = session.items.get(v.id);
-      if (cur) { if (!cur.foundBy.includes(q)) cur.foundBy.push(q); if (!cur.snippet && snippet) cur.snippet = snippet; return; }
-      session.items.set(v.id, { id: v.id, url: `https://www.youtube.com/watch?v=${v.id}`, title: v.title || 'Vidéo YouTube', views: v.views || null, age: v.age || null, foundBy: [q], status: 'pending', description: '', snippet });
+      if (cur) {
+        if (!Array.isArray(cur.foundBy)) cur.foundBy = [];
+        if (!cur.foundBy.includes(q)) cur.foundBy.push(q);
+        if (!cur.snippet && snippet) cur.snippet = snippet;
+        return;
+      }
+      const viewCount = parseCount(v.views);
+      session.items.set(v.id, { id: v.id, url: `https://www.youtube.com/watch?v=${v.id}`, title: v.title || 'Vidéo YouTube', views: viewCount != null ? fmtViews(viewCount) : null, viewCount, likeCount: null, age: v.age || null, foundBy: [q], status: 'pending', description: '', snippet });
     };
     if (WEB) {
       if (!(await webSearch(queries, add, before))) return;
@@ -1011,6 +1040,7 @@ async function runSearch(first) {
       for (const item of batch) {
         const page = pages.get(item.id);
         if (page?.title && item.title === 'Vidéo YouTube') item.title = page.title;
+        applyStats(item, page?.stats);
         const desc = cleanDescription(page?.text, item.title, DESC_MAX);
         if (useful(desc)) { item.description = desc; item.status = 'done'; read++; } else retry.push(item);
       }
@@ -1021,6 +1051,7 @@ async function runSearch(first) {
       let pages = new Map();
       try { pages = await readPages(batch.map((i) => i.id), 'm.youtube.com'); } catch (e) { if (errorKind(e)) throw e; }
       for (const item of batch) {
+        applyStats(item, pages.get(item.id)?.stats);
         const desc = cleanDescription(pages.get(item.id)?.text, item.title);
         const snip = cleanDescription(item.snippet, item.title);
         if (useful(desc)) { item.description = desc; item.status = 'done'; }
@@ -1040,8 +1071,18 @@ async function runSearch(first) {
   } catch (e) {
     await searchTask?.catch?.(() => {});
     const kind = errorKind(e);
-    setStatus(null);
-    if (kind) showNotice(kind); else showNotice('error', `Erreur : ${String(e?.message || e?.code || e).slice(0, 160)}`);
+    console.error('Melofinds : recherche interrompue', e);
+    const got = [...session.items.values()].filter((i) => i.status !== 'pending');
+    [...session.items.values()].forEach((i) => { if (i.status === 'pending') i.status = 'unread'; });
+    if (kind) { setStatus(null); showNotice(kind); }
+    else if (got.length) {
+      setStatus(`${got.length} prods trouvées · la recherche s’est arrêtée en route`, 1, true);
+      toast('Recherche interrompue : je garde ce que j’ai trouvé', { label: 'Réessayer', run: () => runSearch(false) });
+      saveSession();
+    } else {
+      setStatus(null);
+      showNotice('error', 'Un problème est survenu pendant la recherche. Relance-la.', techDetail(e));
+    }
   } finally {
     searching = false;
     $('#goBtn').disabled = false;
@@ -1073,6 +1114,15 @@ function findTerms() { const t = $('#findInput').value.trim(); return t ? parseT
 function sortRows(rows, how) {
   const rank = { ffp: 0, upto: 1, fnp: 2, paid: 3, unknown: 4 };
   const unreadPenalty = (r) => (r._item.status === 'unread' ? 1 : 0);
+  if (how === 'ratio') {
+    // Les vidéos à moins de 300 vues passent après : leur ratio ne veut pas dire grand-chose.
+    const key = (r) => { const x = ratioOf(r._item); const v = r._item.viewCount ?? parseCount(r._item.views) ?? 0; return x == null ? -2 : v < 300 ? -1 + x / 1000 : x; };
+    return [...rows].sort((a, b) => key(b) - key(a) || b.score - a.score);
+  }
+  if (how === 'vues') {
+    const v = (r) => r._item.viewCount ?? parseCount(r._item.views) ?? -1;
+    return [...rows].sort((a, b) => v(b) - v(a) || b.score - a.score);
+  }
   if (how === 'licence') {
     return [...rows].sort((a, b) => unreadPenalty(a) - unreadPenalty(b) || rank[a.license.category] - rank[b.license.category]
       || (a.license.category === 'upto' ? (b.license.limit || 0) - (a.license.limit || 0) : 0) || b.score - a.score);
@@ -1084,7 +1134,7 @@ function renderResults() {
   if (!session) return;
   const plan = session.plan;
   const items = [...session.items.values()].filter((i) => i.status === 'done' || i.status === 'unread');
-  const rows = items.map((item) => ({ ...analyzed(item, plan), _item: item })).filter((r) => r.isBeat || r._item.status === 'unread');
+  const rows = items.map((item) => safeRow(item, plan)).filter((r) => r && (r.isBeat || r._item.status === 'unread'));
   $('#results').hidden = !rows.length && !searching;
   const counts = Object.fromEntries(LIC_ORDER.map((c) => [c, 0]));
   rows.forEach((r) => counts[r.license.category]++);
@@ -1173,7 +1223,7 @@ $('#bpmClear').addEventListener('click', () => {
 $('#howBtn').addEventListener('click', () => {
   if (!session) return;
   const p = session.plan;
-  const counts = (q) => [...session.items.values()].filter((i) => i.foundBy.includes(q)).length;
+  const counts = (q) => [...session.items.values()].filter((i) => (i.foundBy || []).includes(q)).length;
   openDrawer('Comment j’ai cherché', [
     h('p', { class: 'muted', style: 'margin:0' }, `Pour « ${session.prompt} », voici ce que l’algo a compris et les recherches lancées sur YouTube.`),
     p.recognized?.length ? h('div', { class: 'd-sec' }, h('h4', {}, 'Rappeurs reconnus'), h('div', { class: 'alist' }, p.recognized.map((r) => h('div', { class: 'arow' },
@@ -1194,12 +1244,16 @@ $('#howBtn').addEventListener('click', () => {
 function saveSession() {
   if (!session) return;
   const items = [...session.items.values()].filter((i) => i.status !== 'pending')
-    .map(({ id, url, title, views, age, foundBy, status, description, partial }) => ({ id, url, title, views, age, foundBy, status, description, partial }));
+    .map(({ id, url, title, views, viewCount, likeCount, age, foundBy, status, description, partial }) => ({ id, url, title, views, viewCount, likeCount, age, foundBy, status, description, partial }));
   local.set('session', { prompt: session.prompt, done: session.done, at: session.at, items });
 }
 function restoreSession() {
   const s = local.get('session', null);
-  if (!s?.items?.length) return;
+  if (!s || typeof s.prompt !== 'string' || !Array.isArray(s.items)) return;
+  s.items = s.items.filter((i) => i && typeof i.id === 'string')
+    .map((i) => ({ ...i, title: String(i.title || 'Vidéo YouTube'), foundBy: Array.isArray(i.foundBy) ? i.foundBy : [], status: i.status === 'pending' ? 'unread' : (i.status || 'done') }));
+  if (!s.items.length) return;
+  if (!Array.isArray(s.done)) s.done = [];
   promptEl.value = s.prompt;
   syncChips();
   renderRecognized();
@@ -1290,9 +1344,10 @@ function setSeg(s) {
   $('#savedSearches').hidden = s !== 'searches';
 }
 $$('.seg-btn').forEach((b) => b.addEventListener('click', () => setSeg(b.dataset.seg)));
-const savedPrefs = local.get('savedPrefs', { licenses: LIC_ORDER.slice() });
+const savedPrefs = Object.assign({ licenses: LIC_ORDER.slice() }, local.get('savedPrefs', null) || {});
+if (!Array.isArray(savedPrefs.licenses)) savedPrefs.licenses = LIC_ORDER.slice();
 function renderSavedProds() {
-  const rows = state.beats.map((b) => ({ ...analyzed(b, null), _item: b }));
+  const rows = state.beats.map((b) => safeRow(b, null)).filter(Boolean);
   const counts = Object.fromEntries(LIC_ORDER.map((c) => [c, 0]));
   rows.forEach((r) => counts[r.license.category]++);
   $('#savedPills').hidden = !rows.length;

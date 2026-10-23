@@ -75,3 +75,47 @@ export function usefulDescription(t) {
   return t.replace(/\s+/g, ' ').trim().length >= 25
     && /free|profit|lease|licen|credit|crédit|bpm|key|buy|purchase|beatstars|bsta\.rs|spotify|stream|prod|instagram|contact|mail|gratuit/i.test(t);
 }
+
+/** « 56K » → 56000, « 1.2M » → 1200000, « 56,576 » → 56576, « 1,2 k » → 1200 */
+export function parseCount(s) {
+  if (typeof s === 'number') return Number.isFinite(s) ? s : null;
+  const m = String(s || '').replace(/\s+/g, '').match(/^([\d.,]+)([KMB])?/i);
+  if (!m) return null;
+  let num = m[1];
+  if (m[2]) num = num.replace(',', '.');
+  else num = num.replace(/[.,]/g, '');
+  const n = Number(num) * ({ K: 1e3, M: 1e6, B: 1e9 }[(m[2] || '').toUpperCase()] || 1);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+/** Page vidéo (texte) → { likes, views } : « 10K Likes 369K Views », « 56,576 views ». */
+export function parseWatchStats(text) {
+  const t = String(text || '');
+  const likes = t.match(/([\d][\d.,]*\s*[KMB]?)\s*(?:likes?|j'aime|j’aime)\b/i);
+  const views = t.match(/([\d][\d.,]*\s*[KMB]?)\s*(?:views?|vues)\b/i);
+  return { likes: likes ? parseCount(likes[1]) : null, views: views ? parseCount(views[1]) : null };
+}
+
+/** Ratio likes / vues en %, ou null si on ne sait pas. */
+export function likeRatio(likes, views) {
+  if (!likes || !views || views <= 0) return null;
+  return Math.min(100, (likes / views) * 100);
+}
+
+/** Titre affiché dans la liste : sans « [FREE FOR PROFIT] », « (FREE) », « FFP »…
+ *  (l'algo a déjà lu la licence ; le titre complet reste dans les détails). */
+export function displayTitle(title) {
+  const orig = String(title || '');
+  let t = orig
+    // [FREE FOR PROFIT] (FREE) {FREE} 【FREE】 *FREE* [FFP] [100% FREE] [Free for non profit]
+    .replace(/[[({【「*]\s*(?:100\s*%\s*)?(?:free|ffp|f4p|gratuit)\b[^\])}】」*\n]{0,30}[\])}】」*]/gi, ' ')
+    .replace(/\b(?:100\s*%\s*)?free\s*(?:for|4)\s*(?:non[\s-]*)?profit(?:\s*(?:use|beats?|instrumental))?\b/gi, ' ')
+    .replace(/\b(?:ffp|f4p|fnp)\b/gi, ' ')
+    .replace(/^\s*(?:100\s*%\s*)?free\b(?:\s*(?:beat|instrumental|download|dl))?/i, ' ')
+    .replace(/[|\-–—:]\s*free\s*$/i, ' ')
+    .replace(/[[({]\s*[\])}]/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s|\-–—:,/•]+|[\s|\-–—:,/•]+$/g, '')
+    .trim();
+  return t.length >= 3 ? t : orig.trim();
+}
