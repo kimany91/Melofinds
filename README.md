@@ -35,7 +35,26 @@ si tu peux vraiment sortir ton son sur Spotify sans payer.
    utilisées. ⭐ pour la mettre en favori et la relancer en un clic. 💾 pour
    garder une prod.
 
-## Lancer l'app
+## L'ouvrir dans Claude (sans rien installer)
+
+Une version de Melofinds est publiée comme page dans Claude : elle s'ouvre
+dans le navigateur, sur PC comme sur mobile. Une page Claude ne peut pas
+contacter YouTube elle-même, donc elle fonctionne ainsi :
+
+- **Recherche** : ta description → courants, artistes US, BPM conseillé et
+  recherches « type beat » prêtes, avec un bouton qui ouvre chaque recherche
+  sur YouTube.
+- **Vérifier** : colle le titre et la description d'une vidéo → verdict
+  immédiat (Free for profit, Up to, Free, Payant, titre trompeur), avec les
+  phrases qui le prouvent. Bouton facultatif « Avis de Claude ».
+- **Ma liste** : les prods vérifiées, triées par licence, BPM et style, avec
+  recherche dans les descriptions.
+- **Historique & favoris** : gardés dans ton compte Claude.
+
+Le code de cette page est dans `artifact/` ; `npm run build:artifact`
+produit `dist/melofinds.html` (même moteur que l'appli, tout en un fichier).
+
+## Lancer l'app complète (recherche YouTube automatique)
 
 Il faut [Node.js](https://nodejs.org) 18 ou plus. Aucune dépendance à installer.
 

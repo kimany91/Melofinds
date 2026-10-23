@@ -1,0 +1,2814 @@
+<title>Melofinds</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Mise en page : barre d'onglets en haut (PC) ou en bas (mobile) ; à gauche le
+   formulaire, à droite ce que l'algo produit. Identité « console de studio » :
+   fond anthracite, VU-mètres, chiffres BPM en mono, couleurs de licence. */
+:root {
+  --bg: #0d0e12;
+  --bg-2: #111318;
+  --panel: #16181f;
+  --panel-2: #1c1f28;
+  --panel-3: #252935;
+  --line: #272b37;
+  --line-2: #343a4a;
+  --text: #f0f1f5;
+  --muted: #9aa0b2;
+  --faint: #6d7386;
+  --accent: #a78bfa;
+  --accent-ink: #ffffff;
+  --accent-2: #f472b6;
+  --grad: linear-gradient(135deg, #8b5cf6 0%, #c026d3 55%, #ec4899 100%);
+  --ffp: #22c55e;
+  --upto: #f59e0b;
+  --fnp: #60a5fa;
+  --paid: #f87171;
+  --unknown: #9096a6;
+  --warn: #fb923c;
+  --mark: rgba(250, 204, 21, .32);
+  --shadow: 0 10px 30px rgba(0, 0, 0, .35);
+  --f-display: "Bricolage Grotesque", "Manrope", system-ui, sans-serif;
+  --f-body: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius: 16px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f3f2f7; --bg-2: #ebeaf2; --panel: #ffffff; --panel-2: #f6f5fa; --panel-3: #ecebf3;
+    --line: #e1dfea; --line-2: #cfccdc; --text: #15131d; --muted: #5d5970; --faint: #8a869a;
+    --accent: #7c3aed; --accent-2: #db2777;
+    --ffp: #15803d; --upto: #b45309; --fnp: #2563eb; --paid: #dc2626; --unknown: #6b7280; --warn: #c2410c;
+    --mark: rgba(250, 204, 21, .45);
+    --shadow: 0 10px 30px rgba(30, 20, 60, .08);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f3f2f7; --bg-2: #ebeaf2; --panel: #ffffff; --panel-2: #f6f5fa; --panel-3: #ecebf3;
+  --line: #e1dfea; --line-2: #cfccdc; --text: #15131d; --muted: #5d5970; --faint: #8a869a;
+  --accent: #7c3aed; --accent-2: #db2777;
+  --ffp: #15803d; --upto: #b45309; --fnp: #2563eb; --paid: #dc2626; --unknown: #6b7280; --warn: #c2410c;
+  --mark: rgba(250, 204, 21, .45);
+  --shadow: 0 10px 30px rgba(30, 20, 60, .08);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--f-body);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 60; background: var(--bg); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: inherit; }
+h1, h2, h3 { text-wrap: balance; }
+code { font-family: var(--f-mono); font-size: .86em; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 0 5px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.small-note, .hint { color: var(--faint); font-size: 12.5px; }
+.hint { margin: 8px 0 0; }
+.eyebrow { margin: 0; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 700; }
+
+.cat-ffp { --c: var(--ffp); } .cat-upto { --c: var(--upto); } .cat-fnp { --c: var(--fnp); }
+.cat-paid { --c: var(--paid); } .cat-unknown { --c: var(--unknown); } .cat-warn { --c: var(--warn); }
+
+/* ============ Barre du haut ============ */
+.topbar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 40;
+  display: flex; align-items: center; gap: 16px;
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 9px; font: 800 20px/1 var(--f-display); letter-spacing: -.03em; }
+.brand b { color: var(--accent); }
+.logo { display: inline-flex; gap: 2px; align-items: flex-end; height: 22px; padding: 4px 5px; border-radius: 8px; background: var(--grad); }
+.logo i { width: 3px; border-radius: 2px; background: #fff; animation: eq 1.2s ease-in-out infinite; }
+.logo i:nth-child(1) { height: 7px; animation-delay: -.3s; } .logo i:nth-child(2) { height: 12px; animation-delay: -.7s; }
+.logo i:nth-child(3) { height: 9px; animation-delay: -.1s; } .logo i:nth-child(4) { height: 14px; animation-delay: -.5s; }
+@keyframes eq { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
+.logo i { transform-origin: bottom; }
+.tabs { display: flex; gap: 2px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+.tab { position: relative; display: flex; align-items: center; gap: 6px; border: 0; background: none; padding: 7px 13px; border-radius: 10px; color: var(--muted); font-weight: 600; font-size: 14px; }
+.tab i { font-style: normal; }
+.tab:hover { color: var(--text); }
+.tab.active { background: var(--panel-3); color: var(--text); }
+.tab .dot { position: absolute; top: 2px; right: 3px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font: 700 10px/17px var(--f-body); font-style: normal; text-align: center; }
+.top-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.sync { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.pill-btn { border: 1px solid var(--line); background: var(--panel); border-radius: 11px; height: 34px; padding: 0 12px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.pill-btn:hover { color: var(--text); border-color: var(--line-2); }
+
+main {
+  max-width: 1500px; margin: 0 auto;
+  padding-block: 22px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.view[hidden], .view:not(.active) { display: none; }
+.view.active { display: block; animation: fade .2s ease; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } }
+
+/* ============ Mise en page PC ============ */
+.layout { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 22px; align-items: start; }
+.sidebar { position: sticky; top: calc(70px + env(safe-area-inset-top, 0px)); }
+.form-panel { display: flex; flex-direction: column; max-height: calc(100vh - 100px); background: var(--panel); border: 1px solid var(--line); border-radius: 20px; overflow: hidden; }
+.verify-form { position: sticky; top: calc(70px + env(safe-area-inset-top, 0px)); }
+.form-body { overflow: auto; padding: 18px 18px 6px; scrollbar-width: thin; min-width: 0; }
+.form-toggle { display: none; }
+.step { margin-bottom: 18px; }
+.step h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 10px; font: 700 15px/1.2 var(--f-display); letter-spacing: -.01em; }
+.step .num { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; font: 700 12px/1 var(--f-mono); color: #fff; background: var(--grad); }
+
+.prompt-box { position: relative; }
+textarea, input[type=text], input[type=url], input[type=search], input[type=number], select {
+  width: 100%; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; outline: none; transition: border-color .15s, box-shadow .15s; min-width: 0;
+}
+textarea { resize: vertical; min-height: 84px; line-height: 1.45; }
+#prompt { padding-right: 34px; }
+textarea:focus, input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+select { width: auto; padding: 7px 30px 7px 10px; appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%; background-size: 5px 5px; background-repeat: no-repeat; }
+.clear-btn { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: var(--panel-3); color: var(--muted); font-size: 11px; }
+.field { display: grid; gap: 6px; margin-bottom: 12px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.field em { font-weight: 400; color: var(--faint); }
+
+.sugg { margin-top: 10px; display: grid; gap: 6px; }
+.sugg-row { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.sugg-row > b { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); width: 52px; flex: none; }
+.chip { border: 1px solid var(--line); background: var(--panel-2); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; font-weight: 500; white-space: nowrap; color: var(--muted); transition: .12s; }
+.chip:hover { color: var(--text); border-color: var(--line-2); }
+.chip.on { color: var(--text); background: color-mix(in srgb, var(--accent) 20%, var(--panel-2)); border-color: color-mix(in srgb, var(--accent) 65%, transparent); }
+.direct { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.direct span { font-size: 12.5px; color: var(--faint); white-space: nowrap; }
+.direct input { padding: 8px 11px; font-size: 14px; }
+
+.license-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.lic { position: relative; display: flex; gap: 9px; align-items: center; padding: 9px 10px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; background: var(--panel-2); transition: .15s; min-width: 0; }
+.lic input { position: absolute; opacity: 0; pointer-events: none; }
+.lic-ico { font-size: 16px; filter: grayscale(1); opacity: .55; }
+.lic b { display: block; font-size: 13.5px; }
+.lic small { color: var(--faint); font-size: 11.5px; line-height: 1.25; display: block; }
+.lic:has(input:checked) { border-color: color-mix(in srgb, var(--c) 70%, transparent); background: color-mix(in srgb, var(--c) 13%, var(--panel-2)); }
+.lic:has(input:checked) .lic-ico { filter: none; opacity: 1; }
+.lic:has(input:checked)::after { content: "✓"; position: absolute; top: 5px; right: 8px; font-size: 11px; font-weight: 800; color: var(--c); }
+.lic:has(input:focus-visible) { outline: 2px solid var(--c); outline-offset: 2px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13.5px; color: var(--muted); }
+.row.check { justify-content: flex-start; cursor: pointer; gap: 7px; }
+input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
+.adv summary { list-style: none; cursor: pointer; }
+.adv summary::-webkit-details-marker { display: none; }
+.adv summary h3::after { content: "▾"; margin-left: auto; color: var(--faint); }
+.adv[open] summary h3::after { transform: rotate(180deg); }
+
+.cta { padding: 12px 18px 16px; border-top: 1px solid var(--line); background: var(--panel); display: flex; gap: 8px; }
+.primary {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+  border: 0; border-radius: 13px; padding: 12px 16px; font: 700 15px/1.2 var(--f-body); color: #fff;
+  background: var(--grad); box-shadow: 0 8px 22px rgba(168, 85, 247, .28); transition: transform .15s, opacity .15s;
+}
+.primary:hover { transform: translateY(-1px); }
+.primary:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
+.primary.small { width: auto; padding: 9px 15px; font-size: 14px; box-shadow: none; white-space: nowrap; }
+.mini { border: 1px solid var(--line); background: var(--panel-2); border-radius: 10px; padding: 6px 11px; font-size: 13px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.mini:hover { color: var(--text); border-color: var(--line-2); }
+.mini.danger { color: var(--paid); }
+.mini.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+
+/* ============ Plan de recherche ============ */
+.results-col { min-width: 0; }
+.plan-head, .list-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.plan-head h2, .list-top h2 { margin: 2px 0 0; font: 800 clamp(22px, 3vw, 30px)/1.1 var(--f-display); letter-spacing: -.03em; }
+.note { color: var(--upto); font-size: 13.5px; background: color-mix(in srgb, var(--upto) 10%, transparent); border: 1px solid color-mix(in srgb, var(--upto) 35%, transparent); border-radius: 12px; padding: 9px 12px; margin-bottom: 12px; }
+.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-bottom: 20px; }
+.plan-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; min-width: 0; }
+.plan-card h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); }
+.tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.tag { font-size: 12.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.tag.genre { background: color-mix(in srgb, var(--accent-2) 12%, transparent); border-color: color-mix(in srgb, var(--accent-2) 35%, transparent); }
+.tag.artist { background: color-mix(in srgb, #06b6d4 12%, transparent); border-color: color-mix(in srgb, #06b6d4 38%, transparent); }
+.tag.plain { background: var(--panel-2); border-color: var(--line); color: var(--muted); }
+button.tag { cursor: pointer; color: var(--text); }
+.bpm-big { font: 700 28px/1.1 var(--f-mono); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.bpm-big small { font-size: 13px; color: var(--muted); margin-left: 4px; }
+.queries-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.queries-head h3 { margin: 0; font: 700 18px/1.2 var(--f-display); }
+.queries { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 8px; counter-reset: q; }
+.q { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; counter-increment: q; min-width: 0; }
+.q::before { content: counter(q); font: 700 12px/1 var(--f-mono); color: var(--faint); width: 18px; text-align: right; flex: none; }
+.q-main { flex: 1; min-width: 0; }
+.q-text { font: 600 14px/1.35 var(--f-mono); word-break: break-word; }
+.q-why { color: var(--faint); font-size: 12.5px; }
+.q-actions { display: flex; gap: 6px; flex: none; }
+.yt { display: inline-flex; align-items: center; gap: 6px; border-radius: 10px; padding: 7px 12px; font-size: 13px; font-weight: 700; text-decoration: none; color: #fff; background: #e11d48; white-space: nowrap; }
+.yt:hover { filter: brightness(1.1); }
+.next-step { display: flex; gap: 14px; align-items: center; justify-content: space-between; padding: 14px 16px; border-radius: 16px; border: 1px dashed var(--line-2); background: var(--bg-2); }
+.next-step span { display: block; color: var(--muted); font-size: 13.5px; margin-top: 2px; }
+
+/* ============ Vérifier ============ */
+.verify-layout { grid-template-columns: 420px minmax(0, 1fr); }
+.verify-empty { padding: 26px 8px; max-width: 640px; }
+.verify-empty h2 { font: 800 clamp(24px, 3.4vw, 34px)/1.1 var(--f-display); letter-spacing: -.03em; margin: 14px 0 10px; }
+.verify-empty p { color: var(--muted); margin: 0 0 18px; }
+.vu { display: flex; gap: 5px; align-items: flex-end; height: 44px; }
+.vu i { width: 9px; border-radius: 3px; background: linear-gradient(to top, var(--ffp) 0 55%, var(--upto) 55% 80%, var(--paid) 80%); transform-origin: bottom; animation: eq 1.1s ease-in-out infinite; height: 44px; }
+.vu i:nth-child(2) { animation-delay: -.4s; } .vu i:nth-child(3) { animation-delay: -.8s; } .vu i:nth-child(4) { animation-delay: -.2s; }
+.vu i:nth-child(5) { animation-delay: -.6s; } .vu i:nth-child(6) { animation-delay: -.9s; } .vu i:nth-child(7) { animation-delay: -.3s; }
+.legend { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.legend li { display: flex; gap: 10px; align-items: baseline; font-size: 14px; color: var(--muted); }
+.legend b { color: var(--c); min-width: 128px; }
+.claude-box { margin-top: 14px; padding: 14px 16px; border-radius: 16px; background: var(--panel); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); font-size: 14px; }
+.claude-box h4 { margin: 0 0 6px; font: 700 14px/1.2 var(--f-display); }
+.claude-box q { display: block; color: var(--muted); font-style: italic; margin-top: 6px; quotes: "« " " »"; }
+.claude-box .agree { font-weight: 700; }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line-2); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ============ Ma liste ============ */
+.list-wrap { max-width: 1400px; margin: 0 auto; }
+.list-wrap.narrow { max-width: 920px; }
+.banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 14px; margin-bottom: 14px; border-radius: 14px; background: color-mix(in srgb, var(--accent) 10%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); font-size: 13.5px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.stat { position: relative; overflow: hidden; text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 10px 12px; transition: .15s; }
+.stat::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--c); }
+.stat b { display: block; font: 700 22px/1.1 var(--f-mono); color: var(--c); }
+.stat span { font-size: 12.5px; color: var(--muted); }
+.stat.off { opacity: .45; }
+.stat.off b { color: var(--muted); }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 8px; }
+.search-desc { position: relative; flex: 1 1 280px; min-width: 0; }
+.search-desc .ico { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); font-size: 13px; opacity: .7; }
+.search-desc input { padding-left: 34px; background: var(--panel); }
+.quick { display: flex; gap: 5px; flex-wrap: wrap; }
+.tools { display: flex; gap: 10px; margin-left: auto; }
+.tools label { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.tools select { background-color: var(--panel); font-size: 13px; }
+.bpm-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 8px 0 4px; }
+.switch-row { display: flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+.switch { position: relative; width: 38px; height: 22px; flex: none; display: inline-block; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+.slider { position: absolute; inset: 0; background: var(--panel-3); border: 1px solid var(--line-2); border-radius: 22px; transition: .2s; }
+.slider::before { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .2s; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+.switch input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + .slider::before { transform: translateX(16px); }
+.switch input:focus-visible + .slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bpm-range { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bpm-range input[type=number] { width: 82px; text-align: center; font: 700 14px var(--f-mono); padding: 7px 8px; }
+.dash { color: var(--faint); }
+.count { color: var(--muted); font-size: 13px; margin: 6px 0 14px; }
+
+.group { margin-bottom: 28px; }
+.group-head { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+.gico { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: color-mix(in srgb, var(--c) 16%, transparent); font-size: 15px; flex: none; }
+.group-head h2 { margin: 0; font: 700 18px/1.2 var(--f-display); }
+.group-head h2 small { color: var(--c); font: 700 14px var(--f-mono); margin-left: 6px; }
+.group-head p { margin: 0; color: var(--faint); font-size: 12.5px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.nores { text-align: center; padding: 34px 20px; color: var(--muted); border: 1px dashed var(--line-2); border-radius: 16px; }
+.nores h3 { color: var(--text); margin: 6px 0; font-family: var(--f-display); }
+
+/* ============ Carte prod ============ */
+.card { position: relative; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; transition: border-color .15s, box-shadow .15s; min-width: 0; }
+.card:hover { border-color: color-mix(in srgb, var(--c) 45%, var(--line)); box-shadow: var(--shadow); }
+.card.misleading { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); }
+.cover { position: relative; display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; min-height: 92px; padding: 34px 14px 12px; background:
+  radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--c) 32%, transparent), transparent 60%),
+  linear-gradient(135deg, color-mix(in srgb, var(--c) 14%, var(--panel-2)), var(--panel-2)); border-bottom: 1px solid var(--line); }
+.ribbon { position: absolute; left: 12px; top: 10px; padding: 3px 9px; border-radius: 8px; font-size: 11.5px; font-weight: 800; color: #fff; background: var(--c); letter-spacing: .01em; }
+.example-tag { position: absolute; right: 12px; top: 10px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); border: 1px solid var(--line-2); border-radius: 6px; padding: 1px 6px; }
+.cover-style { font: 700 15px/1.2 var(--f-display); color: var(--text); min-width: 0; }
+.cover-style small { display: block; font: 500 12px var(--f-body); color: var(--muted); }
+.cover-bpm { font: 700 30px/1 var(--f-mono); letter-spacing: -.03em; color: var(--text); font-variant-numeric: tabular-nums; text-align: right; flex: none; }
+.cover-bpm small { display: block; font-size: 10.5px; letter-spacing: .1em; color: var(--muted); text-align: right; }
+.cover-bpm.none { font-size: 13px; color: var(--faint); font-family: var(--f-body); font-weight: 600; }
+.card-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 7px; flex: 1; min-width: 0; }
+.verdict { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: var(--c); }
+.conf { margin-left: auto; color: var(--faint); font-weight: 500; font-size: 11.5px; display: flex; align-items: center; gap: 5px; }
+.conf-dots { display: inline-flex; gap: 2px; }
+.conf-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--line-2); }
+.conf-dots i.on { background: var(--c); }
+.title { margin: 0; font-size: 14.5px; font-weight: 700; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.meta { color: var(--faint); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alert { display: flex; gap: 8px; padding: 8px 10px; border-radius: 10px; font-size: 12.5px; line-height: 1.4; background: color-mix(in srgb, var(--warn) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); color: var(--text); }
+.alert b { color: var(--warn); }
+.badges { display: flex; flex-wrap: wrap; gap: 5px; }
+.badge { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 7px; background: var(--panel-2); border: 1px solid var(--line); white-space: nowrap; color: var(--muted); }
+.badge.credit { color: var(--upto); border-color: color-mix(in srgb, var(--upto) 40%, transparent); }
+.keyinfo { margin: 0; padding: 8px 10px; list-style: none; display: grid; gap: 4px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; font-size: 12.5px; min-width: 0; }
+.keyinfo-title { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); font-weight: 700; }
+.keyinfo li { display: flex; gap: 7px; color: var(--muted); line-height: 1.4; word-break: break-word; min-width: 0; }
+.keyinfo li i { font-style: normal; flex: none; width: 16px; text-align: center; }
+.keyinfo li.licence { color: var(--text); }
+mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1px; }
+mark.kw { background: none; font-weight: 800; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--c) 75%, transparent); text-underline-offset: 2px; }
+.actions { display: flex; gap: 5px; padding: 0 14px 12px; }
+.act { flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line); background: var(--panel-2); border-radius: 9px; padding: 7px 4px; font-size: 12.5px; font-weight: 700; color: var(--muted); text-decoration: none; white-space: nowrap; }
+.act:hover { color: var(--text); border-color: var(--line-2); }
+.act.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.act.yt-act { color: #fff; background: #e11d48; border-color: #e11d48; }
+.details { display: grid; gap: 8px; font-size: 13px; border-top: 1px dashed var(--line-2); padding: 10px 0 0; margin: 0 14px 12px; min-width: 0; }
+.reasons { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.reasons li { padding-left: 14px; position: relative; }
+.reasons li::before { content: ""; position: absolute; left: 2px; top: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--c); }
+.reasons q { display: block; color: var(--muted); font-size: 12px; font-style: italic; margin-top: 3px; quotes: "« " " »"; word-break: break-word; padding-left: 8px; border-left: 2px solid var(--line-2); }
+.desc summary { cursor: pointer; color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.desc pre { white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5 var(--f-mono); background: var(--bg-2); border: 1px solid var(--line); padding: 10px; border-radius: 10px; max-height: 300px; overflow: auto; margin: 6px 0 0; }
+.big-card .title { -webkit-line-clamp: unset; font-size: 16px; }
+
+/* ============ Historique ============ */
+.hist-tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.hist-list { display: grid; gap: 10px; }
+.hist { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; background: var(--panel); min-width: 0; }
+.hist.fav { border-color: color-mix(in srgb, #facc15 45%, var(--line)); }
+.hist-top { display: flex; gap: 10px; align-items: flex-start; }
+.hist-title { font-weight: 700; flex: 1; word-break: break-word; font-size: 15px; min-width: 0; }
+.hist-date { color: var(--faint); font-size: 12px; white-space: nowrap; }
+.hist .tags { margin: 8px 0; }
+.hist-queries { color: var(--faint); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.hist-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+.hist-actions input { width: auto; flex: 1 1 180px; padding: 6px 10px; font-size: 13.5px; }
+.star { border: 0; background: none; font-size: 20px; line-height: 1; padding: 0 2px; filter: grayscale(1) opacity(.45); transition: .15s; }
+.star.on { filter: none; }
+.empty-list { text-align: center; padding: 30px 16px; color: var(--muted); border: 1px dashed var(--line-2); border-radius: 14px; font-size: 14px; }
+
+/* ============ Toast ============ */
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 20px); opacity: 0; pointer-events: none; z-index: 70; display: flex; gap: 12px; align-items: center; padding: 10px 14px; border-radius: 12px; background: var(--text); color: var(--bg); font-weight: 700; font-size: 14px; transition: .25s; box-shadow: var(--shadow); max-width: calc(100vw - 32px); }
+.toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.toast button { border: 0; background: none; color: var(--accent); font-weight: 800; padding: 0; }
+
+/* =========================================================
+   MODE MOBILE (body.mobile, choisi selon l'appareil)
+   ========================================================= */
+body.mobile main { padding-block: 12px calc(88px + env(safe-area-inset-bottom, 0px)); }
+body.mobile .topbar { gap: 8px; padding-block: 9px; }
+body.mobile .sync { display: none; }
+body.mobile .tabs {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 50; border-radius: 0; border: 0; border-top: 1px solid var(--line);
+  justify-content: space-around; background: var(--panel);
+  padding-top: 6px; padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px));
+}
+body.mobile .tab { flex: 1; flex-direction: column; gap: 1px; padding: 5px 2px; font-size: 11px; }
+body.mobile .tab i { font-size: 19px; }
+body.mobile .tab .dot { right: calc(50% - 24px); }
+body.mobile .layout, body.mobile .verify-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+body.mobile .sidebar, body.mobile .verify-form { position: static; }
+body.mobile .form-panel { max-height: none; border-radius: 18px; }
+body.mobile .form-body { padding: 14px 14px 4px; }
+body.mobile .form-toggle { display: none; width: 100%; align-items: center; justify-content: space-between; border: 0; background: none; text-align: left; padding: 14px 16px; font-size: 14.5px; }
+body.mobile .form-panel.collapsed .form-toggle { display: flex; }
+body.mobile .form-panel.collapsed .form-body, body.mobile .form-panel.collapsed .cta { display: none; }
+body.mobile .sugg-row > b { width: 100%; }
+body.mobile .plan-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+body.mobile .plan-card { padding: 10px 11px; }
+body.mobile .bpm-big { font-size: 22px; }
+body.mobile .q { flex-wrap: wrap; }
+body.mobile .q-main { flex-basis: calc(100% - 40px); }
+body.mobile .q-actions { width: 100%; padding-left: 30px; }
+body.mobile .q-actions .yt { flex: 1; justify-content: center; }
+body.mobile .next-step { flex-direction: column; align-items: stretch; }
+body.mobile .stats { display: flex; overflow-x: auto; gap: 6px; scrollbar-width: none; }
+body.mobile .stat { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; }
+body.mobile .stat b { font-size: 15px; }
+body.mobile .stat span { white-space: nowrap; }
+body.mobile .search-desc { flex-basis: 100%; }
+body.mobile .quick { overflow-x: auto; flex-wrap: nowrap; width: 100%; scrollbar-width: none; }
+body.mobile .tools { margin-left: 0; width: 100%; }
+body.mobile .tools label { flex: 1; }
+body.mobile .tools select { width: 100%; }
+body.mobile .grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+body.mobile .act span { display: none; }
+body.mobile .act { padding: 9px 4px; font-size: 15px; }
+body.mobile .verify-empty { padding: 4px 2px; }
+body.mobile .legend b { min-width: 110px; }
+body.mobile textarea, body.mobile input, body.mobile select { font-size: 16px; }
+body.mobile .toast { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
+body.mobile .list-top { flex-wrap: wrap; }
+
+@media (max-width: 1100px) { body.desktop .layout { grid-template-columns: 330px minmax(0, 1fr); } body.desktop .verify-layout { grid-template-columns: 360px minmax(0, 1fr); } }
+@media (max-width: 820px) {
+  body.desktop .layout, body.desktop .verify-layout { grid-template-columns: minmax(0, 1fr); }
+  body.desktop .sidebar, body.desktop .verify-form { position: static; }
+  body.desktop .form-panel { max-height: none; }
+  body.desktop .tab span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .logo i, .vu i { animation: none; }
+  .view.active { animation: none; }
+}
+
+</style>
+
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>Melo<b>finds</b></span></div>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button class="tab active" id="tab-search" data-view="search" role="tab"><i aria-hidden="true">🔎</i><span>Recherche</span></button>
+    <button class="tab" id="tab-verify" data-view="verify" role="tab"><i aria-hidden="true">📖</i><span>Vérifier</span></button>
+    <button class="tab" id="tab-list" data-view="list" role="tab"><i aria-hidden="true">🗂️</i><span>Ma liste</span><em id="listCount" class="dot" hidden></em></button>
+    <button class="tab" id="tab-history" data-view="history" role="tab"><i aria-hidden="true">🕘</i><span>Historique</span></button>
+  </nav>
+  <div class="top-actions">
+    <span id="syncBadge" class="sync" title="Où sont gardés ton historique et ta liste">…</span>
+    <button id="deviceBadge" class="pill-btn" type="button" title="L’algo s’adapte à ton appareil. Clique pour forcer l’autre mode.">💻 PC</button>
+  </div>
+</header>
+
+<main>
+  <!-- ======================= RECHERCHE ======================= -->
+  <section id="view-search" class="view active" aria-labelledby="tab-search">
+    <div class="layout">
+      <aside class="sidebar">
+        <form id="searchForm" class="form-panel" autocomplete="off">
+          <button type="button" id="formToggle" class="form-toggle"><span>✏️ <b id="formToggleText">Modifier la recherche</b></span><span aria-hidden="true">▾</span></button>
+          <div class="form-body">
+            <section class="step">
+              <h3><span class="num">1</span> Décris ta prod</h3>
+              <div class="prompt-box">
+                <textarea id="prompt" rows="3" placeholder="ex. rapide, énergique et musicale&#10;ou : sombre, drill, piano, 145 bpm"></textarea>
+                <button type="button" id="clearPrompt" class="clear-btn" title="Effacer" aria-label="Effacer la description">✕</button>
+              </div>
+              <div id="suggestions" class="sugg"></div>
+              <label class="direct" for="manualQuery"><span>ou cherche directement</span>
+                <input id="manualQuery" type="text" placeholder="Lil Uzi Vert type beat" enterkeyhint="go">
+              </label>
+            </section>
+
+            <section class="step">
+              <h3><span class="num">2</span> Licences voulues</h3>
+              <div class="license-grid" id="licenseGrid"></div>
+              <p class="hint">« Free for profit » ou « Up to » cochés → les recherches YouTube ajoutent <code>free for profit</code>.</p>
+            </section>
+
+            <details class="step adv" id="advBox">
+              <summary><h3><span class="num">3</span> Profondeur</h3></summary>
+              <label class="row" for="depth"><span>Nombre de recherches</span>
+                <select id="depth">
+                  <option value="">Auto</option>
+                  <option value="rapide">Rapide · 3</option>
+                  <option value="normal">Normale · 5</option>
+                  <option value="approfondie">Approfondie · 8</option>
+                </select>
+              </label>
+            </details>
+          </div>
+          <div class="cta">
+            <button type="submit" class="primary" id="goBtn">Lancer la recherche</button>
+          </div>
+        </form>
+      </aside>
+
+      <div class="results-col" id="planCol">
+        <div class="plan-head">
+          <div>
+            <p class="eyebrow">Ce que l’algo a compris</p>
+            <h2 id="planTitle">Ta recherche</h2>
+          </div>
+          <button type="button" id="favNow" class="mini" hidden>☆ Mettre en favori</button>
+        </div>
+        <div id="planNotes"></div>
+        <div class="plan-grid">
+          <div class="plan-card"><h4>Ambiances</h4><div id="pMoods" class="tags"></div><div id="pInstr" class="small-note"></div></div>
+          <div class="plan-card"><h4>Courants de rap</h4><div id="pGenres" class="tags"></div></div>
+          <div class="plan-card"><h4>Artistes US « type beat »</h4><div id="pArtists" class="tags"></div></div>
+          <div class="plan-card bpm-card"><h4>BPM conseillé</h4><div id="pBpm" class="bpm-big"></div><div id="pBpmWhy" class="small-note"></div></div>
+        </div>
+        <div class="queries-head">
+          <h3 id="qTitle">Recherches YouTube</h3>
+          <span class="small-note">Ouvre chaque recherche sur YouTube, puis vérifie les prods qui te plaisent.</span>
+        </div>
+        <ol id="queries" class="queries"></ol>
+        <div class="next-step">
+          <div>
+            <b>Ensuite : vérifie la licence d’une prod.</b>
+            <span>Sur YouTube, ouvre la vidéo, déplie la description (« …plus »), copie le titre et la description, puis colle-les dans <b>Vérifier</b>. L’algo lit tout et te dit si elle est vraiment libre pour Spotify.</span>
+          </div>
+          <button type="button" class="primary small" id="goVerify">📖 Vérifier une prod</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= VÉRIFIER ======================= -->
+  <section id="view-verify" class="view" aria-labelledby="tab-verify">
+    <div class="layout verify-layout">
+      <div class="form-panel verify-form">
+        <div class="form-body">
+          <section class="step">
+            <h3><span class="num">1</span> Colle les infos de la vidéo</h3>
+            <label class="field" for="vUrl"><span>Lien YouTube <em>(facultatif)</em></span>
+              <input id="vUrl" type="url" placeholder="https://www.youtube.com/watch?v=…" inputmode="url">
+            </label>
+            <label class="field" for="vTitle"><span>Titre</span>
+              <input id="vTitle" type="text" placeholder="[FREE] Lil Uzi Vert Type Beat - “Neon” | Free For Profit">
+            </label>
+            <label class="field" for="vDesc"><span>Description complète</span>
+              <textarea id="vDesc" rows="9" placeholder="Colle ici toute la description (pense à cliquer sur « …plus » sur YouTube)"></textarea>
+            </label>
+            <p class="hint">Astuce : tu peux tout coller d’un coup dans « Titre » : la 1ʳᵉ ligne devient le titre, le reste la description.</p>
+          </section>
+          <section class="step">
+            <h3><span class="num">2</span> Ou essaie un exemple</h3>
+            <div class="tags" id="vExamples"></div>
+          </section>
+        </div>
+        <div class="cta two">
+          <button type="button" class="mini" id="vClear">Effacer</button>
+          <button type="button" class="primary" id="vAdd" disabled>➕ Ajouter à ma liste</button>
+        </div>
+      </div>
+
+      <div class="results-col">
+        <div id="vEmpty" class="verify-empty">
+          <div class="vu" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <h2>Le titre ment souvent. La description, non.</h2>
+          <p>Beaucoup de vidéos disent « FREE FOR PROFIT » dans le titre et précisent plus bas qu’il faut acheter une licence pour Spotify. Colle le titre et la description : l’algo lit tout, ligne par ligne, et range la prod.</p>
+          <ul class="legend" id="legend"></ul>
+        </div>
+        <div id="vResult" hidden></div>
+        <div id="vClaude" class="claude-box" hidden></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= MA LISTE ======================= -->
+  <section id="view-list" class="view" aria-labelledby="tab-list">
+    <div class="list-wrap">
+      <div class="list-top">
+        <div>
+          <p class="eyebrow">Prods vérifiées</p>
+          <h2>Ma liste</h2>
+        </div>
+        <button type="button" class="primary small" id="listAdd">➕ Vérifier une prod</button>
+      </div>
+      <div id="examplesBanner" class="banner" hidden>
+        <span><b>Exemples.</b> Ta liste est vide : voici des prods fictives pour voir comment l’algo les range. Elles disparaissent dès que tu ajoutes ta première prod.</span>
+        <button type="button" class="mini" id="hideExamples">Masquer les exemples</button>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="toolbar">
+        <div class="search-desc">
+          <span class="ico" aria-hidden="true">🔎</span>
+          <input id="descSearch" type="search" placeholder="Chercher dans les descriptions… (spotify, wav, -lease)" aria-label="Chercher dans les descriptions">
+        </div>
+        <div class="quick" id="quickTerms"></div>
+        <div class="tools">
+          <label for="sort"><span>Tri</span>
+            <select id="sort">
+              <option value="pertinence">Pertinence</option>
+              <option value="bpm-asc">BPM ↑</option>
+              <option value="bpm-desc">BPM ↓</option>
+              <option value="limite">Limite de streams</option>
+              <option value="recent">Ajout récent</option>
+            </select>
+          </label>
+          <label for="styleFilter"><span>Style</span>
+            <select id="styleFilter"><option value="">Tous</option></select>
+          </label>
+        </div>
+      </div>
+      <div class="bpm-bar">
+        <label class="switch-row" for="bpmEnabled">
+          <span class="switch"><input type="checkbox" id="bpmEnabled"><span class="slider"></span></span>
+          <span>Trier / filtrer par BPM</span>
+        </label>
+        <div id="bpmBox" class="bpm-range" hidden>
+          <input type="number" id="bpmMin" min="50" max="220" inputmode="numeric" placeholder="min" aria-label="BPM minimum">
+          <span class="dash">→</span>
+          <input type="number" id="bpmMax" min="50" max="220" inputmode="numeric" placeholder="max" aria-label="BPM maximum">
+          <label class="row check" for="bpmRequire"><input type="checkbox" id="bpmRequire"> <span>Cacher sans BPM</span></label>
+        </div>
+        <label class="row check" for="noCredit"><input type="checkbox" id="noCredit"> <span>Cacher si crédit obligatoire</span></label>
+      </div>
+      <p id="count" class="count"></p>
+      <div id="listResults"></div>
+    </div>
+  </section>
+
+  <!-- ======================= HISTORIQUE ======================= -->
+  <section id="view-history" class="view" aria-labelledby="tab-history">
+    <div class="list-wrap narrow">
+      <div class="list-top">
+        <div>
+          <p class="eyebrow">Tes demandes</p>
+          <h2>Historique &amp; favoris</h2>
+        </div>
+        <div class="hist-tools">
+          <label class="row check" for="onlyFav"><input type="checkbox" id="onlyFav"> <span>⭐ Favoris seulement</span></label>
+          <button type="button" id="clearHistory" class="mini danger">Tout effacer</button>
+        </div>
+      </div>
+      <div id="historyList" class="hist-list"></div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"><span id="toastMsg"></span><button type="button" id="toastAction" hidden></button></div>
+
+<script>
+// ===== src/core/text.js =====
+// Normalisation de texte partagée (serveur + navigateur).
+// Les beatmakers écrivent souvent en police « fantaisie » (𝗙𝗥𝗘𝗘 𝗙𝗢𝗥 𝗣𝗥𝗢𝗙𝗜𝗧),
+// avec des accents, des apostrophes typographiques, etc. On ramène tout en
+// ASCII minuscule, tout en gardant une table de correspondance vers le texte
+// d'origine pour pouvoir afficher l'extrait exact qui a servi à décider.
+
+const COMBINING = /[̀-ͯ]/g;
+
+const PUNCT_MAP = {
+  '‘': "'", '’': "'", '‚': "'", '′': "'", '`': "'",
+  '“': '"', '”': '"', '„': '"',
+  '–': '-', '—': '-', '−': '-',
+  ' ': ' ', ' ': ' ', ' ': ' ',
+  'ß': 'ss',
+};
+
+function mapCodePoint(ch) {
+  if (PUNCT_MAP[ch]) return PUNCT_MAP[ch];
+  let out = ch.normalize('NFKC').normalize('NFD').replace(COMBINING, '');
+  out = out.toLowerCase();
+  // Les variantes d'emoji / sélecteurs de variation disparaissent.
+  out = out.replace(/[︀-️​-‍]/g, '');
+  return out;
+}
+
+/**
+ * Normalise un texte et renvoie aussi `map` : map[i] = index dans l'original
+ * du caractère normalisé i.
+ */
+function normalizeWithMap(input) {
+  const src = String(input ?? '');
+  let text = '';
+  const map = [];
+  let i = 0;
+  for (const ch of src) {
+    const mapped = mapCodePoint(ch);
+    for (const c of mapped) {
+      text += c;
+      map.push(i);
+    }
+    i += ch.length;
+  }
+  map.push(src.length);
+  return { text, map, source: src };
+}
+
+function normalize(input) {
+  return normalizeWithMap(input).text;
+}
+
+/** Extrait lisible du texte original autour d'un match fait sur le texte normalisé. */
+function snippet(norm, start, end, pad = 40) {
+  const { map, source } = norm;
+  const s = map[Math.max(0, start)] ?? 0;
+  const e = map[Math.min(map.length - 1, end)] ?? source.length;
+  let from = Math.max(0, s - pad);
+  let to = Math.min(source.length, e + pad);
+  // Ne pas couper au milieu d'une ligne voisine : on s'arrête aux retours ligne.
+  const before = source.lastIndexOf('\n', s - 1);
+  if (before >= from) from = before + 1;
+  const after = source.indexOf('\n', e);
+  if (after !== -1 && after < to) to = after;
+  let out = source.slice(from, to).trim();
+  if (from > 0 && source[from - 1] !== '\n') out = '…' + out;
+  if (to < source.length && source[to] !== '\n') out += '…';
+  return out;
+}
+
+/** Échappe une chaîne pour l'utiliser dans une RegExp. */
+function escapeRe(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Teste si `needle` (déjà normalisé) apparaît comme mot entier dans `hay`. */
+function hasWord(hay, needle) {
+  if (!needle) return false;
+  const re = new RegExp(`(^|[^a-z0-9])${escapeRe(needle)}($|[^a-z0-9])`);
+  return re.test(hay);
+}
+
+
+// ===== src/core/genres.js =====
+// Base de connaissances : ambiances → courants de rap → artistes US.
+//
+// Chaque courant a :
+//   - une plage de BPM typique (celle écrite dans les titres YouTube)
+//   - des poids par ambiance (positif = colle bien, négatif = à l'opposé)
+//   - des artistes US « type beat » classés du plus recherché au moins recherché
+//   - des alias pour reconnaître le courant quand on l'écrit directement
+
+// Ambiances reconnues dans ta description (FR + EN). `en` = mot utilisé dans
+// les requêtes YouTube (les titres de type beat sont en anglais).
+const MOODS = {
+  fast: {
+    label: 'Rapide',
+    en: 'fast',
+    words: ['rapide', 'rapides', 'vite', 'fast', 'uptempo', 'up tempo', 'speed', 'rythme', 'rythmee', 'nerveux', 'nerveuse', 'frenetique', 'pressé', 'presse', 'quick'],
+  },
+  slow: {
+    label: 'Lent',
+    en: 'slow',
+    words: ['lent', 'lente', 'slow', 'lentement', 'downtempo', 'tranquille', 'pose', 'posee', 'lourd et lent'],
+  },
+  energetic: {
+    label: 'Énergique',
+    en: 'energetic',
+    words: ['energique', 'energiques', 'energie', 'energetic', 'energy', 'hype', 'puissant', 'puissante', 'banger', 'motivant', 'motivante', 'turn up', 'turnup', 'explosif', 'explosive', 'intense', 'pumped', 'qui bouge', 'percutant', 'percutante', 'patate', 'qui tape', 'tape fort'],
+  },
+  aggressive: {
+    label: 'Agressif',
+    en: 'hard',
+    words: ['agressif', 'agressive', 'aggressive', 'violent', 'violente', 'hard', 'dur', 'dure', 'brutal', 'brutale', 'venere', 'enerve', 'enervee', 'rage', 'vener', 'sale', 'crasseux', 'menacant', 'menacante', 'gangster', 'street', 'drill vibe'],
+  },
+  melodic: {
+    label: 'Mélodique',
+    en: 'melodic',
+    words: ['musical', 'musicale', 'musicales', 'musicaux', 'melodique', 'melodiques', 'melodic', 'melodieux', 'melodieuse', 'harmonieux', 'harmonieuse', 'melodie', 'melodies', 'chantant', 'chantante', 'catchy', 'accrocheur', 'accrocheuse'],
+  },
+  dark: {
+    label: 'Sombre',
+    en: 'dark',
+    words: ['sombre', 'sombres', 'dark', 'obscur', 'obscure', 'evil', 'horreur', 'horror', 'glauque', 'inquietant', 'inquietante', 'mysterieux', 'mysterieuse', 'creepy', 'demoniaque', 'noir'],
+  },
+  sad: {
+    label: 'Triste',
+    en: 'sad',
+    words: ['triste', 'tristes', 'sad', 'melancolique', 'melancolie', 'emouvant', 'emouvante', 'emotional', 'emotionnel', 'emotionnelle', 'emotion', 'emotions', 'pain', 'douleur', 'nostalgique', 'nostalgie', 'deprime', 'deprimant', 'cœur brise', 'coeur brise', 'heartbreak', 'touchant', 'touchante'],
+  },
+  happy: {
+    label: 'Joyeux',
+    en: 'happy',
+    words: ['joyeux', 'joyeuse', 'happy', 'heureux', 'heureuse', 'solaire', 'ete', 'summer', 'positif', 'positive', 'feel good', 'feelgood', 'festif', 'festive', 'fun', 'lumineux', 'lumineuse', 'ensoleille', 'party', 'fete'],
+  },
+  chill: {
+    label: 'Chill',
+    en: 'chill',
+    words: ['chill', 'calme', 'calmes', 'detente', 'detendu', 'relax', 'relaxant', 'doux', 'douce', 'smooth', 'lofi', 'lo-fi', 'lo fi', 'cool', 'tranquille', 'posé', 'soft', 'paisible', 'zen', 'mellow'],
+  },
+  bouncy: {
+    label: 'Bouncy',
+    en: 'bouncy',
+    words: ['bouncy', 'dansant', 'dansante', 'groovy', 'groove', 'rebondissant', 'bounce', 'danse', 'club', 'qui fait danser', 'swing', 'balancant', 'entrainant', 'entrainante'],
+  },
+  atmospheric: {
+    label: 'Planant',
+    en: 'ambient',
+    words: ['planant', 'planante', 'aerien', 'aerienne', 'atmospherique', 'atmospheric', 'spacieux', 'psyche', 'psychedelique', 'psychedelic', 'cloud', 'ambient', 'ambiant', 'reverb', 'reveur', 'reveuse', 'dreamy', 'spatial', 'cosmique', 'ethere', 'etheree', 'vaporeux', 'hypnotique'],
+  },
+  oldschool: {
+    label: 'Old school',
+    en: 'old school',
+    words: ['old school', 'oldschool', 'old-school', 'annees 90', '90s', '90\'s', 'classique', 'sample', 'samples', 'soulful', 'soul', 'jazz', 'jazzy', 'vintage', 'retro', 'vinyle', 'vinyl', 'boom bap', 'boombap'],
+  },
+  experimental: {
+    label: 'Expérimental',
+    en: 'experimental',
+    words: ['experimental', 'experimentale', 'bizarre', 'weird', 'futuriste', 'futuristic', 'distordu', 'distordue', 'distorted', 'glitch', 'hyperpop', 'chelou', 'underground', 'saturé', 'sature', 'saturee'],
+  },
+  epic: {
+    label: 'Épique',
+    en: 'epic',
+    words: ['epique', 'epic', 'orchestral', 'orchestrale', 'cinematique', 'cinematic', 'grandiose', 'film', 'majestueux', 'majestueuse', 'triomphant', 'puissance'],
+  },
+  funky: {
+    label: 'Funky',
+    en: 'funky',
+    words: ['funky', 'funk', 'g-funk', 'gfunk', 'west coast', 'westcoast', 'californie', 'california', 'cali'],
+  },
+  romantic: {
+    label: 'Love / R&B',
+    en: 'r&b',
+    words: ['love', 'amour', 'romantique', 'romantic', 'sensuel', 'sensuelle', 'rnb', 'r&b', 'r n b', 'sexy', 'sentimental', 'sentimentale'],
+  },
+};
+
+// Instruments : ajoutés tels quels aux requêtes (« … type beat piano »).
+const INSTRUMENTS = {
+  piano: ['piano', 'pianos', 'keys'],
+  guitar: ['guitare', 'guitar', 'guitares', 'guitars', 'acoustique', 'acoustic'],
+  synth: ['synthe', 'synth', 'synths', 'synthetiseur', 'synthes'],
+  strings: ['violon', 'violons', 'violin', 'strings', 'cordes', 'cello', 'violoncelle'],
+  flute: ['flute', 'flutes'],
+  bells: ['cloche', 'cloches', 'bells', 'bell'],
+  choir: ['choeur', 'choeurs', 'chœur', 'chœurs', 'choir', 'voix', 'vocal', 'vocals', 'vocaux'],
+  sax: ['sax', 'saxophone'],
+  '808': ['808', '808s', 'basse', 'bass', 'sub'],
+  orchestra: ['orchestre', 'orchestra'],
+};
+
+const GENRES = [
+  {
+    id: 'rage',
+    label: 'Rage',
+    query: 'rage',
+    bpm: [145, 170],
+    aliases: ['rage', 'opium', 'rage beat'],
+    moods: { fast: 3, energetic: 3, aggressive: 2, experimental: 2, dark: 1, melodic: 0, chill: -3, slow: -3, sad: -1, oldschool: -3 },
+    artists: ['Playboi Carti', 'Ken Carson', 'Destroy Lonely', 'Trippie Redd', 'Yeat', 'Homixide Gang'],
+    aliasesArtists: { 'Playboi Carti': ['carti', 'playboi carti'], 'Ken Carson': ['ken carson'], 'Yeat': ['yeat'], 'Trippie Redd': ['trippie'], 'Destroy Lonely': ['destroy lonely'] },
+  },
+  {
+    id: 'jerk',
+    label: 'Jerk',
+    query: 'jerk',
+    bpm: [150, 175],
+    aliases: ['jerk', 'jerk beat', 'new jerk'],
+    moods: { fast: 3, energetic: 3, bouncy: 2, experimental: 2, melodic: 1, chill: -2, slow: -3, oldschool: -2 },
+    artists: ['Nettspend', 'Xaviersobased', 'Osamason', 'Lazer Dim 700', '1oneam'],
+    aliasesArtists: { 'Nettspend': ['nettspend'], 'Osamason': ['osamason'], 'Xaviersobased': ['xavier', 'xaviersobased'] },
+  },
+  {
+    id: 'melodic-hype',
+    label: 'Melodic bounce',
+    query: 'melodic',
+    bpm: [140, 165],
+    aliases: ['melodic bounce', 'uzi vibe'],
+    moods: { fast: 3, energetic: 2, melodic: 3, happy: 2, bouncy: 2, dark: -1, slow: -2, oldschool: -2 },
+    artists: ['Lil Uzi Vert', 'Lil Tecca', 'Juice WRLD', 'Iann Dior', 'Ski Mask the Slump God'],
+    aliasesArtists: { 'Lil Uzi Vert': ['uzi', 'lil uzi', 'lil uzi vert'], 'Lil Tecca': ['tecca', 'lil tecca'], 'Juice WRLD': ['juice wrld', 'juice world'] },
+  },
+  {
+    id: 'trap',
+    label: 'Trap (Atlanta)',
+    query: 'trap',
+    bpm: [130, 160],
+    aliases: ['trap', 'atlanta', 'atl', 'trap beat'],
+    moods: { energetic: 2, dark: 2, aggressive: 1, bouncy: 2, fast: 1, slow: 0, chill: -1, oldschool: -2 },
+    artists: ['Future', 'Young Thug', 'Gunna', 'Travis Scott', 'Lil Baby', 'Migos'],
+    aliasesArtists: { 'Future': ['future'], 'Young Thug': ['young thug', 'thugger'], 'Travis Scott': ['travis', 'travis scott'], 'Lil Baby': ['lil baby'], 'Gunna': ['gunna'] },
+  },
+  {
+    id: 'dark-trap',
+    label: 'Dark trap',
+    query: 'dark trap',
+    bpm: [130, 150],
+    aliases: ['dark trap', 'evil trap', 'metro boomin'],
+    moods: { dark: 3, epic: 3, aggressive: 2, energetic: 1, slow: 1, happy: -3, chill: -1 },
+    artists: ['21 Savage', 'Metro Boomin', 'Future', 'Southside', 'Don Toliver'],
+    aliasesArtists: { '21 Savage': ['21 savage', 'savage'], 'Metro Boomin': ['metro', 'metro boomin'] },
+  },
+  {
+    id: 'melodic-trap',
+    label: 'Melodic trap',
+    query: 'melodic trap',
+    bpm: [130, 160],
+    aliases: ['melodic trap', 'trap melodique', 'trap melodic'],
+    moods: { melodic: 3, sad: 2, energetic: 1, romantic: 1, atmospheric: 1, aggressive: -1, oldschool: -2 },
+    artists: ['Lil Durk', 'Gunna', 'Lil Baby', 'Polo G', 'Roddy Ricch', 'A Boogie wit da Hoodie'],
+    aliasesArtists: { 'Lil Durk': ['durk', 'lil durk'], 'Polo G': ['polo g'], 'Roddy Ricch': ['roddy', 'roddy ricch'] },
+  },
+  {
+    id: 'pain',
+    label: 'Pain music',
+    query: 'sad',
+    bpm: [120, 160],
+    aliases: ['pain', 'pain music', 'sad rap', 'sad trap'],
+    moods: { sad: 3, melodic: 3, slow: 1, chill: 1, happy: -3, aggressive: -1, energetic: -1 },
+    artists: ['Rod Wave', 'NBA YoungBoy', 'Toosii', 'Kevin Gates', 'Polo G'],
+    aliasesArtists: { 'Rod Wave': ['rod wave'], 'NBA YoungBoy': ['youngboy', 'nba youngboy', 'nba'], 'Kevin Gates': ['kevin gates'] },
+  },
+  {
+    id: 'ny-drill',
+    label: 'NY drill',
+    query: 'ny drill',
+    bpm: [140, 150],
+    aliases: ['drill', 'ny drill', 'brooklyn drill', 'bronx drill', 'drill us'],
+    moods: { dark: 3, aggressive: 3, energetic: 2, bouncy: 1, fast: 1, chill: -3, happy: -2, oldschool: -1 },
+    artists: ['Pop Smoke', 'Fivio Foreign', 'Kay Flock', 'Sheff G', 'Sleepy Hallow', 'Ice Spice'],
+    aliasesArtists: { 'Pop Smoke': ['pop smoke'], 'Fivio Foreign': ['fivio'], 'Kay Flock': ['kay flock'], 'Sleepy Hallow': ['sleepy hallow'] },
+  },
+  {
+    id: 'chicago-drill',
+    label: 'Chicago drill',
+    query: 'chicago drill',
+    bpm: [130, 150],
+    aliases: ['chicago drill', 'chiraq'],
+    moods: { dark: 3, aggressive: 3, energetic: 1, slow: 0, happy: -3, chill: -2 },
+    artists: ['King Von', 'Chief Keef', 'Lil Durk', 'G Herbo', 'FBG Duck'],
+    aliasesArtists: { 'King Von': ['king von', 'von'], 'Chief Keef': ['chief keef', 'sosa'], 'G Herbo': ['g herbo', 'herbo'] },
+  },
+  {
+    id: 'jersey',
+    label: 'Jersey club',
+    query: 'jersey club',
+    bpm: [135, 150],
+    aliases: ['jersey', 'jersey club', 'jersey drill'],
+    moods: { fast: 3, bouncy: 3, energetic: 3, happy: 1, dark: -1, slow: -3, chill: -2 },
+    artists: ['Bandmanrill', 'Lil Uzi Vert', 'Ice Spice', 'Cash Cobain'],
+    aliasesArtists: { 'Bandmanrill': ['bandmanrill'], 'Cash Cobain': ['cash cobain'] },
+  },
+  {
+    id: 'detroit',
+    label: 'Detroit',
+    query: 'detroit',
+    bpm: [90, 110],
+    aliases: ['detroit', 'detroit beat', 'flint'],
+    moods: { bouncy: 3, energetic: 2, aggressive: 1, fast: 1, melodic: 1, sad: -1 },
+    artists: ['Babyface Ray', 'Veeze', 'Tee Grizzley', 'BabyTron', 'Icewear Vezzo', 'Sada Baby'],
+    aliasesArtists: { 'Babyface Ray': ['babyface ray'], 'Veeze': ['veeze'], 'Tee Grizzley': ['tee grizzley'], 'BabyTron': ['babytron'] },
+  },
+  {
+    id: 'memphis',
+    label: 'Memphis / Phonk',
+    query: 'memphis',
+    bpm: [130, 160],
+    aliases: ['memphis', 'phonk', 'drift phonk', 'cowbell'],
+    moods: { dark: 2, aggressive: 3, bouncy: 2, energetic: 2, oldschool: 1, happy: -2, chill: -2 },
+    artists: ['Key Glock', 'Pooh Shiesty', 'GloRilla', 'Duke Deuce', 'Three 6 Mafia', 'Young Dolph'],
+    aliasesArtists: { 'Key Glock': ['key glock'], 'Pooh Shiesty': ['pooh shiesty', 'shiesty'], 'GloRilla': ['glorilla'] },
+  },
+  {
+    id: 'florida',
+    label: 'Florida / SoundCloud',
+    query: 'soundcloud',
+    bpm: [140, 170],
+    aliases: ['florida', 'soundcloud rap', 'emo rap', 'emo trap'],
+    moods: { aggressive: 2, dark: 2, experimental: 2, fast: 2, energetic: 2, sad: 1, chill: -2 },
+    artists: ['XXXTentacion', 'Ski Mask the Slump God', 'Denzel Curry', 'Kodak Black', 'Lil Pump'],
+    aliasesArtists: { 'XXXTentacion': ['xxxtentacion', 'xxx'], 'Denzel Curry': ['denzel curry', 'denzel'], 'Kodak Black': ['kodak'], 'Ski Mask the Slump God': ['ski mask'] },
+  },
+  {
+    id: 'plugg',
+    label: 'Plugg / Pluggnb',
+    query: 'pluggnb',
+    bpm: [140, 160],
+    aliases: ['plugg', 'pluggnb', 'plug', 'plugnb', 'plugg n b'],
+    moods: { melodic: 3, chill: 2, atmospheric: 2, happy: 1, romantic: 2, aggressive: -2, dark: -1 },
+    artists: ['Summrs', 'Autumn!', 'Kankan', 'Joeyy', 'Lil Shine'],
+    aliasesArtists: { 'Summrs': ['summrs'], 'Autumn!': ['autumn'], 'Kankan': ['kankan'] },
+  },
+  {
+    id: 'cloud',
+    label: 'Cloud / Psychedelic',
+    query: 'psychedelic',
+    bpm: [120, 150],
+    aliases: ['cloud', 'cloud rap', 'psychedelic', 'psychedelique', 'ambient trap'],
+    moods: { atmospheric: 3, chill: 2, melodic: 2, dark: 1, slow: 1, aggressive: -2, oldschool: -1 },
+    artists: ['Travis Scott', 'Don Toliver', 'Lucki', 'Kid Cudi', 'SoFaygo'],
+    aliasesArtists: { 'Don Toliver': ['don toliver'], 'Lucki': ['lucki'], 'Kid Cudi': ['cudi', 'kid cudi'] },
+  },
+  {
+    id: 'boom-bap',
+    label: 'Boom bap',
+    query: 'boom bap',
+    bpm: [80, 98],
+    aliases: ['boom bap', 'boombap', 'old school', 'oldschool', '90s', 'griselda'],
+    moods: { oldschool: 3, chill: 1, sad: 1, slow: 2, dark: 1, fast: -2, experimental: -1, bouncy: -1 },
+    artists: ['Joey Bada$$', 'Westside Gunn', 'Benny the Butcher', 'Conway the Machine', 'J. Cole', 'Nas'],
+    aliasesArtists: { 'Joey Bada$$': ['joey badass', 'joey bada$$'], 'J. Cole': ['j cole', 'cole'], 'Westside Gunn': ['westside gunn', 'griselda'], 'Nas': ['nas'] },
+  },
+  {
+    id: 'jazz-chill',
+    label: 'Chill / Jazzy',
+    query: 'chill',
+    bpm: [80, 100],
+    aliases: ['lofi', 'lo-fi', 'jazz rap', 'jazzy', 'chill rap'],
+    moods: { chill: 3, oldschool: 2, melodic: 2, happy: 1, atmospheric: 1, aggressive: -3, fast: -2, dark: -1 },
+    artists: ['Mac Miller', 'Larry June', 'Smino', 'Isaiah Rashad', 'Saba'],
+    aliasesArtists: { 'Mac Miller': ['mac miller'], 'Larry June': ['larry june'], 'Isaiah Rashad': ['isaiah rashad'] },
+  },
+  {
+    id: 'west-coast',
+    label: 'West coast',
+    query: 'west coast',
+    bpm: [90, 105],
+    aliases: ['west coast', 'westcoast', 'g-funk', 'gfunk', 'bay area'],
+    moods: { funky: 3, bouncy: 3, happy: 1, chill: 1, oldschool: 1, dark: -1 },
+    artists: ['Kendrick Lamar', 'YG', 'Blxst', 'Roddy Ricch', 'Nipsey Hussle'],
+    aliasesArtists: { 'Kendrick Lamar': ['kendrick', 'kendrick lamar', 'kdot'], 'YG': ['yg'], 'Nipsey Hussle': ['nipsey'] },
+  },
+  {
+    id: 'rnb-rap',
+    label: 'Rap / R&B',
+    query: 'r&b',
+    bpm: [70, 140],
+    aliases: ['rnb', 'r&b', 'trapsoul', 'rap rnb'],
+    moods: { romantic: 3, melodic: 3, chill: 2, atmospheric: 1, sad: 1, aggressive: -3, fast: -1 },
+    artists: ['Bryson Tiller', 'Don Toliver', 'Brent Faiyaz', '6LACK', 'Chris Brown'],
+    aliasesArtists: { 'Bryson Tiller': ['bryson tiller'], 'Brent Faiyaz': ['brent faiyaz'], '6LACK': ['6lack'] },
+  },
+  {
+    id: 'hyperpop',
+    label: 'Hyperpop / Digicore',
+    query: 'hyperpop',
+    bpm: [150, 180],
+    aliases: ['hyperpop', 'digicore'],
+    moods: { experimental: 3, fast: 3, energetic: 2, happy: 1, melodic: 1, oldschool: -3, slow: -3 },
+    artists: ['Glaive', 'Ericdoa', 'Midwxst', '2hollis'],
+    aliasesArtists: { 'Glaive': ['glaive'], '2hollis': ['2hollis'] },
+  },
+];
+
+const GENRE_BY_ID = Object.fromEntries(GENRES.map((g) => [g.id, g]));
+
+
+// ===== src/core/license.js =====
+// Analyse de licence : lit le titre + TOUTE la description d'une vidéo et
+// décide si la prod peut être sortie sur Spotify gratuitement.
+//
+// Catégories :
+//   ffp     → Free for profit, sans limite : Spotify & co OK sans rien payer
+//   upto    → Free for profit « up to » : gratuit jusqu'à X streams, ensuite licence
+//   fnp     → Free (non-profit) : gratuit pour YouTube/SoundCloud, payer pour Spotify
+//   paid    → Payant : il faut acheter une licence (ou prod vendue)
+//   unknown → Rien de clair dans la description
+
+
+const CATEGORIES = {
+  ffp: {
+    id: 'ffp',
+    label: 'Free for profit',
+    short: 'FFP',
+    help: 'Utilisable sur Spotify & co sans payer (souvent avec crédit).',
+    spotify: 'oui',
+  },
+  upto: {
+    id: 'upto',
+    label: 'Up to',
+    short: 'Up to',
+    help: 'Free for profit jusqu’à une limite de streams, ensuite il faut une licence.',
+    spotify: 'limité',
+  },
+  fnp: {
+    id: 'fnp',
+    label: 'Free (non-profit)',
+    short: 'Free',
+    help: 'Gratuit pour YouTube/SoundCloud sans monétisation. Pour Spotify il faut payer.',
+    spotify: 'non',
+  },
+  paid: {
+    id: 'paid',
+    label: 'Payant',
+    short: 'Payant',
+    help: 'Il faut acheter une licence (lease / exclu), ou la prod est déjà vendue.',
+    spotify: 'non',
+  },
+  unknown: {
+    id: 'unknown',
+    label: 'Inconnu',
+    short: '?',
+    help: 'La description ne dit rien de clair sur les droits.',
+    spotify: '?',
+  },
+};
+
+const CATEGORY_ORDER = ['ffp', 'upto', 'fnp', 'paid', 'unknown'];
+
+// ---------------------------------------------------------------------------
+// Briques de regex (sur texte normalisé : minuscules, sans accents, ASCII)
+
+const NUM = String.raw`(\d{1,3}(?:[.,\s]\d{3})+|\d+(?:[.,]\d+)?)\s*(k|m|mil+ions?|millions?|thousand|mille|000)?`;
+const UNIT = String.raw`(streams?|plays?|ecoutes?|listens?|views?|vues?|sales?|ventes?|units?|copies|downloads?|telechargements?)`;
+const FFP = String.raw`(?:free|fr33|gratuit|gratos)\s*[-_]?\s*(?:for|4|fo|pour)?\s*[-_]?\s*(?:profit|commercial)`;
+
+const LIMIT_PATTERNS = [
+  // up to 5k streams / jusqu'à 10 000 écoutes / max 50k plays / first 100k streams
+  new RegExp(String.raw`(?:up\s*-?\s*to|upto|until|till|max(?:imum)?|limit(?:ed)?(?:\s*(?:to|of|at|a|de))?|capped?\s*(?:at|to)?|first|jusqu\s*'?\s*(?:a|au)|<=?|maxi)\s*:?\s*${NUM}\s*${UNIT}`, 'g'),
+  // 5k streams max / 10.000 streams limit
+  new RegExp(String.raw`${NUM}\s*${UNIT}\s*(?:max(?:imum)?|limit|cap|maxi)`, 'g'),
+  // after 5k streams you must buy / au-delà de 10k écoutes
+  new RegExp(String.raw`(?:after|over|above|beyond|exceed(?:ing)?|past|apres|au\s*-?\s*dela\s*de|plus\s*de|passe)\s*${NUM}\s*${UNIT}`, 'g'),
+  // free for profit (5k streams) / ffp 10k streams
+  new RegExp(String.raw`(?:${FFP}|ffp|f4p)\s*[(\[:\-]?\s*${NUM}\s*${UNIT}`, 'g'),
+];
+
+const NEGATION_BEFORE = /(?:\bnot|n't|\bno|\bpas|\bnon|\bnever|\bisnt|\barent|\bwithout)\s*(?:\w+\s*){0,2}$/;
+const NEGATION_AFTER = /^\s*[?:\-]*\s*(?:no\b|non\b|nope|❌|✖|✗|x\b)/;
+
+const FFP_STRONG = [
+  new RegExp(FFP, 'g'),
+  /\bf\s*4\s*p\b/g,
+  /\bffp\b/g,
+  /free\s*(?:to\s*use\s*)?for\s*commercial\s*use/g,
+  /commercial\s*use\s*(?:is\s*)?(?:allowed|ok|free|permitted|authorized)/g,
+  /(?:usage|utilisation)\s*commercial(?:e)?\s*(?:autorise|ok|libre|gratuit)/g,
+  /free\s*to\s*(?:use|release|monetize|monetise|upload|distribute)\s*(?:it\s*)?(?:on|to|for)\s*(?:spotify|streaming|all\s*platforms|apple\s*music|dsps?|profit)/g,
+  /(?:you\s*can|feel\s*free\s*to|allowed\s*to)\s*(?:use|release|upload|monetize|monetise|put|drop)\s*(?:it|this|this\s*beat|the\s*beat|this\s*instrumental)?\s*(?:on|to|for|in)\s*(?:spotify|streaming|all\s*platforms|apple\s*music|commercial|profit|dsps?)/g,
+  /(?:tu\s*peux|vous\s*pouvez)\s*(?:l'?\s*)?(?:utiliser|sortir|mettre|publier)[^.\n]{0,30}(?:spotify|streaming|plateformes|commercial)/g,
+  /no\s*need\s*to\s*(?:buy|purchase|pay|lease)/g,
+  /(?:pas\s*besoin|aucun\s*besoin)\s*d'?\s*(?:acheter|payer)/g,
+  /free\s*(?:for\s*)?(?:all|any)\s*(?:uses?|purposes?|platforms?)/g,
+  // Spotify ✅ / streaming: yes / ok pour spotify
+  /(?:spotify|streaming|all\s*platforms|dsps?)\s*[:\-=]?\s*(?:✅|✔|☑|💯|yes\b|ok\b|allowed|oui\b|autorise)/g,
+  /(?:ok|allowed|autorise|good)\s*(?:on|for|to\s*use\s*on|sur|pour)\s*spotify/g,
+];
+
+const FFP_WEAK = [
+  /royalty\s*-?\s*free/g,
+  /libres?\s*de\s*droits?/g,
+  /100\s*%\s*(?:free|gratuit)(?!\s*(?:for\s*)?non)/g,
+];
+
+const FNP = [
+  /(?:free|gratuit)\s*[-_]?\s*(?:for|4|pour)?\s*[-_]?\s*(?:non|not)\s*[-_]?\s*(?:profit|commercial|lucratif)/g,
+  /\bfnp\b/g,
+  /non\s*-?\s*(?:profit|commercial)\s*(?:use\s*)?only/g,
+  /(?:only|uniquement)\s*(?:for\s*|pour\s*)?(?:non\s*-?\s*(?:profit|commercial)|youtube|soundcloud)/g,
+  /free\s*(?:for|on)\s*(?:youtube|soundcloud)(?:\s*(?:and|&|\/)\s*(?:youtube|soundcloud))?\s*only/g,
+  /not\s*(?:free\s*)?for\s*(?:profit|commercial)/g,
+  /(?:pas|non)\s*(?:libre|gratuit)e?\s*(?:pour|en)?\s*(?:usage|utilisation)?\s*commercial/g,
+  /usage\s*non\s*-?\s*commercial/g,
+];
+
+const BUY_REQUIRED = [
+  // must buy a lease to release on spotify
+  /(?:must|need\s*to|needs\s*to|have\s*to|has\s*to|required\s*to|require[sd]?|please|should|gotta)\s*(?:to\s*)?(?:buy|purchase|lease|get|acquire|pay\s*for|obtain)[^.\n]{0,70}(?:release|spotify|stream|apple\s*music|commercial|profit|monetiz|monetis|distribut|dsp|sell|platform)/g,
+  // to release on spotify, purchase a lease / for profit use buy a license
+  /(?:to|for|before|if\s*you\s*(?:want|plan|wish)\s*to)\s*(?:release|upload|put|use|drop|monetiz|monetis|distribut)[^.\n]{0,60}(?:spotify|streaming|platforms|commercial|profit|monetiz|monetis|distribut|dsp)[^.\n]{0,60}(?:buy|purchase|lease|licen[cs]e|pay)/g,
+  /(?:for\s*)?(?:profit|commercial)\s*(?:use|purposes?|releases?)\s*[:,\-]?\s*(?:you\s*)?(?:must|need\s*to|have\s*to|please|should)?\s*(?:buy|purchase|lease|get\s*a\s*licen[cs]e)/g,
+  /licen[cs]e\s*(?:is\s*)?(?:required|needed|necessary|mandatory)/g,
+  /(?:il\s*faut|faut|tu\s*dois|vous\s*devez|obligatoire\s*d'?)\s*(?:l'?\s*)?(?:acheter|payer|louer|prendre\s*une\s*licence)/g,
+  /achat\s*(?:de\s*(?:la\s*)?licence\s*)?obligatoire/g,
+];
+
+// La description interdit / limite Spotify & co (même si le titre dit « free for profit »)
+const SPOTIFY_NO = [
+  // Spotify ❌ / streaming: no / apple music - not allowed
+  /(?:spotify|streaming|apple\s*music|dsps?|distribution|plateformes?)\s*[:\-=]?\s*(?:❌|✖|✗|⛔|🚫|no\b|nope|non\b|not\s*(?:allowed|permitted|included)|interdit|pas\s*autorise)/g,
+  // not allowed on spotify / can't upload to spotify
+  /(?:not\s*(?:allowed|permitted)|can'?t|cannot|can\s*not|do\s*not|don'?t|forbidden\s*to)\s*(?:to\s*)?(?:upload\w*|releas\w*|put\w*|us\w*|drop\w*|distribut\w*|moneti[sz]\w*)?\s*(?:it\s*|this\s*(?:beat)?\s*)?(?:on|to|for)\s*(?:spotify|streaming|apple\s*music|dsps?|all\s*platforms)/g,
+  // free for profit ... youtube only / ffp (soundcloud only)
+  /(?:free\s*(?:for|4)?\s*profit|ffp|f4p)[^.\n]{0,40}(?:youtube|soundcloud|tiktok|instagram)\s*only/g,
+  /(?:only|uniquement|seulement)\s*(?:on|for|sur|pour)\s*(?:youtube|soundcloud|tiktok)/g,
+  // pas sur spotify / interdit sur spotify
+  /(?:pas|interdit|non\s*autorise)\s*(?:de\s*(?:le\s*)?(?:sortir|mettre|publier)\s*)?(?:sur|pour)\s*(?:spotify|les\s*plateformes|le\s*streaming)/g,
+  // contact me before releasing on spotify
+  /(?:contact|dm|email|e-mail|message|hit\s*me\s*up|hmu)\s*(?:me\s*)?[^.\n]{0,30}(?:before|to|if\s*you\s*want\s*to|avant\s*de)\s*(?:releas|upload|put|drop|us|sortir|publi)\w*[^.\n]{0,30}(?:spotify|streaming|platforms?|apple\s*music|commercial|profit|plateformes)/g,
+  // for spotify / apple music you need a lease / pour spotify il faut acheter
+  /(?:for|on|to|sur|pour)\s*(?:spotify|apple\s*music|streaming\s*(?:platforms|services|sites)?|dsps?|distrokid|tunecore|digital\s*platforms|les\s*plateformes)[^.\n|]{0,40}(?:need|must|have\s*to|requires?|required|il\s*faut|faut|dois|devez|obligatoire|=|->|→)\s*(?:to\s*)?(?:buy|purchase|get|grab|prendre)?\s*(?:a\s*|an\s*|la\s*|une\s*)?(?:buy|purchase|lease|licen[cs]e|licence|paid|pay|acheter|payer)/g,
+  // for streaming platforms buy a lease (impératif, seulement après « for / pour »)
+  /(?:for|pour)\s*(?:spotify|apple\s*music|streaming\s*(?:platforms|services|sites)?|dsps?|digital\s*platforms|les\s*plateformes)\s*[,:]?\s*(?:please\s*)?(?:buy|purchase|grab|get|achete|prends)\s*(?:a|an|the|my|une|la)?\s*(?:lease|licen[cs]e|licence)/g,
+];
+
+// « no lease needed », « sans licence »… : annule une clause d'achat
+const NO_NEED = /no\s*(?:need|lease|licen[cs]e)|without\s*(?:a\s*)?(?:lease|licen[cs]e|buying|paying)|don'?t\s*(?:need|have)\s*to|pas\s*besoin|sans\s*(?:pay|achet|licen|rien\s*payer)|not\s*required|free\s*(?:of\s*charge)?\s*(?:on|for)\s*spotify/;
+
+const FREE_ANY = [
+  /\[\s*free\s*\]|\(\s*free\s*\)|\{\s*free\s*\}|「\s*free\s*」/g,
+  /\bfree\s*(?:download|dl|beat|instrumental|instru|type\s*beat)\b/g,
+  /^\s*free\b/g,
+  /\bgratuit(?:e|es|s)?\b/g,
+  /\bfree\b/g,
+];
+
+const PAID = [
+  /\bsold\b|\bvendue?\b|\(\s*sold\s*\)|\[\s*sold\s*\]/g,
+  /\b(?:buy|purchase|lease|leasing|exclusive\s*rights?|exclu(?:sive)?|acheter|achat)\b/g,
+  /beatstars\.com|bsta\.rs|airbit\.com|traktrain\.com|soundee\.com|beatstore|beat\s*store|player\.beatstars/g,
+  /\$\s*\d+|\b\d+(?:[.,]\d{2})?\s*(?:\$|€|usd|eur|euros?)\b/g,
+];
+
+const CREDIT = [
+  /(?:must|need\s*to|have\s*to|please|you\s*should|required\s*to)\s*(?:give\s*)?credit/g,
+  /credit\s*(?:is\s*)?[("'\[]?\s*(?:required|needed|mandatory|me\b|the\s*producer|prod)/g,
+  /\b(?:just|simply|only|juste)\s*(?:give\s*)?credit/g,
+  /(?:put|add|include|write|mettre|mets)\s*["'(]?\s*(?:prod\.?|produced)\s*(?:by|par)/g,
+  /(?:credit|credits|credite?r?)\s*(?:obligatoire|requis|svp|stp)/g,
+  /(?:prod\.?|produced)\s*(?:by|par)\s*@?[\w.\- ]{2,30}\s*(?:in\s*(?:the\s*)?title|dans\s*le\s*titre)/g,
+];
+
+const PRICE_RE = /\$\s*\d|\b\d+(?:[.,]\d{2})?\s*(?:\$|€|usd|eur|euros?)\b|€\s*\d/;
+
+// ---------------------------------------------------------------------------
+
+function parseNumber(raw, suffix) {
+  let s = raw.trim();
+  let value;
+  if (/^\d{1,3}(?:[.,\s]\d{3})+$/.test(s)) {
+    value = Number(s.replace(/[.,\s]/g, ''));
+  } else {
+    value = Number(s.replace(',', '.'));
+  }
+  if (!Number.isFinite(value)) return null;
+  const suf = (suffix || '').trim();
+  if (suf === 'k' || suf === 'thousand' || suf === 'mille') value *= 1000;
+  else if (suf === 'm' || /^mil+ions?$|^millions?$/.test(suf)) value *= 1_000_000;
+  else if (suf === '000') value *= 1000;
+  return Math.round(value);
+}
+
+function unitLabel(u) {
+  if (/^(stream|play|ecoute|listen)/.test(u)) return 'streams';
+  if (/^(view|vue)/.test(u)) return 'vues';
+  if (/^(sale|vente|unit|cop)/.test(u)) return 'ventes';
+  if (/^(download|telecharg)/.test(u)) return 'téléchargements';
+  return u;
+}
+
+function findAll(patterns, text, { skipNegated = false } = {}) {
+  const hits = [];
+  for (const re of patterns) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      if (m[0].length === 0) { re.lastIndex++; continue; }
+      const start = m.index;
+      const end = start + m[0].length;
+      if (skipNegated) {
+        const before = text.slice(Math.max(0, start - 25), start);
+        const after = text.slice(end, end + 12);
+        if (NEGATION_BEFORE.test(before) || NEGATION_AFTER.test(after)) {
+          hits.push({ start, end, match: m, negated: true });
+          continue;
+        }
+      }
+      hits.push({ start, end, match: m, negated: false });
+    }
+  }
+  hits.sort((a, b) => a.start - b.start);
+  return hits;
+}
+
+function formatCount(n) {
+  if (n == null) return '';
+  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${+(n / 1000).toFixed(1)}K`;
+  return String(n);
+}
+
+/** Cherche une limite de streams (« up to 5k streams »). */
+function findStreamLimit(text) {
+  const found = [];
+  for (const re of LIMIT_PATTERNS) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      const value = parseNumber(m[1], m[2]);
+      if (value == null || value < 100) continue;
+      // Une ligne avec un prix = un palier de lease payant (MP3 lease 29$ : 10k streams),
+      // pas une limite gratuite.
+      const lineStart = text.lastIndexOf('\n', m.index) + 1;
+      let lineEnd = text.indexOf('\n', m.index);
+      if (lineEnd === -1) lineEnd = text.length;
+      const line = text.slice(lineStart, lineEnd);
+      if (PRICE_RE.test(line) || /\b(?:mp3|wav|trackouts?|stems|premium|basic|unlimited)\s*(?:lease|licen[cs]e)/.test(line)) continue;
+      found.push({ value, unit: unitLabel(m[3]), start: m.index, end: m.index + m[0].length });
+    }
+  }
+  if (!found.length) return null;
+  // On préfère une limite en streams (c'est ce qui compte pour Spotify).
+  const streams = found.filter((f) => f.unit === 'streams');
+  const pool = streams.length ? streams : found;
+  pool.sort((a, b) => a.start - b.start);
+  return pool[0];
+}
+
+/**
+ * Analyse complète.
+ * Principe : la DESCRIPTION fait foi. Le titre « free for profit » ne compte
+ * que si la description ne dit pas le contraire (payer pour Spotify, YouTube
+ * only, Spotify ❌…). Dans ce cas la prod est marquée « titre trompeur ».
+ */
+function analyzeLicense(title = '', description = '') {
+  const full = `${title}\n${description}`;
+  const norm = normalizeWithMap(full);
+  const t = norm.text;
+  const titleLen = normalizeWithMap(title).text.length;
+  const inTitle = (h) => h.start < titleLen;
+  const inDesc = (h) => h.start > titleLen;
+  const reasons = [];
+  const quote = (h) => snippet(norm, h.start, h.end);
+  const hasDescription = description.trim().length > 0;
+
+  const ffpHitsAll = findAll(FFP_STRONG, t, { skipNegated: true });
+  const ffpHits = ffpHitsAll.filter((h) => !h.negated);
+  const ffpNegated = ffpHitsAll.filter((h) => h.negated);
+  const ffpWeak = findAll(FFP_WEAK, t);
+  const fnpHits = findAll(FNP, t);
+  // On regarde aussi un peu après la clause : « …sur Spotify sans payer ».
+  const noNeed = (h) => NO_NEED.test(t.slice(Math.max(0, h.start - 12), h.end + 25));
+  const buyHits = findAll(BUY_REQUIRED, t).filter((h) => !noNeed(h));
+  // « can't upload to Spotify without a lease » : la négation confirme la restriction.
+  const spotifyNo = findAll(SPOTIFY_NO, t).filter((h) => /not|n't|cannot|forbidden|interdit|pas|❌|✖|✗|⛔|🚫/.test(h.match[0]) || !noNeed(h));
+  const limit = findStreamLimit(t);
+  const creditHits = findAll(CREDIT, t);
+  const paidHits = findAll(PAID, t);
+  const soldInTitle = paidHits.some((h) => inTitle(h) && /sold|vendu/.test(h.match[0]));
+
+  // Ce qui restreint l'usage commercial (surtout dans la description)
+  const restrict = [...spotifyNo, ...buyHits, ...fnpHits].sort((a, b) => a.start - b.start);
+  const ffpTitle = ffpHits.filter(inTitle);
+  const ffpDesc = ffpHits.filter(inDesc);
+
+  // Les mentions « free » qui ne sont pas déjà des free for profit / non profit
+  const covered = [...ffpHitsAll, ...fnpHits];
+  const freeHits = findAll(FREE_ANY, t).filter(
+    (h) => !covered.some((c) => h.start >= c.start && h.start < c.end),
+  );
+
+  const creditRequired = creditHits.length > 0;
+  let category = 'unknown';
+  let confidence = 'faible';
+  let limitValue = null;
+  let limitUnit = null;
+
+  if (soldInTitle) {
+    category = 'paid';
+    confidence = 'haute';
+    reasons.push({ text: 'Prod marquée « SOLD » / vendue dans le titre.', quote: quote(paidHits.find(inTitle)) });
+  } else if (ffpNegated.length && !ffpHits.length) {
+    category = freeHits.length || fnpHits.length ? 'fnp' : 'paid';
+    confidence = 'haute';
+    reasons.push({ text: 'La description dit explicitement que ce n’est PAS free for profit.', quote: quote(ffpNegated[0]) });
+  } else if (limit && (ffpHits.length || ffpWeak.length || (freeHits.length && !fnpHits.length))) {
+    category = 'upto';
+    confidence = ffpHits.length ? 'haute' : 'moyenne';
+    limitValue = limit.value;
+    limitUnit = limit.unit;
+    if (ffpHits.length) reasons.push({ text: 'Mention free for profit trouvée.', quote: quote(ffpHits[0]) });
+    reasons.push({
+      text: `Limite détectée dans la description : gratuit jusqu’à ${formatCount(limit.value)} ${limit.unit}, ensuite il faut une licence.`,
+      quote: quote(limit),
+    });
+  } else if ((ffpHits.length || ffpWeak.length) && restrict.length) {
+    // « Free for profit » annoncé, mais la description exige de payer pour
+    // Spotify / le limite à YouTube : la clause restrictive l'emporte.
+    category = 'fnp';
+    confidence = 'haute';
+    const claim = ffpHits[0] || ffpWeak[0];
+    reasons.push({ text: `${inTitle(claim) ? 'Le titre' : 'La description'} annonce « free for profit »…`, quote: quote(claim) });
+    reasons.push({ text: '…mais la description dit qu’il faut payer / qu’il n’est pas libre pour Spotify & co.', quote: quote(restrict[0]) });
+  } else if (ffpHits.length) {
+    category = 'ffp';
+    if (ffpDesc.length) {
+      confidence = 'haute';
+      reasons.push({ text: 'La description confirme : free for profit / usage commercial libre.', quote: quote(ffpDesc[0]) });
+      if (ffpTitle.length) reasons.push({ text: 'Le titre dit la même chose.', quote: quote(ffpTitle[0]) });
+    } else {
+      confidence = 'moyenne';
+      reasons.push({ text: '« Free for profit » dans le titre.', quote: quote(ffpTitle[0]) });
+      reasons.push({
+        text: hasDescription
+          ? 'La description ne le confirme pas, mais ne demande pas non plus de payer. Vérifie avant de sortir le son.'
+          : 'Description vide : rien pour confirmer. Vérifie avant de sortir le son.',
+        quote: '',
+      });
+    }
+    reasons.push({ text: 'Aucune clause « payer pour Spotify » trouvée dans la description.', quote: '' });
+  } else if (restrict.length) {
+    category = fnpHits.length || freeHits.length || ffpWeak.length ? 'fnp' : 'paid';
+    confidence = fnpHits.length || spotifyNo.length ? 'haute' : 'moyenne';
+    if (fnpHits.length) reasons.push({ text: 'Gratuit seulement pour un usage non-commercial.', quote: quote(fnpHits[0]) });
+    const pay = [...spotifyNo, ...buyHits].sort((a, b) => a.start - b.start)[0];
+    if (pay) reasons.push({ text: 'Il faut payer une licence pour sortir le son (Spotify, streaming…).', quote: quote(pay) });
+  } else if (ffpWeak.length) {
+    category = 'ffp';
+    confidence = 'moyenne';
+    reasons.push({ text: 'Mention « libre de droits » / « 100% free » (moins explicite que « free for profit »).', quote: quote(ffpWeak[0]) });
+  } else if (freeHits.length) {
+    category = 'fnp';
+    confidence = 'faible';
+    reasons.push({
+      text: '« FREE » sans préciser « for profit » : par convention, c’est gratuit pour un usage non-commercial seulement.',
+      quote: quote(freeHits[0]),
+    });
+  } else if (paidHits.length) {
+    category = 'paid';
+    confidence = 'moyenne';
+    reasons.push({ text: 'Lien d’achat / prix / lease sans aucune mention de gratuité.', quote: quote(paidHits[0]) });
+  } else {
+    reasons.push({ text: 'Aucune info de licence trouvée dans le titre ni la description.', quote: '' });
+  }
+
+  if (creditRequired) {
+    reasons.push({ text: 'Crédit du producteur obligatoire (ex. « prod. by … » dans le titre).', quote: quote(creditHits[0]) });
+  }
+
+  // Titre trompeur : « free for profit » dans le titre, mais la description dit autre chose.
+  const misleading = ffpTitle.length > 0 && !['ffp', 'upto'].includes(category);
+
+  const cat = CATEGORIES[category];
+  return {
+    category,
+    label: category === 'upto' ? `Up to ${formatCount(limitValue)} ${limitUnit}` : cat.label,
+    limit: limitValue,
+    limitUnit,
+    spotify: cat.spotify,
+    creditRequired,
+    confidence,
+    misleading,
+    descriptionChecked: hasDescription,
+    reasons,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Infos clés : les lignes de la description qui parlent de droits, crédit,
+// tempo, contact… (pour ne pas avoir à lire tout le pavé).
+
+const KEY_LINE_TYPES = [
+  { type: 'licence', re: /spotify|stream|profit|lease|licen[cs]e|licence|commercial|monetiz|monetis|royalty|droits?|purchase|buy\b|acheter|payer|free|gratuit|sold|exclusive|apple\s*music|distrib|youtube\s*only|soundcloud\s*only|untagged/ },
+  { type: 'credit', re: /credit|prod\.?\s*(?:by|par)|produced\s*by|tag\b/ },
+  { type: 'tempo', re: /\bbpm\b|tempo|\bkey\b|tonalite|scale|\b[a-g](?:#|b)?\s*(?:minor|major|min|maj)\b/ },
+  { type: 'contact', re: /contact|e-?mail|@[a-z0-9._-]+\.[a-z]{2,}|business|dm\b|instagram|insta\b/ },
+];
+
+function extractKeyLines(description = '', max = 8) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of String(description).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.length < 3) continue;
+    const n = normalizeWithMap(line).text;
+    if (/^#\S+(\s+#\S+)*$/.test(n)) continue; // lignes de hashtags
+    const hit = KEY_LINE_TYPES.find((k) => k.re.test(n));
+    if (!hit || seen.has(n)) continue;
+    seen.add(n);
+    out.push({ type: hit.type, text: line.length > 220 ? `${line.slice(0, 217)}…` : line });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+
+// ===== src/core/bpm.js =====
+// Extraction du BPM et de la tonalité depuis le titre / la description.
+
+
+const BPM_PATTERNS = [
+  /(?:^|[^\d])(\d{2,3})\s*-?\s*bpm\b/g, // 140 bpm, 140bpm, @140bpm
+  /\bbpm\s*[:=\-|]?\s*(\d{2,3})\b/g, // bpm: 140
+  /\btempo\s*[:=\-|]?\s*(\d{2,3})\b/g, // tempo 140
+];
+
+const KEY_PATTERNS = [
+  /\b(?:key|tonalite|cle|scale)\s*[:=\-|]?\s*([a-g])\s*(#|b|♯|♭|sharp|flat)?\s*(minor|min|major|maj|mineur|majeur|m)?(?![a-z])/g,
+  /(?:^|[\s|•·,/(\[-])([a-g])\s*(#|♯|b|♭)?\s*(minor|major|min|maj|mineur|majeur)\b/g,
+];
+
+function toBpm(raw) {
+  const n = Number(raw);
+  return n >= 50 && n <= 220 ? n : null;
+}
+
+/** Renvoie le BPM trouvé (le titre est prioritaire), ou null. */
+function extractBpm(title = '', description = '') {
+  for (const src of [title, description]) {
+    const t = normalize(src);
+    for (const re of BPM_PATTERNS) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(t))) {
+        const bpm = toBpm(m[1]);
+        if (bpm) return bpm;
+      }
+    }
+  }
+  return null;
+}
+
+function formatKey(note, acc, mode) {
+  let a = '';
+  if (acc === '#' || acc === '♯' || acc === 'sharp') a = '#';
+  else if (acc === 'b' || acc === '♭' || acc === 'flat') a = 'b';
+  let md = '';
+  if (mode && /^(m|min|minor|mineur)$/.test(mode)) md = ' min';
+  else if (mode && /^(maj|major|majeur)$/.test(mode)) md = ' maj';
+  return `${note.toUpperCase()}${a}${md}`;
+}
+
+/** Renvoie la tonalité (ex. « C# min »), ou null. */
+function extractKey(title = '', description = '') {
+  for (const src of [title, description]) {
+    const t = normalize(src);
+    for (const re of KEY_PATTERNS) {
+      re.lastIndex = 0;
+      const m = re.exec(t);
+      if (m) return formatKey(m[1], m[2], m[3]);
+    }
+  }
+  return null;
+}
+
+
+// ===== src/core/planner.js =====
+// Planificateur : transforme ta description (« rapide, énergique et musicale »)
+// en un plan de recherche lisible : ambiances reconnues → courants de rap →
+// artistes US → requêtes « type beat » envoyées à YouTube.
+
+
+// Profondeur de recherche. Le mobile démarre en « rapide » (moins de requêtes,
+// moins de données), le PC en « normal ». On peut forcer « approfondie ».
+const DEPTHS = {
+  rapide: { id: 'rapide', label: 'Rapide', queries: 3, perQuery: 15, maxVideos: 45, genres: 2, artistsPerGenre: 1 },
+  normal: { id: 'normal', label: 'Normale', queries: 5, perQuery: 20, maxVideos: 100, genres: 3, artistsPerGenre: 2 },
+  approfondie: { id: 'approfondie', label: 'Approfondie', queries: 8, perQuery: 30, maxVideos: 200, genres: 3, artistsPerGenre: 3 },
+};
+
+function defaultDepth(device) {
+  return device === 'mobile' ? 'rapide' : 'normal';
+}
+
+function resolveDepth(depth, device) {
+  return DEPTHS[depth] || DEPTHS[defaultDepth(device)];
+}
+
+const NORM_MOODS = Object.entries(MOODS).map(([id, m]) => ({ id, ...m, nwords: [...new Set(m.words.map(normalize))] }));
+const NORM_INSTR = Object.entries(INSTRUMENTS).map(([id, words]) => ({ id, nwords: [...new Set(words.map(normalize))] }));
+
+// Index artistes → { name, genres[], aliases[] }
+const ARTISTS = (() => {
+  const map = new Map();
+  for (const g of GENRES) {
+    for (const name of g.artists) {
+      const key = name.toLowerCase();
+      if (!map.has(key)) map.set(key, { name, genres: [], aliases: new Set([normalize(name)]) });
+      const a = map.get(key);
+      a.genres.push(g.id);
+      for (const al of g.aliasesArtists?.[name] || []) a.aliases.add(normalize(al));
+    }
+  }
+  return [...map.values()].map((a) => ({ ...a, aliases: [...a.aliases] }));
+})();
+
+function licenseSuffix(licenses = []) {
+  const set = new Set(licenses);
+  if (set.has('ffp') || set.has('upto')) return 'free for profit';
+  if (set.has('fnp')) return 'free';
+  return '';
+}
+
+function detectMoods(n) {
+  const out = [];
+  for (const m of NORM_MOODS) {
+    const matched = m.nwords.filter((w) => hasWord(n, w));
+    if (matched.length) out.push({ id: m.id, label: m.label, en: m.en, matched });
+  }
+  return out;
+}
+
+function detectInstruments(n) {
+  return NORM_INSTR.filter((i) => i.nwords.some((w) => hasWord(n, w))).map((i) => i.id);
+}
+
+function detectGenres(n) {
+  return GENRES.filter((g) => g.aliases.some((a) => hasWord(n, normalize(a)))).map((g) => g.id);
+}
+
+function detectArtists(n) {
+  return ARTISTS.filter((a) => a.aliases.some((al) => hasWord(n, al)));
+}
+
+function detectBpm(n) {
+  const m = n.match(/(\d{2,3})\s*-?\s*bpm/) || n.match(/bpm\s*[:=]?\s*(\d{2,3})/);
+  if (!m) return null;
+  const v = Number(m[1]);
+  return v >= 50 && v <= 220 ? v : null;
+}
+
+/**
+ * Construit le plan de recherche.
+ * @param {string} prompt  description libre de la prod voulue
+ * @param {{licenses?: string[], device?: string, depth?: string, manualQuery?: string}} opts
+ */
+function buildPlan(prompt = '', opts = {}) {
+  const device = opts.device === 'mobile' ? 'mobile' : 'desktop';
+  const depth = resolveDepth(opts.depth, device);
+  const n = normalize(prompt);
+  const notes = [];
+
+  const moods = detectMoods(n);
+  const instruments = detectInstruments(n);
+  const namedGenres = detectGenres(n);
+  const namedArtists = detectArtists(n);
+  const explicitBpm = detectBpm(n);
+  const moodIds = new Set(moods.map((m) => m.id));
+
+  // --- Score des courants
+  const scored = GENRES.map((g) => {
+    let score = 0;
+    const why = [];
+    for (const m of moods) {
+      const w = g.moods[m.id] || 0;
+      if (w) {
+        score += w;
+        if (w > 0) why.push(m.label.toLowerCase());
+      }
+    }
+    if (namedGenres.includes(g.id)) { score += 8; why.unshift('cité directement'); }
+    if (namedArtists.some((a) => a.genres.includes(g.id))) { score += 6; why.unshift('artiste cité'); }
+    if (explicitBpm) {
+      const [lo, hi] = g.bpm;
+      if (explicitBpm >= lo - 3 && explicitBpm <= hi + 3) score += 2;
+      else score -= 2;
+    }
+    return { id: g.id, label: g.label, score, why, bpm: g.bpm };
+  }).sort((a, b) => b.score - a.score);
+
+  let selected;
+  const top = scored[0];
+  if (!top || top.score <= 0) {
+    selected = [GENRE_BY_ID.trap, GENRE_BY_ID['melodic-trap']].map((g) => ({ id: g.id, label: g.label, score: 0, why: ['par défaut'], bpm: g.bpm }));
+    notes.push('Aucune ambiance reconnue : recherche par défaut en trap / melodic trap. Essaie des mots comme « sombre », « rapide », « mélodique », « drill », « Lil Uzi »…');
+  } else {
+    const forced = scored.filter((g) => namedGenres.includes(g.id));
+    const rest = scored.filter((g) => !namedGenres.includes(g.id) && g.score > 0 && g.score >= top.score * 0.6);
+    selected = [...forced, ...rest].slice(0, Math.max(depth.genres, forced.length));
+  }
+
+  // --- Artistes
+  const artists = [];
+  const seen = new Set();
+  const pushArtist = (name, genreId, reason) => {
+    const k = name.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    artists.push({ name, genre: genreId, genreLabel: GENRE_BY_ID[genreId]?.label || '', reason });
+  };
+  for (const a of namedArtists) pushArtist(a.name, a.genres[0], 'cité dans ta demande');
+  for (const g of selected) {
+    const list = GENRE_BY_ID[g.id].artists;
+    let added = 0;
+    for (const name of list) {
+      if (added >= depth.artistsPerGenre) break;
+      if (!seen.has(name.toLowerCase())) { pushArtist(name, g.id, `référence du courant ${g.label}`); added++; }
+    }
+  }
+
+  // --- Plage de BPM conseillée
+  let bpmRange;
+  if (explicitBpm) {
+    bpmRange = { min: explicitBpm - 5, max: explicitBpm + 5, source: `${explicitBpm} BPM demandé` };
+  } else {
+    let [lo, hi] = selected[0].bpm;
+    const span = hi - lo;
+    if (moodIds.has('fast') && !moodIds.has('slow')) lo = Math.round(lo + span * 0.4);
+    if (moodIds.has('slow') && !moodIds.has('fast')) hi = Math.round(hi - span * 0.4);
+    bpmRange = { min: lo, max: hi, source: `typique du ${selected[0].label}${moodIds.has('fast') ? ', côté rapide' : moodIds.has('slow') ? ', côté lent' : ''}` };
+  }
+
+  // --- Requêtes YouTube
+  const suffix = licenseSuffix(opts.licenses);
+  const sfx = suffix ? ` ${suffix}` : '';
+  const queries = [];
+  const qseen = new Set();
+  const addQuery = (q, why) => {
+    const clean = q.replace(/\s+/g, ' ').trim();
+    const k = clean.toLowerCase();
+    if (!clean || qseen.has(k)) return;
+    qseen.add(k);
+    queries.push({ q: clean, why });
+  };
+
+  const manual = (opts.manualQuery || '').trim();
+  if (manual) {
+    const hasFree = /free/i.test(manual);
+    addQuery(hasFree || !suffix ? manual : `${manual}${sfx}`, 'ta recherche directe');
+  }
+
+  const moodWords = moods
+    .filter((m) => ['energetic', 'dark', 'sad', 'happy', 'chill', 'aggressive', 'bouncy', 'atmospheric', 'epic', 'melodic', 'experimental'].includes(m.id))
+    .map((m) => m.en);
+  const firstPerGenre = selected.map((g) => artists.find((a) => a.genre === g.id)).filter(Boolean);
+  const named = artists.filter((a) => a.reason === 'cité dans ta demande');
+  const instrumentEn = { piano: 'piano', guitar: 'guitar', synth: 'synth', strings: 'violin', flute: 'flute', bells: 'bells', choir: 'choir', sax: 'sax', '808': '808', orchestra: 'orchestral' };
+
+  for (const a of named) addQuery(`${a.name} type beat${sfx}`, `artiste que tu as cité`);
+  for (const a of firstPerGenre) addQuery(`${a.name} type beat${sfx}`, `artiste phare du courant ${a.genreLabel}`);
+  if (selected[0]) {
+    const g = GENRE_BY_ID[selected[0].id];
+    const mw = moodWords.filter((w) => !g.query.includes(w)).slice(0, 2).join(' ');
+    addQuery(`${mw} ${g.query} type beat${sfx}`, `courant ${g.label}${mw ? ` + ambiance « ${mw} »` : ''}`);
+  }
+  if (instruments.length && artists[0]) {
+    addQuery(`${artists[0].name} type beat ${instruments.map((i) => instrumentEn[i]).slice(0, 2).join(' ')}${sfx}`, `instrument demandé (${instruments.join(', ')})`);
+  }
+  for (const a of artists) addQuery(`${a.name} type beat${sfx}`, `${a.reason}`);
+  for (const g of selected.slice(1)) {
+    const gg = GENRE_BY_ID[g.id];
+    addQuery(`${moodWords[0] ? moodWords[0] + ' ' : ''}${gg.query} type beat${sfx}`, `courant ${gg.label}`);
+  }
+  if (artists.length >= 2) addQuery(`${artists[0].name} x ${artists[1].name} type beat${sfx}`, 'mélange des deux artistes principaux');
+  if (explicitBpm) addQuery(`${GENRE_BY_ID[selected[0].id].query} type beat ${explicitBpm} bpm${sfx}`, 'BPM demandé');
+
+  // Demande très ciblée : on complète avec d'autres artistes du même courant,
+  // puis avec les courants voisins, pour utiliser toute la profondeur choisie.
+  for (const g of selected) {
+    if (queries.length >= depth.queries) break;
+    for (const name of GENRE_BY_ID[g.id].artists) {
+      if (queries.length >= depth.queries) break;
+      if (seen.has(name.toLowerCase())) continue;
+      pushArtist(name, g.id, `autre référence du courant ${g.label}`);
+      addQuery(`${name} type beat${sfx}`, `autre artiste du courant ${g.label}`);
+    }
+  }
+  for (const g of scored.filter((x) => x.score > 0 && !selected.some((s) => s.id === x.id))) {
+    if (queries.length >= depth.queries) break;
+    const gg = GENRE_BY_ID[g.id];
+    const name = gg.artists.find((a) => !seen.has(a.toLowerCase()));
+    if (!name) continue;
+    pushArtist(name, g.id, `courant voisin ${gg.label}`);
+    addQuery(`${name} type beat${sfx}`, `courant voisin ${gg.label} (${g.why.join(', ') || 'proche'})`);
+  }
+
+  const finalQueries = queries.slice(0, depth.queries);
+
+  return {
+    prompt,
+    device,
+    depth: { id: depth.id, label: depth.label, perQuery: depth.perQuery, maxVideos: depth.maxVideos },
+    moods: moods.map(({ id, label, matched }) => ({ id, label, matched })),
+    instruments,
+    genres: selected.map(({ id, label, score, why, bpm }) => ({ id, label, score, why, bpm })),
+    // Seulement les artistes vraiment utilisés dans les requêtes envoyées
+    artists: artists.filter((a) => finalQueries.some((q) => q.q.toLowerCase().includes(a.name.toLowerCase()))),
+    bpmRange,
+    licenseSuffix: suffix,
+    queries: finalQueries,
+    notes,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Classification d'une vidéo trouvée : à quels courants appartient cette prod ?
+
+// Un artiste présent dans plusieurs courants ne compte que pour le premier
+// (son courant principal), sinon chaque prod Lil Uzi serait aussi « Jersey club ».
+const ARTIST_OWNER = new Map();
+for (const g of GENRES) for (const name of g.artists) if (!ARTIST_OWNER.has(name)) ARTIST_OWNER.set(name, g.id);
+
+const GENRE_MATCHERS = GENRES.map((g) => ({
+  id: g.id,
+  label: g.label,
+  aliases: g.aliases.map(normalize),
+  artists: g.artists
+    .filter((name) => ARTIST_OWNER.get(name) === g.id)
+    .flatMap((name) => [normalize(name), ...(g.aliasesArtists?.[name] || []).map(normalize)]),
+}));
+
+function classifyStyles(title = '', description = '') {
+  const t = normalize(title);
+  const d = normalize(description).slice(0, 600);
+  const out = [];
+  for (const g of GENRE_MATCHERS) {
+    let s = 0;
+    if (g.aliases.some((a) => a.length > 2 && hasWord(t, a))) s += 3;
+    if (g.artists.some((a) => a.length > 2 && hasWord(t, a))) s += 2;
+    if (g.aliases.some((a) => a.length > 3 && hasWord(d, `#${a.replace(/\s+/g, '')}`))) s += 1;
+    if (s) out.push({ id: g.id, label: g.label, s });
+  }
+  return out.sort((a, b) => b.s - a.s).slice(0, 3).map(({ id, label }) => ({ id, label }));
+}
+
+function classifyMoods(title = '', description = '') {
+  const t = normalize(`${title} ${description.slice(0, 600)}`);
+  return NORM_MOODS.filter((m) => [m.en, ...m.nwords].some((w) => w.length > 3 && hasWord(t, normalize(w)))).map((m) => m.id);
+}
+
+
+// ===== src/core/analyze.js =====
+// Analyse d'une vidéo : licence, BPM, tonalité, courants, pertinence.
+
+
+const BEAT_WORDS = /\b(type\s*beat|beat|beats|instrumental|instru|prod\.?|produced\s*by|free\s*for\s*profit|bpm|riddim|instrumentale)\b/;
+
+/** Une prod, ou un vrai morceau / un clip / une vidéo hors sujet ? */
+function looksLikeBeat(title = '', description = '') {
+  const t = normalize(title);
+  if (BEAT_WORDS.test(t)) return true;
+  const d = normalize(description).slice(0, 400);
+  return /\b(type\s*beat|instrumental|free\s*for\s*profit|bpm)\b/.test(d);
+}
+
+/**
+ * @param {object} video  {id, title, description, channel, views, publishedAt, ...}
+ * @param {object} plan   plan renvoyé par buildPlan
+ */
+function analyzeVideo(video, plan) {
+  const title = video.title || '';
+  const description = video.description || '';
+  const license = analyzeLicense(title, description);
+  const bpm = extractBpm(title, description);
+  const key = extractKey(title, description);
+  const styles = classifyStyles(title, description);
+  const moods = classifyMoods(title, description);
+  const isBeat = looksLikeBeat(title, description);
+
+  // --- Pertinence
+  let score = 0;
+  const nt = normalize(title);
+  score += (video.foundBy?.length || 1) * 10;
+  if (plan) {
+    if (plan.artists.some((a) => hasWord(nt, normalize(a.name)))) score += 8;
+    if (styles.some((s) => plan.genres.some((g) => g.id === s.id))) score += 6;
+    const wanted = new Set(plan.moods.map((m) => m.id));
+    score += moods.filter((m) => wanted.has(m)).length * 3;
+    if (bpm && plan.bpmRange) {
+      if (bpm >= plan.bpmRange.min && bpm <= plan.bpmRange.max) score += 6;
+      else score -= 3;
+    }
+  }
+  if (license.confidence === 'haute') score += 4;
+  if (video.views) score += Math.min(8, Math.log10(video.views + 1) * 1.3);
+  if (!isBeat) score -= 30;
+
+  const keyLines = extractKeyLines(description);
+  return { ...video, license, bpm, key, styles, moods, isBeat, keyLines, score: Math.round(score * 10) / 10 };
+}
+
+
+// ===== src/core/filter.js =====
+// Filtres et tris appliqués aux résultats (côté navigateur : instantané).
+
+
+/**
+ * Recherche dans les descriptions : « spotify wav », « "free for profit" »,
+ * « drill -lease » (le « - » exclut un mot).
+ */
+function parseTextQuery(q = '') {
+  const include = [];
+  const exclude = [];
+  const re = /(-?)"([^"]+)"|(-?)(\S+)/g;
+  let m;
+  while ((m = re.exec(q))) {
+    const neg = m[1] || m[3];
+    const term = normalize(m[2] ?? m[4]).trim();
+    if (!term || term === '-') continue;
+    (neg ? exclude : include).push(term);
+  }
+  return { include, exclude };
+}
+
+function matchesText(r, parsed) {
+  if (!parsed || (!parsed.include.length && !parsed.exclude.length)) return true;
+  const hay = normalize(`${r.title}\n${r.channel || ''}\n${r.description || ''}`);
+  return parsed.include.every((t) => hay.includes(t)) && !parsed.exclude.some((t) => hay.includes(t));
+}
+
+/**
+ * @param {object[]} results  vidéos analysées
+ * @param {object} f
+ *   licenses:   ids de catégories gardées (ffp, upto, fnp, paid, unknown)
+ *   uptoMin:    pour « Up to », limite minimale de streams (ex. 5000)
+ *   bpm:        { enabled, min, max, requireBpm }
+ *   style:      id de courant ('' = tous)
+ *   noCredit:   true = écarter les prods où le crédit est obligatoire
+ *   text:       recherche dans titre + description
+ *   beatsOnly:  true = écarter ce qui ne ressemble pas à une prod
+ */
+function filterResults(results, f = {}) {
+  const licenses = new Set(f.licenses?.length ? f.licenses : CATEGORY_ORDER);
+  const parsed = f.text ? parseTextQuery(f.text) : null;
+  return results.filter((r) => {
+    if (f.beatsOnly !== false && !r.isBeat) return false;
+    if (!licenses.has(r.license.category)) return false;
+    if (r.license.category === 'upto' && f.uptoMin && (r.license.limit || 0) < f.uptoMin) return false;
+    if (f.noCredit && r.license.creditRequired) return false;
+    if (f.style && !r.styles.some((s) => s.id === f.style)) return false;
+    if (parsed && !matchesText(r, parsed)) return false;
+    if (f.bpm?.enabled) {
+      if (r.bpm == null) return !f.bpm.requireBpm;
+      if (f.bpm.min && r.bpm < f.bpm.min) return false;
+      if (f.bpm.max && r.bpm > f.bpm.max) return false;
+    }
+    return true;
+  });
+}
+
+const SORTS = {
+  pertinence: (a, b) => b.score - a.score,
+  'bpm-asc': (a, b) => (a.bpm ?? 999) - (b.bpm ?? 999) || b.score - a.score,
+  'bpm-desc': (a, b) => (b.bpm ?? -1) - (a.bpm ?? -1) || b.score - a.score,
+  vues: (a, b) => (b.views || 0) - (a.views || 0),
+  recent: (a, b) => String(b.publishedAt || '').localeCompare(String(a.publishedAt || '')),
+  limite: (a, b) => (b.license.limit || (b.license.category === 'ffp' ? Infinity : 0)) - (a.license.limit || (a.license.category === 'ffp' ? Infinity : 0)) || b.score - a.score,
+};
+
+function sortResults(results, sort = 'pertinence') {
+  return [...results].sort(SORTS[sort] || SORTS.pertinence);
+}
+
+/** Regroupe par catégorie de licence, dans l'ordre FFP → Up to → Free → Payant → Inconnu. */
+function groupByCategory(results) {
+  const groups = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, []]));
+  for (const r of results) groups[r.license.category].push(r);
+  return CATEGORY_ORDER.map((c) => ({ category: c, items: groups[c] })).filter((g) => g.items.length);
+}
+
+/** Liste des courants présents dans les résultats (pour le filtre « style »). */
+function stylesIn(results) {
+  const m = new Map();
+  for (const r of results) for (const s of r.styles) m.set(s.id, { ...s, count: (m.get(s.id)?.count || 0) + 1 });
+  return [...m.values()].sort((a, b) => b.count - a.count);
+}
+
+
+// ===== src/youtube/demo.js =====
+// Source « démo » : prods FICTIVES pour essayer l'interface sans accès à
+// YouTube (pas de clé, réseau bloqué…). Les descriptions reprennent les
+// formulations qu'on trouve vraiment sous les type beats, pour montrer
+// comment l'algo les classe.
+
+
+const V = (id, title, channel, views, publishedAt, description) => ({
+  id: `demo-${id}`,
+  title,
+  channel,
+  views,
+  publishedAt,
+  duration: 150 + ((views / 7) % 60),
+  description,
+  demo: true,
+});
+
+const DEMO_VIDEOS = [
+  V('uzi1', '[FREE] Lil Uzi Vert Type Beat - "Starlight" | Free For Profit 160 BPM', 'prod. nova (démo)', 48200, '2026-09-12',
+    'FREE FOR PROFIT ✅ just credit (prod. nova) in the title\nBPM: 160 | Key: F# minor\nUntagged: beatstars link\n#lilUziVert #typebeat #freeforprofit'),
+  V('uzi2', '(FREE) Lil Uzi Vert x Lil Tecca Type Beat "Sugar Rush"', 'kaybeats (démo)', 12900, '2026-10-02',
+    '𝗙𝗥𝗘𝗘 𝗙𝗢𝗥 𝗣𝗥𝗢𝗙𝗜𝗧 up to 5,000 streams on Spotify / Apple Music.\nAfter 5k streams you must purchase a lease.\n155 bpm, key: C major'),
+  V('tecca1', 'Lil Tecca Type Beat "Bubblegum" [FREE] 150bpm', 'melo.wav (démo)', 30500, '2026-08-21',
+    'Free for non-profit use only. For profit use (Spotify, Apple Music…) you need to buy a lease: https://beatstars.com/demo\nMP3 Lease $29.99 - up to 10,000 streams\nWAV Lease $49.99 - up to 50,000 streams'),
+  V('carti1', '[FREE] Playboi Carti x Ken Carson Type Beat "VAMP" | Rage', 'opium.lab (démo)', 88100, '2026-07-30',
+    'free for profit (100k streams max)\nafter that hit me for a license\n165 BPM\n#rage #playboicarti #kencarson'),
+  V('carti2', 'Ken Carson Type Beat - "Lights Out" (SOLD)', 'opium.lab (démo)', 9100, '2026-06-04',
+    'This beat is SOLD. Check my other beats.'),
+  V('yeat1', 'Yeat Type Beat "Bell Ringer" | Rage Type Beat 2026', 'tonka (démo)', 21000, '2026-10-11',
+    'Buy this beat (instant delivery): https://bsta.rs/demo\nLeases starting at $25\n150 BPM'),
+  V('nett1', '[FREE] Nettspend Type Beat "Jerk Season" | free for profit', 'xan.prod (démo)', 7400, '2026-10-15',
+    'FREE FOR PROFIT — tu peux sortir le son sur Spotify sans payer, juste crédit obligatoire.\n168 bpm'),
+  V('pop1', '[FREE] Pop Smoke Type Beat "WOO" | NY Drill Type Beat 2026', 'brklyn (démo)', 64000, '2026-05-19',
+    'Free for profit ❌ (must buy a lease to release)\nfree for youtube only\n144 BPM | key: G minor'),
+  V('pop2', '(FREE) Dark NY Drill Type Beat x Pop Smoke "Opps" | free for profit', 'shadowbeats (démo)', 15300, '2026-09-28',
+    'Free for profit but you need to buy a license to release on Spotify and Apple Music.\n142 BPM'),
+  V('fivio1', 'Fivio Foreign Type Beat - "Big Drip" | Hard Drill Free For Profit', 'drillszn (démo)', 33600, '2026-08-08',
+    'FREE FOR PROFIT up to 10k streams. After 10k streams purchase a lease.\nPlease credit (prod. drillszn)\n140bpm'),
+  V('kingvon1', '[FREE] King Von Type Beat "Opp Block" | Chicago Drill', 'chiraq808 (démo)', 51200, '2026-04-01',
+    'Free beat. Download link below.\n138 BPM'),
+  V('rod1', '[FREE] Rod Wave Type Beat "Rain" | Emotional Guitar Type Beat', 'soulwave (démo)', 102300, '2026-03-14',
+    'FREE FOR PROFIT 💯 No need to buy, just put (prod. soulwave) in the title.\nBPM 128\nGuitar, piano, pain music'),
+  V('durk1', 'Lil Durk Type Beat - "Voice of the Heroes" | Melodic Trap', 'h3ro (démo)', 23000, '2026-02-26',
+    'Purchase the beat: beatstars.com/demo\nExclusive rights available\n145 BPM'),
+  V('future1', '[FREE] Future x Metro Boomin Type Beat "EVIL" | Dark Trap', 'metr0nome (démo)', 76000, '2026-09-01',
+    'free for profit ✔\nunlimited streams, no strings attached\nBPM: 145 | Key: D# minor\n#darktrap #future #metroboomin'),
+  V('savage1', '21 Savage Type Beat "Blood" | free for profit up to 2000 streams', 'south4 (démo)', 8800, '2026-10-19',
+    'Free for profit up to 2,000 streams. Need more? Grab a lease.\n134 bpm'),
+  V('travis1', '[FREE] Travis Scott Type Beat "Astro" | Psychedelic Trap', 'cactus.jack.fan (démo)', 41000, '2026-07-07',
+    '100% free / royalty free. Use it how you want.\n136 BPM'),
+  V('summrs1', '[FREE] Summrs Type Beat "pink clouds" | Pluggnb', 'plugsoft (démo)', 18700, '2026-06-17',
+    'free for profit (credit me)\n150 bpm | key: A major\n#pluggnb #summrs'),
+  V('joey1', 'Joey Bada$$ Type Beat "Brooklyn Soul" | Boom Bap Free For Profit', 'dusty.mpc (démo)', 27400, '2026-01-29',
+    'Free for profit. Sample cleared by me (original composition).\n90 BPM, jazzy, old school'),
+  V('mac1', '[FREE] Mac Miller Type Beat "Sunday Morning" | Chill Jazzy', 'lofi.lou (démo)', 36500, '2026-05-02',
+    'Free for non commercial use. Contact me for leasing.\n88 BPM'),
+  V('kendrick1', 'Kendrick Lamar Type Beat "Compton Sun" | West Coast Free For Profit 2026', 'g.funk.dept (démo)', 29800, '2026-08-30',
+    'FREE FOR PROFIT up to 50k streams on all platforms\n96 BPM'),
+  V('glock1', '[FREE] Key Glock Type Beat "Paper Route" | Memphis', 'mphs (démo)', 14200, '2026-09-09',
+    'free for profit just credit\n150 BPM, cowbell'),
+  V('jersey1', '[FREE] Jersey Club Type Beat "Bounce" | Bandmanrill Type Beat', 'njclub (démo)', 11100, '2026-10-05',
+    'FREE FOR PROFIT (5k streams), then purchase a license\n142 BPM'),
+  V('babyface1', 'Babyface Ray Type Beat "Motor City" | Detroit Type Beat', 'det.keys (démo)', 9600, '2026-07-21',
+    'Leases: $20 / $40 / $100 exclusive\nBPM 100'),
+  V('baby1', '[FREE FOR PROFIT] Lil Baby Type Beat "Real Story" | Melodic Trap 2026', 'trapwave (démo)', 54300, '2026-10-08',
+    'Thanks for listening 🙏\nThis beat is free for non-profit only (YouTube, SoundCloud).\nFor Spotify / Apple Music you need to purchase a lease: https://beatstars.com/demo\n145 BPM | Key: E minor\nBusiness: trapwave@mail.com'),
+  V('gunna1', 'FREE FOR PROFIT Gunna Type Beat "Wunna Drip" | Energetic Trap', 'dripz (démo)', 26100, '2026-09-21',
+    'YouTube ✅\nSpotify ❌\nApple Music ❌\nDM me before releasing on streaming platforms.\n150 bpm'),
+  V('uzi3', '[FREE FOR PROFIT] Lil Uzi Vert Type Beat "Neon Pink" | Fast Energetic Synth', 'neonprod (démo)', 19400, '2026-10-20',
+    'FREE FOR PROFIT ✅\nSpotify ✅ Apple Music ✅ — no lease needed, just credit (prod. neon)\nBPM: 158 | Key: G# minor\nUntagged WAV on beatstars if you want to support'),
+  V('song1', 'Lil Uzi Vert - Just Wanna Rock (Official Video)', 'Artiste officiel (démo)', 9000000, '2022-10-17',
+    'Stream the album now.'),
+];
+
+/** Recherche « démo » : classe les vidéos fictives selon les mots de la requête. */
+function createDemoProvider() {
+  return {
+    name: 'demo',
+    label: 'Démo (prods fictives)',
+    async search(q, max = 20) {
+      const words = normalize(q).split(/\s+/).filter((w) => w.length > 2 && !['type', 'beat', 'free', 'for', 'profit'].includes(w));
+      const scored = DEMO_VIDEOS.map((v) => {
+        const t = normalize(`${v.title} ${v.description}`);
+        return { v, s: words.filter((w) => t.includes(w)).length };
+      }).filter((x) => x.s > 0);
+      scored.sort((a, b) => b.s - a.s);
+      const list = scored.length ? scored.map((x) => x.v) : DEMO_VIDEOS.slice(0, 6);
+      return list.slice(0, max).map(({ id, title, channel }) => ({ id, title, channel, description: '' }));
+    },
+    async details(ids) {
+      const out = new Map();
+      for (const id of ids) {
+        const v = DEMO_VIDEOS.find((d) => d.id === id);
+        if (v) out.set(id, { ...v, fullDescription: true });
+      }
+      return out;
+    },
+  };
+}
+
+</script>
+<script>
+(() => {
+'use strict';
+// Melofinds, version page Claude. Le moteur (buildPlan, analyzeVideo, filterResults…)
+// est chargé juste avant ce script ; ici, seulement l'interface.
+
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const h = (tag, attrs = {}, ...kids) => {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const k of kids.flat()) if (k != null && k !== false) el.append(k instanceof Node ? k : String(k));
+  return el;
+};
+
+// ---------------------------------------------------------------------------
+// Petits réglages du navigateur (onglet, formulaire en cours, filtres)
+
+const local = {
+  get(k, fallback) {
+    try { const v = localStorage.getItem(`mf.${k}`); return v == null ? fallback : JSON.parse(v); } catch { return fallback; }
+  },
+  set(k, v) { try { localStorage.setItem(`mf.${k}`, JSON.stringify(v)); } catch { /* indisponible */ } },
+};
+
+let toastTimer;
+function toast(msg, action) {
+  const t = $('#toast');
+  $('#toastMsg').textContent = msg;
+  const btn = $('#toastAction');
+  btn.hidden = !action;
+  btn.onclick = null;
+  if (action) {
+    btn.textContent = action.label;
+    btn.onclick = () => { t.classList.remove('show'); action.run(); };
+  }
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), action ? 5000 : 2000);
+}
+
+// ---------------------------------------------------------------------------
+// Données gardées : historique + ma liste.
+// Dans ton compte Claude (capacité « db », dossier privé) quand c'est possible,
+// sinon dans ce navigateur seulement.
+
+const state = { history: local.get('history', []), beats: local.get('beats', []) };
+const MAX = { history: 80, beats: 80 };
+const DESC_MAX = 2500;
+
+const persist = {
+  mode: 'local',
+  refs: {},
+  chain: { history: Promise.resolve(), beats: Promise.resolve() },
+  timers: {},
+  async init() {
+    setSync();
+    const c = window.claude;
+    if (!c?.use) return;
+    try {
+      const [db, user] = await Promise.all([c.use('db'), c.use('user')]);
+      if (!db || !user) return;
+      const uid = await user.id();
+      if (!uid) return;
+      for (const key of ['history', 'beats']) {
+        const ref = db.doc(`data/users/${uid}/${key}`);
+        this.refs[key] = ref;
+        let first = true;
+        ref.onSnapshot((snap) => {
+          if (snap.metadata.hasPendingWrites) return;
+          if (snap.exists) {
+            const items = snap.data()?.items;
+            if (Array.isArray(items)) {
+              state[key] = JSON.parse(JSON.stringify(items));
+              local.set(key, state[key]);
+              renderFor(key);
+            }
+          } else if (first && state[key].length) {
+            this.save(key); // première fois : on envoie ce que ce navigateur avait déjà
+          }
+          first = false;
+        }, () => { this.mode = 'local'; setSync(); });
+      }
+      this.mode = 'db';
+      setSync();
+    } catch {
+      this.mode = 'local';
+      setSync();
+    }
+  },
+  save(key) {
+    state[key] = state[key].slice(0, MAX[key]);
+    local.set(key, state[key]);
+    if (this.mode !== 'db' || !this.refs[key]) return;
+    clearTimeout(this.timers[key]);
+    this.timers[key] = setTimeout(() => {
+      const body = { items: state[key], updatedAt: new Date().toISOString() };
+      this.chain[key] = this.chain[key].then(() => this.refs[key].set(body)).catch((e) => {
+        if (e?.code === 'quota_exceeded') toast('Ta liste est pleine : retire quelques prods.');
+        else if (e?.code === 'invalid_argument' || e?.code === 'revoked' || e?.code === 'not_granted') { this.mode = 'local'; setSync(); }
+      });
+    }, 500);
+  },
+};
+function setSync() {
+  $('#syncBadge').textContent = persist.mode === 'db' ? '☁️ Sauvé dans ton compte' : '💾 Sauvé dans ce navigateur';
+}
+function renderFor(key) {
+  if (key === 'history') { renderHistory(); syncFavButton(); }
+  else { renderList(); updateListCount(); }
+}
+
+// ---------------------------------------------------------------------------
+// Appareil : l'algo s'adapte (mise en page, nombre de recherches)
+
+function detectDevice() {
+  const forced = local.get('device', '');
+  if (forced === 'mobile' || forced === 'desktop') return forced;
+  const ua = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  return ua || window.innerWidth < 760 ? 'mobile' : 'desktop';
+}
+let device = detectDevice();
+function applyDevice() {
+  document.body.classList.toggle('mobile', device === 'mobile');
+  document.body.classList.toggle('desktop', device === 'desktop');
+  const forced = local.get('device', '');
+  $('#deviceBadge').textContent = `${device === 'mobile' ? '📱 Mobile' : '💻 PC'}${forced ? ' · forcé' : ''}`;
+  $('#depth option[value=""]').textContent = `Auto · ${DEPTHS[defaultDepth(device)].label.toLowerCase()} sur ${device === 'mobile' ? 'mobile' : 'PC'}`;
+  updatePlan();
+}
+$('#deviceBadge').addEventListener('click', () => {
+  local.set('device', local.get('device', '') ? '' : device === 'mobile' ? 'desktop' : 'mobile');
+  device = detectDevice();
+  applyDevice();
+  toast(device === 'mobile' ? 'Mode mobile : recherche plus légère' : 'Mode PC : recherche plus complète');
+});
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { const d = detectDevice(); if (d !== device) { device = d; applyDevice(); } }, 200);
+});
+
+// ---------------------------------------------------------------------------
+// Onglets
+
+const VIEWS = ['search', 'verify', 'list', 'history'];
+function showView(name, { scroll = true } = {}) {
+  if (!VIEWS.includes(name)) name = 'search';
+  $$('.tab').forEach((t) => { const on = t.dataset.view === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
+  $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
+  local.set('view', name);
+  if (name === 'list') renderList();
+  if (name === 'history') renderHistory();
+  if (scroll) window.scrollTo({ top: 0 });
+}
+$$('.tab').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
+
+// ---------------------------------------------------------------------------
+// Utilitaires d'affichage
+
+const GROUP_ICON = { ffp: '✅', upto: '⏳', fnp: '🎧', paid: '💸', unknown: '❓' };
+const KEYLINE_ICON = { licence: '📜', credit: '✍️', tempo: '🎚️', contact: '✉️' };
+const KW_RE = /(free\s*(?:for|4)\s*profit|non[\s-]*profit|spotify|apple\s*music|streaming|youtube\s*only|lease|licen[cs]e|licence|cr[eé]dit|untagged|up\s*to\s*[\d.,\s]+k?\s*(?:streams?|plays?)|[\d.,]+\s*k?\s*(?:streams?|plays?|écoutes)|❌|✅)/gi;
+const stripAccents = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+const ytSearch = (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
+
+function highlight(text, terms = []) {
+  const frag = document.createDocumentFragment();
+  if (!text) return frag;
+  const ranges = [];
+  const plain = stripAccents(text).toLowerCase();
+  for (const t of terms) {
+    if (!t) continue;
+    let i = plain.indexOf(t);
+    while (i !== -1) { ranges.push([i, i + t.length, 'q']); i = plain.indexOf(t, i + t.length); }
+  }
+  KW_RE.lastIndex = 0;
+  let m;
+  while ((m = KW_RE.exec(text))) ranges.push([m.index, m.index + m[0].length, 'kw']);
+  ranges.sort((a, b) => a[0] - b[0] || (a[2] === 'q' ? -1 : 1));
+  let pos = 0;
+  for (const [s, e, kind] of ranges) {
+    if (s < pos) continue;
+    frag.append(text.slice(pos, s), h('mark', { class: kind === 'kw' ? 'kw' : null }, text.slice(s, e)));
+    pos = e;
+  }
+  frag.append(text.slice(pos));
+  return frag;
+}
+
+function verdictText(L) {
+  switch (L.category) {
+    case 'ffp': return '✅ Spotify sans payer';
+    case 'upto': return `⏳ Gratuit jusqu’à ${formatCount(L.limit)} ${L.limitUnit || 'streams'}`;
+    case 'fnp': return L.misleading ? '⚠️ Payer pour Spotify' : '🎧 Gratuit hors Spotify';
+    case 'paid': return L.reasons[0]?.text.includes('SOLD') ? '⛔ Prod déjà vendue' : '💸 Licence payante';
+    default: return '❓ Licence à vérifier';
+  }
+}
+
+async function copyText(text, what = 'Copié') {
+  try { await navigator.clipboard.writeText(text); toast(what); } catch { toast('Copie impossible ici : sélectionne le texte à la main.'); }
+}
+
+// ---------------------------------------------------------------------------
+// RECHERCHE : description → courants → artistes → recherches YouTube
+
+const SUGGESTIONS = [
+  ['Vibe', ['rapide', 'énergique', 'musicale', 'sombre', 'triste', 'agressif', 'chill', 'planant', 'bouncy', 'joyeux']],
+  ['Style', ['drill', 'rage', 'jerk', 'pluggnb', 'boom bap', 'detroit', 'phonk']],
+  ['Instru', ['piano', 'guitare', 'synthé', 'cloches', 'violon']],
+  ['Artiste', ['Lil Uzi', 'Pop Smoke', 'Travis Scott', 'Ken Carson', 'Gunna']],
+];
+const LICENSES = [
+  ['ffp', '✅', 'Free for profit', 'Spotify sans payer'],
+  ['upto', '⏳', 'Up to', 'Gratuit jusqu’à X streams'],
+  ['fnp', '🎧', 'Free', 'Non-profit, payer pour Spotify'],
+  ['paid', '💸', 'Payant', 'Lease / exclu'],
+];
+const promptEl = $('#prompt');
+
+for (const [label, words] of SUGGESTIONS) {
+  $('#suggestions').append(h('div', { class: 'sugg-row' }, h('b', {}, label), words.map((w) => h('button', {
+    type: 'button', class: 'chip', 'data-word': w, onclick: () => toggleWord(w),
+  }, w))));
+}
+for (const [id, ico, label, sub] of LICENSES) {
+  $('#licenseGrid').append(h('label', { class: `lic cat-${id}`, for: `lic-${id}` },
+    h('input', { type: 'checkbox', name: 'lic', value: id, id: `lic-${id}` }),
+    h('span', { class: 'lic-ico', 'aria-hidden': 'true' }, ico),
+    h('span', {}, h('b', {}, label), h('small', {}, sub))));
+}
+
+function toggleWord(w) {
+  const parts = promptEl.value.split(',').map((p) => p.trim()).filter(Boolean);
+  const i = parts.findIndex((p) => p.toLowerCase() === w.toLowerCase());
+  if (i >= 0) parts.splice(i, 1); else parts.push(w);
+  promptEl.value = parts.join(', ');
+  updatePlan();
+}
+function syncChips() {
+  const txt = ` ${stripAccents(promptEl.value.toLowerCase())} `;
+  $$('#suggestions .chip').forEach((c) => {
+    const w = stripAccents(c.dataset.word.toLowerCase()).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    c.classList.toggle('on', new RegExp(`[^a-z]${w}[^a-z]`).test(txt));
+  });
+}
+
+function readForm() {
+  return {
+    prompt: promptEl.value.trim(),
+    manualQuery: $('#manualQuery').value.trim(),
+    licenses: $$('input[name=lic]:checked').map((i) => i.value),
+    depth: $('#depth').value,
+  };
+}
+function writeForm(f) {
+  promptEl.value = f.prompt || '';
+  $('#manualQuery').value = f.manualQuery || '';
+  const lic = new Set(f.licenses || []);
+  $$('input[name=lic]').forEach((i) => { i.checked = lic.has(i.value); });
+  $('#depth').value = f.depth || '';
+  updatePlan();
+}
+
+let currentPlan = null;
+function updatePlan() {
+  const f = readForm();
+  currentPlan = buildPlan(f.prompt, { licenses: f.licenses, device, depth: f.depth || undefined, manualQuery: f.manualQuery });
+  renderPlan(currentPlan, f);
+  syncChips();
+  syncFavButton();
+  local.set('form', f);
+}
+
+function renderPlan(plan, f) {
+  const hasInput = !!(f.prompt || f.manualQuery);
+  $('#planTitle').textContent = hasInput ? (f.prompt || f.manualQuery) : 'Décris ta prod à gauche';
+  $('#planNotes').replaceChildren(...(hasInput ? plan.notes : []).map((n) => h('div', { class: 'note' }, '⚠️ ', n)));
+  $('#pMoods').replaceChildren(...(plan.moods.length
+    ? plan.moods.map((m) => h('span', { class: 'tag', title: `mots reconnus : ${m.matched.join(', ')}` }, m.label))
+    : [h('span', { class: 'tag plain' }, 'aucune reconnue')]));
+  $('#pInstr').textContent = plan.instruments.length ? `Instruments : ${plan.instruments.join(', ')}` : '';
+  $('#pGenres').replaceChildren(...plan.genres.map((g) => h('span', { class: 'tag genre', title: g.why.join(', ') }, g.label)));
+  $('#pArtists').replaceChildren(...plan.artists.map((a) => h('a', {
+    class: 'tag artist', href: ytSearch(`${a.name} type beat${plan.licenseSuffix ? ` ${plan.licenseSuffix}` : ''}`), target: '_blank', rel: 'noopener', title: a.reason,
+  }, a.name)));
+  $('#pBpm').replaceChildren(`${plan.bpmRange.min}–${plan.bpmRange.max}`, h('small', {}, 'BPM'));
+  $('#pBpmWhy').textContent = plan.bpmRange.source;
+  $('#qTitle').textContent = `${plan.queries.length} recherches YouTube · profondeur ${plan.depth.label.toLowerCase()}${plan.device === 'mobile' ? ' (mobile)' : ''}`;
+  $('#queries').replaceChildren(...plan.queries.map((q) => h('li', { class: 'q' },
+    h('div', { class: 'q-main' }, h('div', { class: 'q-text' }, q.q), h('div', { class: 'q-why' }, q.why)),
+    h('div', { class: 'q-actions' },
+      h('button', { type: 'button', class: 'mini', title: 'Copier la recherche', onclick: () => copyText(q.q, 'Recherche copiée') }, '⧉'),
+      h('a', { class: 'yt', href: ytSearch(q.q), target: '_blank', rel: 'noopener' }, '▶ YouTube ↗')))));
+}
+
+let planTimer;
+const debouncedPlan = () => { clearTimeout(planTimer); planTimer = setTimeout(updatePlan, 150); };
+promptEl.addEventListener('input', debouncedPlan);
+$('#manualQuery').addEventListener('input', debouncedPlan);
+$('#depth').addEventListener('change', updatePlan);
+$('#licenseGrid').addEventListener('change', updatePlan);
+$('#clearPrompt').addEventListener('click', () => { promptEl.value = ''; updatePlan(); promptEl.focus(); });
+$('#formToggle').addEventListener('click', () => $('#searchForm').classList.remove('collapsed'));
+$('#goVerify').addEventListener('click', () => { showView('verify'); $('#vTitle').focus(); });
+
+$('#searchForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const f = readForm();
+  if (!f.prompt && !f.manualQuery) { toast('Écris d’abord une description, ex. « rapide, énergique et musicale »'); promptEl.focus(); return; }
+  updatePlan();
+  saveHistory(f, currentPlan);
+  toast('Recherche gardée dans l’historique');
+  if (device === 'mobile') {
+    $('#searchForm').classList.add('collapsed');
+    $('#formToggleText').textContent = f.prompt || f.manualQuery;
+    $('#planCol').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && $('#view-search').classList.contains('active')) {
+    e.preventDefault();
+    $('#searchForm').requestSubmit();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Historique & favoris
+
+function formKey(f) { return JSON.stringify([f.prompt, f.manualQuery, [...(f.licenses || [])].sort(), f.depth || '']); }
+
+function saveHistory(f, plan) {
+  const key = formKey(f);
+  const old = state.history.find((e) => formKey(e.form) === key);
+  const entry = {
+    id: old?.id || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    date: new Date().toISOString(),
+    form: f,
+    device,
+    queries: plan.queries.map((q) => q.q),
+    genres: plan.genres.map((g) => g.label),
+    artists: plan.artists.map((a) => a.name),
+    moods: plan.moods.map((m) => m.label),
+    bpm: [plan.bpmRange.min, plan.bpmRange.max],
+    favorite: old?.favorite || false,
+    name: old?.name,
+    runs: (old?.runs || 0) + 1,
+  };
+  state.history = [entry, ...state.history.filter((e) => e.id !== entry.id)];
+  persist.save('history');
+  renderHistory();
+  syncFavButton();
+  return entry;
+}
+function updateEntry(id, patch) {
+  state.history = state.history.map((e) => (e.id === id ? { ...e, ...patch } : e));
+  persist.save('history');
+  renderHistory();
+  syncFavButton();
+}
+function currentEntry() {
+  const key = formKey(readForm());
+  return state.history.find((e) => formKey(e.form) === key);
+}
+function syncFavButton() {
+  const f = readForm();
+  const btn = $('#favNow');
+  btn.hidden = !(f.prompt || f.manualQuery);
+  const e = currentEntry();
+  btn.textContent = e?.favorite ? '★ En favori' : '☆ Mettre en favori';
+  btn.classList.toggle('on', !!e?.favorite);
+}
+$('#favNow').addEventListener('click', () => {
+  let e = currentEntry();
+  if (!e) e = saveHistory(readForm(), currentPlan);
+  updateEntry(e.id, { favorite: !e.favorite });
+  toast(e.favorite ? 'Retirée des favoris' : 'Ajoutée aux favoris');
+});
+
+const entryTitle = (e) => e.name || e.form.prompt || e.form.manualQuery || 'Recherche sans titre';
+const licenseSummary = (f) => (f.licenses || []).map((l) => CATEGORIES[l]?.label).join(' + ') || 'toutes licences';
+
+function renderEntry(e) {
+  const box = h('div', { class: `hist${e.favorite ? ' fav' : ''}` });
+  const actions = h('div', { class: 'hist-actions' });
+  const fillActions = () => {
+    actions.replaceChildren(
+      h('button', { type: 'button', class: 'primary small', onclick: () => { writeForm(e.form); showView('search'); saveHistory(e.form, currentPlan); } }, '↻ Relancer'),
+      h('button', { type: 'button', class: 'mini', onclick: () => { writeForm(e.form); showView('search'); $('#searchForm').classList.remove('collapsed'); promptEl.focus(); } }, '✏️ Modifier'),
+      e.favorite ? h('button', { type: 'button', class: 'mini', onclick: rename }, '🏷️ Renommer') : null,
+      h('button', { type: 'button', class: 'mini danger', onclick: remove }, '🗑️ Supprimer'),
+    );
+  };
+  const rename = () => {
+    const input = h('input', { type: 'text', value: entryTitle(e), 'aria-label': 'Nom du favori', id: `rename-${e.id}` });
+    const ok = () => updateEntry(e.id, { name: input.value.trim() || undefined });
+    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') ok(); if (ev.key === 'Escape') fillActions(); });
+    actions.replaceChildren(input, h('button', { type: 'button', class: 'primary small', onclick: ok }, 'OK'), h('button', { type: 'button', class: 'mini', onclick: fillActions }, 'Annuler'));
+    input.focus();
+    input.select();
+  };
+  const remove = () => {
+    const before = state.history;
+    state.history = state.history.filter((x) => x.id !== e.id);
+    persist.save('history');
+    renderHistory();
+    toast('Recherche supprimée', { label: 'Annuler', run: () => { state.history = before; persist.save('history'); renderHistory(); } });
+  };
+  fillActions();
+  box.append(
+    h('div', { class: 'hist-top' },
+      h('button', { type: 'button', class: `star${e.favorite ? ' on' : ''}`, title: e.favorite ? 'Retirer des favoris' : 'Mettre en favori', 'aria-label': 'Favori', onclick: () => updateEntry(e.id, { favorite: !e.favorite }) }, '⭐'),
+      h('div', { class: 'hist-title' }, entryTitle(e)),
+      h('div', { class: 'hist-date' }, new Date(e.date).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }), e.device === 'mobile' ? ' · 📱' : ' · 💻')),
+    h('div', { class: 'tags' },
+      ...(e.moods || []).map((m) => h('span', { class: 'tag' }, m)),
+      ...(e.genres || []).map((g) => h('span', { class: 'tag genre' }, g)),
+      ...(e.artists || []).map((a) => h('span', { class: 'tag artist' }, a)),
+      h('span', { class: 'tag plain' }, `${e.bpm?.[0]}–${e.bpm?.[1]} BPM`),
+      h('span', { class: 'tag plain' }, licenseSummary(e.form)),
+      e.runs > 1 ? h('span', { class: 'tag plain' }, `lancée ${e.runs}×`) : null),
+    h('div', { class: 'hist-queries' }, h('span', {}, 'Recherches utilisées :'),
+      ...e.queries.map((q) => h('a', { href: ytSearch(q), target: '_blank', rel: 'noopener' }, h('code', {}, q)))),
+    actions,
+  );
+  return box;
+}
+
+function renderHistory() {
+  const onlyFav = $('#onlyFav').checked;
+  const list = [...state.history].sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0)).filter((e) => !onlyFav || e.favorite);
+  $('#historyList').replaceChildren(...(list.length
+    ? list.map(renderEntry)
+    : [h('div', { class: 'empty-list' }, onlyFav
+      ? '⭐ Aucun favori pour l’instant. Clique sur l’étoile d’une recherche pour la garder.'
+      : '🕘 Pas encore de recherche gardée. Lance une recherche : elle apparaîtra ici avec les requêtes YouTube utilisées.')]));
+  $('#clearHistory').hidden = !state.history.length;
+}
+$('#onlyFav').addEventListener('change', renderHistory);
+let clearArmed = null;
+$('#clearHistory').addEventListener('click', () => {
+  const btn = $('#clearHistory');
+  if (!clearArmed) {
+    btn.textContent = 'Confirmer : tout effacer (favoris gardés)';
+    clearArmed = setTimeout(() => { btn.textContent = 'Tout effacer'; clearArmed = null; }, 4000);
+    return;
+  }
+  clearTimeout(clearArmed);
+  clearArmed = null;
+  btn.textContent = 'Tout effacer';
+  state.history = state.history.filter((e) => e.favorite);
+  persist.save('history');
+  renderHistory();
+  toast('Historique effacé, favoris gardés');
+});
+
+// ---------------------------------------------------------------------------
+// Cartes de prod (Vérifier + Ma liste)
+
+function youtubeId(url) {
+  const m = String(url || '').match(/(?:youtu\.be\/|v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+function analyze(beat) {
+  return analyzeVideo({ id: beat.id, title: beat.title, description: beat.description, channel: beat.channel, views: beat.views }, null);
+}
+
+function renderCard(beat, r, { terms = [], open = false, big = false, onRemove = null, example = false } = {}) {
+  const L = r.license;
+  const card = h('article', { class: `card cat-${L.category}${L.misleading ? ' misleading' : ''}${big ? ' big-card' : ''}` });
+  const style = r.styles?.[0]?.label || 'Type beat';
+  card.append(h('div', { class: 'cover' },
+    h('span', { class: 'ribbon' }, L.label),
+    example ? h('span', { class: 'example-tag' }, 'exemple') : null,
+    h('div', { class: 'cover-style' }, style, h('small', {}, r.key ? `🎹 ${r.key}` : (r.styles?.[1]?.label || ' '))),
+    r.bpm ? h('div', { class: 'cover-bpm' }, r.bpm, h('small', {}, 'BPM')) : h('div', { class: 'cover-bpm none' }, 'BPM ?')));
+
+  const body = h('div', { class: 'card-body' });
+  const dots = { haute: 3, moyenne: 2, faible: 1 }[L.confidence] || 1;
+  body.append(h('div', { class: 'verdict' }, verdictText(L),
+    h('span', { class: 'conf', title: `Confiance de l’algo : ${L.confidence}` }, L.confidence, h('span', { class: 'conf-dots' }, [1, 2, 3].map((i) => h('i', { class: i <= dots ? 'on' : null }))))));
+  body.append(h('h3', { class: 'title', title: beat.title }, beat.title || '(sans titre)'));
+  const meta = [beat.channel, beat.addedAt ? `ajoutée le ${new Date(beat.addedAt).toLocaleDateString('fr-FR')}` : null].filter(Boolean).join(' · ');
+  if (meta) body.append(h('div', { class: 'meta' }, meta));
+  if (L.misleading) {
+    body.append(h('div', { class: 'alert' }, h('span', { 'aria-hidden': 'true' }, '⚠️'),
+      h('span', {}, h('b', {}, 'Titre trompeur. '), 'Le titre dit « free for profit », mais la description demande de payer pour sortir le son sur Spotify.')));
+  }
+  const badges = h('div', { class: 'badges' });
+  if (L.creditRequired) badges.append(h('span', { class: 'badge credit' }, '✍️ Crédit obligatoire'));
+  badges.append(h('span', { class: 'badge' }, `Spotify : ${L.spotify}`));
+  for (const s of (r.styles || []).slice(1)) badges.append(h('span', { class: 'badge' }, s.label));
+  body.append(badges);
+
+  const lines = r.keyLines || [];
+  if (lines.length) {
+    body.append(h('ul', { class: 'keyinfo' },
+      h('li', { class: 'keyinfo-title' }, '📋 Lu dans la description'),
+      lines.slice(0, big ? 8 : 4).map((l) => h('li', { class: l.type }, h('i', { 'aria-hidden': 'true' }, KEYLINE_ICON[l.type] || '•'), h('span', {}, highlight(l.text, terms))))));
+  } else {
+    body.append(h('div', { class: 'small-note' }, beat.description ? 'Aucune ligne sur les droits dans la description.' : 'Pas de description : l’algo n’a que le titre.'));
+  }
+  card.append(body);
+
+  const details = h('div', { class: 'details', hidden: !open });
+  const fill = () => {
+    if (details.childNodes.length) return;
+    details.append(h('ul', { class: 'reasons' }, L.reasons.map((x) => h('li', {}, x.text, x.quote ? h('q', {}, highlight(x.quote, terms)) : null))));
+    const pre = h('pre', {});
+    pre.append(highlight(beat.description || '(description vide)', terms));
+    details.append(h('details', { class: 'desc', open: terms.length ? true : null }, h('summary', {}, 'Description complète'), pre));
+  };
+  if (open) fill();
+  const whyBtn = h('button', { type: 'button', class: `act${open ? ' on' : ''}`, title: 'Pourquoi cette catégorie ?' }, 'ℹ️', h('span', {}, 'Pourquoi'));
+  whyBtn.addEventListener('click', () => { fill(); details.hidden = !details.hidden; whyBtn.classList.toggle('on', !details.hidden); });
+  card.append(h('div', { class: 'actions' },
+    beat.url ? h('a', { class: 'act yt-act', href: beat.url, target: '_blank', rel: 'noopener', title: 'Écouter sur YouTube' }, '▶', h('span', {}, 'YouTube')) : null,
+    whyBtn,
+    beat.url ? h('button', { type: 'button', class: 'act', title: 'Copier le lien', onclick: () => copyText(beat.url, 'Lien copié') }, '🔗', h('span', {}, 'Lien')) : null,
+    onRemove ? h('button', { type: 'button', class: 'act', title: 'Retirer de ma liste', onclick: onRemove }, '🗑️', h('span', {}, 'Retirer')) : null));
+  card.append(details);
+  return card;
+}
+
+// ---------------------------------------------------------------------------
+// VÉRIFIER : colle titre + description → verdict immédiat
+
+const EXAMPLES = [
+  ['Titre trompeur', 'demo-baby1'],
+  ['Spotify ❌', 'demo-gunna1'],
+  ['Up to 5K streams', 'demo-uzi2'],
+  ['Vraiment free', 'demo-uzi3'],
+];
+for (const [label, id] of EXAMPLES) {
+  $('#vExamples').append(h('button', {
+    type: 'button', class: 'chip', onclick: () => {
+      const v = DEMO_VIDEOS.find((d) => d.id === id);
+      $('#vUrl').value = '';
+      $('#vTitle').value = v.title;
+      $('#vDesc').value = v.description;
+      updateVerify();
+    },
+  }, label));
+}
+for (const c of ['ffp', 'upto', 'fnp', 'paid']) {
+  $('#legend').append(h('li', { class: `cat-${c}` }, h('b', {}, `${GROUP_ICON[c]} ${CATEGORIES[c].label}`), CATEGORIES[c].help));
+}
+
+function draftBeat() {
+  const url = $('#vUrl').value.trim();
+  const yid = youtubeId(url);
+  return {
+    id: yid || `b-${Date.now().toString(36)}`,
+    url: yid ? `https://www.youtube.com/watch?v=${yid}` : (/^https?:\/\//.test(url) ? url : ''),
+    title: $('#vTitle').value.trim(),
+    description: $('#vDesc').value.trim().slice(0, DESC_MAX),
+  };
+}
+let verifyTimer;
+function updateVerify() {
+  const b = draftBeat();
+  local.set('draft', { url: $('#vUrl').value, title: $('#vTitle').value, desc: $('#vDesc').value });
+  const has = !!(b.title || b.description);
+  $('#vEmpty').hidden = has;
+  $('#vResult').hidden = !has;
+  $('#vAdd').disabled = !has;
+  $('#vClaude').hidden = true;
+  if (!has) return;
+  const r = analyze(b);
+  const already = state.beats.some((x) => x.id === b.id || (x.title === b.title && x.description === b.description));
+  $('#vAdd').textContent = already ? '✓ Déjà dans ma liste' : '➕ Ajouter à ma liste';
+  $('#vAdd').disabled = already;
+  const card = renderCard(b, r, { open: true, big: true });
+  $('#vResult').replaceChildren(card);
+  if (sampleFn) {
+    $('#vResult').append(h('div', { class: 'hint' },
+      'Formulation inhabituelle ? ',
+      h('button', { type: 'button', class: 'mini', onclick: askClaude }, '🤖 Demander l’avis de Claude'),
+      ' (utilise ton forfait Claude)'));
+  }
+}
+// Coller tout d'un coup dans « Titre » : 1re ligne = titre, le reste = description
+$('#vTitle').addEventListener('paste', (e) => {
+  const text = e.clipboardData?.getData('text') || '';
+  if (!text.includes('\n')) return;
+  e.preventDefault();
+  const [first, ...rest] = text.split(/\r?\n/);
+  $('#vTitle').value = first.trim();
+  if (!$('#vDesc').value.trim()) $('#vDesc').value = rest.join('\n').trim();
+  updateVerify();
+});
+['#vUrl', '#vTitle', '#vDesc'].forEach((s) => $(s).addEventListener('input', () => { clearTimeout(verifyTimer); verifyTimer = setTimeout(updateVerify, 120); }));
+$('#vClear').addEventListener('click', () => { $('#vUrl').value = ''; $('#vTitle').value = ''; $('#vDesc').value = ''; updateVerify(); $('#vTitle').focus(); });
+$('#vAdd').addEventListener('click', () => {
+  const b = { ...draftBeat(), addedAt: new Date().toISOString() };
+  if (!b.title && !b.description) return;
+  state.beats = [b, ...state.beats.filter((x) => x.id !== b.id)];
+  persist.save('beats');
+  updateListCount();
+  updateVerify();
+  toast('Ajoutée à ma liste', { label: 'Voir', run: () => showView('list') });
+});
+$('#listAdd').addEventListener('click', () => { showView('verify'); $('#vTitle').focus(); });
+
+// Avis de Claude (facultatif) via la capacité « sample »
+let sampleFn = null;
+let claudeCtl = null;
+async function askClaude() {
+  const b = draftBeat();
+  const box = $('#vClaude');
+  box.hidden = false;
+  box.replaceChildren(h('span', { class: 'spinner' }), 'Claude lit la description…');
+  claudeCtl?.abort();
+  claudeCtl = new AbortController();
+  const prompt = [
+    'Tu aides un rappeur à savoir s’il peut sortir un son sur Spotify avec une prod (beat) trouvée sur YouTube.',
+    'Lis le titre et la description ci-dessous. La description fait foi sur le titre.',
+    'Catégories : "ffp" = free for profit sans limite (Spotify OK sans payer) ; "upto" = free for profit jusqu’à une limite de streams ; "fnp" = gratuit seulement pour usage non commercial, il faut payer pour Spotify ; "paid" = payant ou vendue ; "unknown" = rien de clair.',
+    'Réponds UNIQUEMENT avec un objet JSON : {"categorie": "ffp|upto|fnp|paid|unknown", "limite_streams": nombre ou null, "credit_obligatoire": true/false, "titre_trompeur": true/false, "explication": "2 phrases max en français simple", "citation": "la phrase exacte de la description qui décide, ou chaîne vide"}',
+    '',
+    `TITRE : ${b.title}`,
+    'DESCRIPTION :',
+    b.description.slice(0, 6000),
+  ].join('\n');
+  try {
+    const ans = await sampleFn.json(prompt, { signal: claudeCtl.signal });
+    const cat = CATEGORIES[ans?.categorie] ? ans.categorie : 'unknown';
+    const algo = analyze(b).license.category;
+    box.replaceChildren(
+      h('h4', {}, '🤖 Avis de Claude'),
+      h('div', { class: `cat-${cat}` }, h('b', { style: 'color: var(--c)' }, `${GROUP_ICON[cat]} ${cat === 'upto' && ans.limite_streams ? `Up to ${formatCount(Number(ans.limite_streams))} streams` : CATEGORIES[cat].label}`),
+        ans.titre_trompeur ? ' · ⚠️ titre trompeur' : '', ans.credit_obligatoire ? ' · ✍️ crédit obligatoire' : ''),
+      h('p', { style: 'margin:6px 0 0' }, String(ans.explication || '')),
+      ans.citation ? h('q', {}, String(ans.citation)) : null,
+      h('p', { class: 'agree', style: 'margin:8px 0 0' }, cat === algo ? '✔ Même verdict que l’algo.' : `≠ L’algo dit « ${CATEGORIES[algo].label} ». Relis la description pour trancher.`),
+    );
+  } catch (e) {
+    if (e?.code === 'cancelled') return;
+    const msg = {
+      not_granted: 'Tu n’as pas autorisé cette page à utiliser Claude.',
+      sampling_disabled: 'Claude n’est pas disponible pour ce compte.',
+      rate_limited: 'Trop de demandes pour le moment : réessaie dans un moment.',
+      invalid_json: 'Réponse illisible : réessaie.',
+    }[e?.code] || 'Claude n’a pas pu répondre. Réessaie plus tard.';
+    box.replaceChildren(h('h4', {}, '🤖 Avis de Claude'), msg);
+    if (['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed'].includes(e?.code)) sampleFn = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MA LISTE : tri par licence, BPM, style, recherche dans les descriptions
+
+const listPrefs = local.get('listPrefs', { off: ['paid', 'unknown'], onlyMisleading: false });
+const QUICK_TERMS = ['spotify', 'crédit', 'untagged', 'wav', 'contact', '-lease'];
+for (const term of QUICK_TERMS) {
+  $('#quickTerms').append(h('button', {
+    type: 'button', class: 'chip', 'data-term': term,
+    title: term.startsWith('-') ? `Cacher les prods dont la description contient « ${term.slice(1)} »` : `Prods dont la description contient « ${term} »`,
+    onclick: () => {
+      const input = $('#descSearch');
+      const words = input.value.split(/\s+/).filter(Boolean);
+      const i = words.indexOf(term);
+      if (i >= 0) words.splice(i, 1); else words.push(term);
+      input.value = words.join(' ');
+      renderList();
+    },
+  }, term.startsWith('-') ? `sans ${term.slice(1)}` : term));
+}
+let descTimer;
+$('#descSearch').addEventListener('input', () => { clearTimeout(descTimer); descTimer = setTimeout(renderList, 120); });
+['#sort', '#styleFilter', '#bpmRequire', '#noCredit'].forEach((s) => $(s).addEventListener('change', renderList));
+['#bpmMin', '#bpmMax'].forEach((s) => $(s).addEventListener('input', renderList));
+$('#bpmEnabled').addEventListener('change', () => {
+  const on = $('#bpmEnabled').checked;
+  $('#bpmBox').hidden = !on;
+  if (on && $('#sort').value === 'pertinence') $('#sort').value = 'bpm-asc';
+  if (!on && $('#sort').value.startsWith('bpm')) $('#sort').value = 'pertinence';
+  renderList();
+});
+$('#hideExamples').addEventListener('click', () => { local.set('examplesHidden', true); renderList(); });
+
+function listSource() {
+  if (state.beats.length) return { items: state.beats, example: false };
+  if (local.get('examplesHidden', false)) return { items: [], example: false };
+  return { items: DEMO_VIDEOS.map((v) => ({ id: v.id, title: v.title, description: v.description, channel: v.channel.replace(' (démo)', '') })), example: true };
+}
+
+function updateListCount() {
+  const dot = $('#listCount');
+  dot.hidden = !state.beats.length;
+  dot.textContent = state.beats.length;
+}
+
+function renderList() {
+  const { items, example } = listSource();
+  $('#examplesBanner').hidden = !example;
+  const analysed = items.map((b, i) => ({ beat: b, r: { ...analyze(b), addedOrder: i, publishedAt: b.addedAt } }));
+  const results = analysed.map((a) => ({ ...a.r, _beat: a.beat }));
+  const beats = results.filter((r) => r.isBeat || !example);
+  beats.forEach((r) => { r.isBeat = true; }); // une prod collée à la main compte toujours
+
+  // Compteurs = filtres de licence cliquables
+  const off = new Set(listPrefs.off);
+  const counts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0]));
+  beats.forEach((r) => counts[r.license.category]++);
+  const misleading = beats.filter((r) => r.license.misleading).length;
+  const tiles = CATEGORY_ORDER.map((c) => h('button', {
+    type: 'button', class: `stat cat-${c}${off.has(c) || listPrefs.onlyMisleading ? ' off' : ''}`,
+    'aria-pressed': String(!off.has(c)), title: off.has(c) ? 'Afficher' : 'Masquer',
+    onclick: () => {
+      listPrefs.onlyMisleading = false;
+      if (off.has(c)) off.delete(c); else off.add(c);
+      listPrefs.off = [...off];
+      local.set('listPrefs', listPrefs);
+      renderList();
+    },
+  }, h('b', {}, counts[c]), h('span', {}, `${GROUP_ICON[c]} ${CATEGORIES[c].label}`)));
+  if (misleading) {
+    tiles.push(h('button', {
+      type: 'button', class: `stat cat-warn${listPrefs.onlyMisleading ? '' : ' off'}`,
+      title: 'Titre « free for profit » mais la description demande de payer pour Spotify',
+      onclick: () => { listPrefs.onlyMisleading = !listPrefs.onlyMisleading; local.set('listPrefs', listPrefs); renderList(); },
+    }, h('b', {}, misleading), h('span', {}, '⚠️ Titres trompeurs')));
+  }
+  $('#stats').replaceChildren(...tiles);
+
+  // Filtre « style »
+  const styleSel = $('#styleFilter');
+  const prev = styleSel.value;
+  const styles = stylesIn(beats);
+  styleSel.replaceChildren(h('option', { value: '' }, 'Tous'), ...styles.map((s) => h('option', { value: s.id }, `${s.label} (${s.count})`)));
+  styleSel.value = styles.some((s) => s.id === prev) ? prev : '';
+
+  const text = $('#descSearch').value.trim();
+  const f = {
+    licenses: listPrefs.onlyMisleading ? CATEGORY_ORDER : CATEGORY_ORDER.filter((c) => !off.has(c)),
+    noCredit: $('#noCredit').checked,
+    style: styleSel.value,
+    text,
+    bpm: { enabled: $('#bpmEnabled').checked, min: Number($('#bpmMin').value) || null, max: Number($('#bpmMax').value) || null, requireBpm: $('#bpmRequire').checked },
+  };
+  let filtered = filterResults(beats, f);
+  if (listPrefs.onlyMisleading) filtered = filtered.filter((r) => r.license.misleading);
+  let sorted = sortResults(filtered, $('#sort').value === 'recent' ? 'pertinence' : $('#sort').value);
+  if ($('#sort').value === 'recent') sorted = [...filtered].sort((a, b) => a.addedOrder - b.addedOrder);
+  const groups = groupByCategory(sorted);
+  const terms = text ? parseTextQuery(text).include : [];
+  const quickOn = new Set(text.split(/\s+/));
+  $$('#quickTerms .chip').forEach((c) => c.classList.toggle('on', quickOn.has(c.dataset.term)));
+
+  const hidden = beats.length - filtered.length;
+  $('#count').textContent = beats.length
+    ? `${filtered.length} prod(s) affichée(s)${hidden ? ` · ${hidden} masquée(s) par tes filtres` : ''}${example ? ' · exemples' : ''}`
+    : '';
+
+  const out = $('#listResults');
+  if (!beats.length) {
+    out.replaceChildren(h('div', { class: 'nores' }, h('div', { style: 'font-size:34px' }, '🗂️'), h('h3', {}, 'Ta liste est vide'),
+      h('p', {}, 'Va dans « Vérifier », colle le titre et la description d’une prod YouTube, puis « Ajouter à ma liste ».'),
+      h('button', { type: 'button', class: 'primary small', onclick: () => showView('verify') }, '📖 Vérifier une prod')));
+    return;
+  }
+  if (!groups.length) {
+    out.replaceChildren(h('div', { class: 'nores' }, h('div', { style: 'font-size:34px' }, '🫥'), h('h3', {}, 'Aucune prod avec ces filtres'),
+      h('p', {}, text ? `Aucune description ne contient « ${text} ». ` : '', 'Clique sur une catégorie en haut pour l’afficher, ou élargis la plage BPM.')));
+    return;
+  }
+  out.replaceChildren(...groups.map((g) => h('section', { class: `group cat-${g.category}` },
+    h('div', { class: 'group-head' },
+      h('span', { class: 'gico', 'aria-hidden': 'true' }, GROUP_ICON[g.category]),
+      h('div', {}, h('h2', {}, CATEGORIES[g.category].label, h('small', {}, g.items.length)), h('p', {}, CATEGORIES[g.category].help))),
+    h('div', { class: 'grid' }, g.items.map((r) => renderCard(r._beat, r, {
+      terms,
+      example,
+      onRemove: example ? null : () => removeBeat(r._beat.id),
+    }))))));
+}
+
+function removeBeat(id) {
+  const before = state.beats;
+  state.beats = state.beats.filter((b) => b.id !== id);
+  persist.save('beats');
+  renderList();
+  updateListCount();
+  toast('Prod retirée', { label: 'Annuler', run: () => { state.beats = before; persist.save('beats'); renderList(); updateListCount(); } });
+}
+
+// ---------------------------------------------------------------------------
+// Démarrage
+
+const DEFAULT_FORM = { prompt: 'rapide, énergique et musicale', manualQuery: '', licenses: ['ffp', 'upto'], depth: '' };
+writeForm(local.get('form', DEFAULT_FORM));
+const draft = local.get('draft', null);
+if (draft) { $('#vUrl').value = draft.url || ''; $('#vTitle').value = draft.title || ''; $('#vDesc').value = draft.desc || ''; }
+applyDevice();
+updateVerify();
+renderHistory();
+updateListCount();
+showView(location.hash.slice(1) || local.get('view', 'search'), { scroll: false });
+persist.init();
+window.claude?.use?.('sample').then((s) => { sampleFn = s || null; if (s) updateVerify(); }).catch(() => {});
+})();
+
+</script>
