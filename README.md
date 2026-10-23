@@ -71,6 +71,14 @@ avec toujours un bouton « YouTube » pour ouvrir la vidéo.
   ton navigateur) pour lire toutes les descriptions et les likes. Quota : environ
   25 recherches par jour et par clé.
 
+## Rec : rapper sur la prod (version web)
+
+Bouton **Rec** dans la barre de lecture (ou « Rec dessus » dans la fiche d'une prod) :
+la prod repart du début (décompte 3 s en option) et le micro enregistre ta voix, comme
+un dictaphone. Chaque prise retient où elle commence dans la prod : à la réécoute, la voix
+repart calée sur la prod (réglage fin du calage si besoin). Les prises restent dans le
+navigateur (onglet **Recs**) et se téléchargent. Conseil : mets des écouteurs.
+
 ## Télécharger les prods sur ton PC (même loin de chez toi)
 
 Un seul programme Windows : **MelofindsPC.exe**
@@ -80,6 +88,10 @@ choisis ton dossier, « Installer ». Il télécharge lui-même ses outils (yt-d
 Deno), se lance à chaque démarrage en arrière-plan et reçoit les prods envoyées depuis
 le téléphone (bouton ⬇) via ntfy.sh.
 
+- PC éteint : les prods restent en file d'attente et arrivent dès qu'il se rallume.
+  Le PC rattrape tout ce qui a été envoyé pendant ~12 h (durée de conservation de ntfy) ;
+  au-delà, l'app renvoie elle-même les prods pas encore reçues (et dès que le réseau
+  revient). Le PC signale « allumé » toutes les 30 min, l'app affiche s'il est éteint.
 - Nom du fichier : `Titre [Clé, BPM].wav`, jamais « free », « free for profit », « FFP »…
 - Sécurité : envois signés (HMAC-SHA256, clé qui ne passe jamais par ntfy) ; un envoi ne
   contient qu'un identifiant de vidéo ; seul un vrai .wav entre dans l'unique dossier

@@ -7,7 +7,8 @@ Le programme
   - télécharge lui-même ses outils (yt-dlp, ffmpeg, Deno) dans son dossier ;
   - se lance tout seul, en arrière-plan, à chaque démarrage du PC ;
   - récupère les prods envoyées depuis ton téléphone (5G ou Wi-Fi) via ntfy.sh
-    et les enregistre en .wav, nommées « Titre [Clé, BPM].wav » ;
+    et les enregistre en .wav, nommées « Titre [Clé, BPM].wav » ; si le PC était
+    éteint, il rattrape toute la file d'attente dès qu'il se rallume ;
   - se met à jour quand tu le demandes depuis l'app (et tout seul chaque jour),
     uniquement depuis les versions officielles de ton dépôt GitHub.
 
@@ -42,7 +43,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -635,11 +636,16 @@ def worker(once=False):
     since = cfg.get("since") or "12h"
     recent = []
     last_maint = 0.0
+    last_alive = time.time()
     while True:
         try:
             HEARTBEAT.write_text(str(time.time()), encoding="utf-8")
         except OSError:
             pass
+        # Toutes les 30 min : « je suis allumé » (l'app sait si le PC est éteint).
+        if time.time() - last_alive > 1800:
+            last_alive = time.time()
+            reply(code, {"pc": "alive", "version": VERSION})
         if time.time() - last_maint > 24 * 3600 and not once:
             last_maint = time.time()
             update_ytdlp()

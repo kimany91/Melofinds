@@ -130,7 +130,7 @@ const LIMITS = () => (WEB
 // ---------------------------------------------------------------------------
 // Navigation
 
-const VIEWS = ['search', 'saved', 'history'];
+const VIEWS = ['search', 'saved', 'history', ...(window.MF_TARGET === 'web' ? ['recs'] : [])];
 function showView(name) {
   if (!VIEWS.includes(name)) name = 'search';
   $$('.nav-item').forEach((t) => { const on = t.dataset.view === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
@@ -138,6 +138,7 @@ function showView(name) {
   local.set('view', name);
   if (name === 'saved') { renderSavedProds(); renderSavedSearches(); }
   if (name === 'history') renderHistory();
+  if (name === 'recs') renderRecs();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 $$('.nav-item').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
@@ -303,7 +304,9 @@ const YT_ERRORS = {
   150: 'Le beatmaker a interdit la lecture en dehors de YouTube.',
   153: 'YouTube refuse la lecture intégrée sur cette page.',
 };
-const player = { item: null, vid: null, frame: null, ready: false, loadedVid: null, state: -1, time: 0, dur: 0, status: 'idle', message: '', timers: [], listen: null };
+const player = { item: null, vid: null, frame: null, ready: false, loadedVid: null, state: -1, time: 0, timeAt: 0, dur: 0, status: 'idle', message: '', timers: [], listen: null };
+// Position actuelle de la prod (YouTube n'envoie la position que ~4 fois par seconde)
+const playerNow = () => player.time + (isPlaying() && player.timeAt ? (performance.now() - player.timeAt) / 1000 : 0);
 const fmtTime = (s) => (s > 0 ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '0:00');
 const isPlaying = () => player.state === 1 || player.state === 3;
 
@@ -423,7 +426,7 @@ window.addEventListener('message', (e) => {
   if ((d.event === 'infoDelivery' || d.event === 'initialDelivery') && d.info && typeof d.info === 'object') {
     const i = d.info;
     if (typeof i.playerState === 'number') player.state = i.playerState;
-    if (typeof i.currentTime === 'number') player.time = i.currentTime;
+    if (typeof i.currentTime === 'number') { player.time = i.currentTime; player.timeAt = performance.now(); }
     if (typeof i.duration === 'number' && i.duration > 0) player.dur = i.duration;
     if (!player.ready) onPlayerReady();
   }
@@ -464,6 +467,8 @@ function renderMini() {
     $('#miniExt').href = ytWatchUrl(player.item);
     const tg = $('#miniToggle');
     tg.hidden = player.status === 'blocked';
+    $('#miniRec').hidden = !WEB || player.status === 'blocked';
+    $('#miniRec').classList.toggle('live', rec.state === 'rec');
     tg.setAttribute('aria-label', playing ? 'Pause' : 'Lecture');
   }
   $$('.card[data-vid]').forEach((c) => {
@@ -474,6 +479,7 @@ function renderMini() {
 }
 
 $('#miniToggle').addEventListener('click', togglePlay);
+$('#miniRec').addEventListener('click', () => { if (player.item) openStudio(player.item); });
 $('#miniClose').addEventListener('click', stopPlayer);
 function seekFromBar(clientX) {
   if (!player.dur || !player.frame) return;
@@ -501,7 +507,368 @@ document.addEventListener('keydown', (e) => {
 });
 
 let lastFocus = null;
+// ---------------------------------------------------------------------------
+// Rec (version web) : tu rappes sur la prod comme sur un dictaphone.
+// La prod joue dans le lecteur invisible, le micro enregistre ta voix. Chaque
+// prise retient où elle commence dans la prod : à la réécoute, la voix repart
+// calée sur la prod (réglage fin du calage si besoin). Les prises restent dans
+// ce navigateur (IndexedDB) et se téléchargent.
+
+const rec = { state: 'idle', stream: null, ctx: null, analyser: null, recorder: null, chunks: [], mime: '', offset: 0, startAt: 0, beat: null, raf: 0, tick: 0, autoStop: 0 };
+const take = { id: null, audio: null, url: '', offset: 0, sync: 0, beatId: null };
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitFor(cond, ms = 8000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (cond()) return true; await wait(50); }
+  return cond();
+}
+const recLatency = () => Number(local.get('recLatency', 0)) || 0;
+const fmtDur = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+// --- Stockage des prises (IndexedDB, sinon en mémoire le temps de la visite)
+const recStore = {
+  db: null, mem: [],
+  open() {
+    if (this.db !== null) return this.db;
+    this.db = new Promise((resolve) => {
+      try {
+        const req = indexedDB.open('melofinds-recs', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('takes', { keyPath: 'id' });
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      } catch { resolve(null); }
+    });
+    return this.db;
+  },
+  async tx(mode, fn) {
+    const db = await this.open();
+    if (!db) return fn(null);
+    return new Promise((resolve, reject) => {
+      const t = db.transaction('takes', mode);
+      const out = fn(t.objectStore('takes'));
+      t.oncomplete = () => resolve(out?.result ?? out);
+      t.onerror = () => reject(t.error);
+    });
+  },
+  async all() {
+    try {
+      const rows = await this.tx('readonly', (st) => (st ? st.getAll() : null));
+      return (Array.isArray(rows) ? rows : this.mem).slice().sort((a, b) => b.at - a.at);
+    } catch { return this.mem.slice().sort((a, b) => b.at - a.at); }
+  },
+  async put(r) {
+    try { await this.tx('readwrite', (st) => { if (st) st.put(r); else this.mem.push(r); }); } catch { this.mem.push(r); toast('Prise gardée seulement jusqu’à la fermeture de la page'); }
+  },
+  async del(id) {
+    this.mem = this.mem.filter((r) => r.id !== id);
+    try { await this.tx('readwrite', (st) => st?.delete(id)); } catch { /* déjà absente */ }
+  },
+};
+
+function recExt(mime) { return /mp4|aac|m4a/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : /wav/.test(mime) ? 'wav' : 'webm'; }
+function pickMime() {
+  if (typeof MediaRecorder === 'undefined') return null;
+  for (const m of ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus']) {
+    try { if (MediaRecorder.isTypeSupported(m)) return m; } catch { /* navigateur ancien */ }
+  }
+  return '';
+}
+
+// Charge la prod dans le lecteur (sans forcément la lancer) et attend qu'il soit prêt.
+async function loadBeat(item) {
+  const vid = ytIdOf(item);
+  if (player.vid !== vid || !player.frame || player.status === 'blocked') {
+    if (player.item && player.vid === vid && player.status === 'blocked') player.item = null;
+    playItem(item);
+  }
+  const ok = await waitFor(() => player.ready && player.loadedVid === vid && player.status !== 'blocked' && (player.state === 1 || player.state === 2 || player.state === 5 || player.state === 3), 12000);
+  return ok && player.status !== 'blocked';
+}
+function seekBeat(t) {
+  ytSend('seekTo', [Math.max(0, t), true]);
+  player.time = Math.max(0, t);
+  player.timeAt = performance.now();
+}
+
+// --- Enregistrement
+async function startRec(item, { fromStart, countdown }, ui) {
+  if (rec.state !== 'idle') return;
+  stopTake();
+  const mime = pickMime();
+  if (mime === null || !navigator.mediaDevices?.getUserMedia) { toast('Ce navigateur ne sait pas enregistrer le micro'); return; }
+  rec.state = 'arming';
+  ui.update();
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
+    if (rec.state !== 'arming') { stream.getTracks().forEach((t) => t.stop()); return; } // panneau fermé entre-temps
+    rec.stream = stream;
+  } catch (e) {
+    rec.state = 'idle';
+    ui.update();
+    toast(e?.name === 'NotAllowedError' ? 'Micro refusé : autorise-le dans les réglages du navigateur (icône à gauche de l’adresse)' : 'Micro introuvable');
+    return;
+  }
+  // Niveau du micro
+  try {
+    rec.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await rec.ctx.resume();
+    rec.analyser = rec.ctx.createAnalyser();
+    rec.analyser.fftSize = 1024;
+    rec.ctx.createMediaStreamSource(rec.stream).connect(rec.analyser);
+    const buf = new Float32Array(rec.analyser.fftSize);
+    const loop = () => {
+      rec.analyser.getFloatTimeDomainData(buf);
+      let peak = 0;
+      for (const v of buf) peak = Math.max(peak, Math.abs(v));
+      ui.level(peak);
+      rec.raf = requestAnimationFrame(loop);
+    };
+    loop();
+  } catch { /* pas de vumètre, l'enregistrement marche quand même */ }
+
+  ui.say('Chargement de la prod…');
+  const loaded = await loadBeat(item);
+  if (rec.state !== 'arming') return;
+  if (!loaded) { cancelRec(); ui.update(); toast('La prod ne se lance pas ici : impossible d’enregistrer dessus'); return; }
+  ytSend('pauseVideo');
+  const start = fromStart ? 0 : Math.max(0, playerNow() - 2);
+  seekBeat(start);
+  if (countdown) {
+    rec.state = 'count';
+    for (const n of [3, 2, 1]) { ui.count(n); await wait(1000); if (rec.state !== 'count') return; }
+    ui.count(0);
+  }
+  if (rec.state !== 'arming' && rec.state !== 'count') return;
+  ytSend('playVideo');
+  const started = await waitFor(() => isPlaying(), 8000);
+  if (rec.state !== 'arming' && rec.state !== 'count') return;
+  if (!started) { cancelRec(); ui.update(); toast('La prod ne démarre pas : réessaie'); return; }
+  rec.chunks = [];
+  rec.mime = mime;
+  rec.beat = { id: ytIdOf(item), title: item.title || '', url: ytWatchUrl(item) };
+  rec.recorder = mime ? new MediaRecorder(rec.stream, { mimeType: mime, audioBitsPerSecond: 160000 }) : new MediaRecorder(rec.stream);
+  rec.recorder.ondataavailable = (e) => { if (e.data?.size) rec.chunks.push(e.data); };
+  rec.recorder.start(250);
+  rec.offset = playerNow();
+  rec.startAt = performance.now();
+  rec.state = 'rec';
+  rec.tick = setInterval(() => ui.time((performance.now() - rec.startAt) / 1000), 200);
+  rec.autoStop = setTimeout(() => stopRec(ui), 10 * 60e3);
+  ui.update();
+  renderMini();
+}
+
+function releaseMic() {
+  cancelAnimationFrame(rec.raf);
+  clearInterval(rec.tick);
+  clearTimeout(rec.autoStop);
+  rec.stream?.getTracks().forEach((t) => t.stop());
+  try { rec.ctx?.close(); } catch { /* déjà fermé */ }
+  Object.assign(rec, { stream: null, ctx: null, analyser: null, raf: 0, tick: 0, autoStop: 0 });
+}
+function cancelRec() {
+  try { if (rec.recorder?.state === 'recording') rec.recorder.stop(); } catch { /* déjà arrêté */ }
+  releaseMic();
+  rec.recorder = null;
+  rec.state = 'idle';
+  renderMini();
+}
+
+async function stopRec(ui) {
+  if (rec.state === 'count' || rec.state === 'arming') { cancelRec(); ui?.update(); return null; }
+  if (rec.state !== 'rec') return null;
+  rec.state = 'saving';
+  const duration = (performance.now() - rec.startAt) / 1000;
+  const done = new Promise((r) => { rec.recorder.onstop = r; });
+  try { rec.recorder.stop(); } catch { /* déjà arrêté */ }
+  await Promise.race([done, wait(3000)]);
+  ytSend('pauseVideo');
+  player.state = 2;
+  releaseMic();
+  const blob = new Blob(rec.chunks, { type: rec.recorder?.mimeType || rec.mime || 'audio/webm' });
+  rec.recorder = null;
+  rec.state = 'idle';
+  renderMini();
+  if (duration < 1 || !blob.size) { ui?.update(); toast('Prise trop courte'); return null; }
+  const all = await recStore.all();
+  const n = all.filter((r) => r.beatId === rec.beat.id).length + 1;
+  const r = { id: `rec-${Date.now().toString(36)}`, at: Date.now(), beatId: rec.beat.id, beatTitle: rec.beat.title, beatUrl: rec.beat.url, offset: rec.offset, duration, mime: blob.type, blob, name: `Prise ${n}` };
+  await recStore.put(r);
+  toast(`${r.name} enregistrée`);
+  ui?.update();
+  ui?.refresh();
+  return r;
+}
+
+// --- Réécoute calée sur la prod
+function stopTake() {
+  if (!take.audio) return;
+  clearInterval(take.sync);
+  take.audio.pause();
+  URL.revokeObjectURL(take.url);
+  Object.assign(take, { id: null, audio: null, url: '', sync: 0, beatId: null });
+  if (isPlaying()) { ytSend('pauseVideo'); player.state = 2; }
+  renderMini();
+  $$('.take-play').forEach((b) => { b.classList.remove('on'); b.replaceChildren(icon('play')); });
+}
+async function playTake(r, btn) {
+  if (take.id === r.id) { stopTake(); return; }
+  stopTake();
+  if (rec.state !== 'idle') return;
+  const beat = { id: r.beatId, url: r.beatUrl, title: r.beatTitle };
+  btn?.classList.add('on');
+  btn?.replaceChildren(icon('stop'));
+  take.id = r.id;
+  if (!(await loadBeat(beat))) { stopTake(); toast('La prod ne se lance pas : réécoute impossible'); return; }
+  if (take.id !== r.id) return;
+  ytSend('pauseVideo');
+  seekBeat(r.offset);
+  take.url = URL.createObjectURL(r.blob);
+  take.audio = new Audio(take.url);
+  take.offset = r.offset;
+  take.beatId = r.beatId;
+  take.audio.addEventListener('ended', () => { if (take.id === r.id) stopTake(); });
+  ytSend('playVideo');
+  await waitFor(() => isPlaying(), 8000);
+  if (take.id !== r.id || !take.audio) return;
+  take.audio.currentTime = Math.max(0, playerNow() - r.offset + recLatency());
+  try { await take.audio.play(); } catch { stopTake(); toast('Lecture impossible'); return; }
+  // Garde la voix calée sur la prod (pause, reprise, petits décalages).
+  take.sync = setInterval(() => {
+    const a = take.audio;
+    if (!a) return;
+    if (player.vid !== take.beatId) { stopTake(); return; }
+    if (!isPlaying()) { if (!a.paused) a.pause(); return; }
+    const target = playerNow() - take.offset + recLatency();
+    if (target < 0) return;
+    if (a.paused && !a.ended) a.play().catch(() => {});
+    if (Math.abs(a.currentTime - target) > 0.12) a.currentTime = target;
+  }, 250);
+}
+
+function downloadTake(r) {
+  const url = URL.createObjectURL(r.blob);
+  const a = h('a', { href: url, download: `${displayTitle(r.beatTitle || 'Prod').slice(0, 60)} - ${r.name}.${recExt(r.mime)}` });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30e3);
+}
+
+function takeRow(r, refresh, { showBeat = false } = {}) {
+  const play = h('button', { type: 'button', class: `icon-btn take-play${take.id === r.id ? ' on' : ''}`, 'aria-label': 'Réécouter sur la prod' }, icon(take.id === r.id ? 'stop' : 'play'));
+  play.addEventListener('click', () => playTake(r, play));
+  let armed = null;
+  const del = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Supprimer la prise' }, icon('trash'));
+  del.addEventListener('click', async () => {
+    if (!armed) { del.classList.add('armed'); del.title = 'Clique encore pour supprimer'; armed = setTimeout(() => { del.classList.remove('armed'); armed = null; }, 3000); return; }
+    clearTimeout(armed);
+    if (take.id === r.id) stopTake();
+    await recStore.del(r.id);
+    toast(`${r.name} supprimée`);
+    refresh();
+  });
+  return h('div', { class: 'take-row' }, play,
+    h('div', { class: 'take-main' },
+      h('b', {}, r.name, showBeat ? h('span', { class: 'take-beat' }, ` · ${displayTitle(r.beatTitle || '')}`) : null),
+      h('span', {}, `${fmtDur(r.duration)} · ${new Date(r.at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}`)),
+    h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Télécharger la prise', onclick: () => downloadTake(r) }, icon('down')),
+    del);
+}
+
+// --- Panneau Rec
+function openStudio(item) {
+  if (!WEB) return;
+  const vid = ytIdOf(item);
+  if (!vid) { toast('Pas de vidéo YouTube pour cette prod'); return; }
+  let r0 = null;
+  try { r0 = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
+  const opts = local.get('recOpts', { fromStart: true, countdown: true });
+  const fromStart = h('input', { type: 'checkbox', id: 'recFromStart' });
+  fromStart.checked = opts.fromStart !== false;
+  const countdown = h('input', { type: 'checkbox', id: 'recCountdown' });
+  countdown.checked = opts.countdown !== false;
+  const saveOpts = () => local.set('recOpts', { fromStart: fromStart.checked, countdown: countdown.checked });
+  fromStart.addEventListener('change', saveOpts);
+  countdown.addEventListener('change', saveOpts);
+
+  const big = h('button', { type: 'button', class: 'rec-big', 'aria-label': 'Enregistrer' }, h('span', { class: 'rec-dot' }));
+  const timer = h('div', { class: 'rec-time' }, '0:00');
+  const status = h('p', { class: 'rec-status' }, 'Touche le bouton rouge pour rapper sur la prod.');
+  const meter = h('div', { class: 'rec-meter' }, h('i'));
+  const counter = h('div', { class: 'rec-count', hidden: true });
+  const list = h('div', { class: 'take-list' });
+  const lat = h('input', { type: 'range', id: 'recLatency', min: '-0.5', max: '0.5', step: '0.01' });
+  lat.value = String(recLatency());
+  const latVal = h('span', { class: 'mono' }, `${Math.round(recLatency() * 1000)} ms`);
+  lat.addEventListener('input', () => { local.set('recLatency', Number(lat.value)); latVal.textContent = `${Math.round(Number(lat.value) * 1000)} ms`; });
+
+  const ui = {
+    update() {
+      const st = rec.state;
+      big.classList.toggle('live', st === 'rec');
+      big.classList.toggle('busy', st === 'arming' || st === 'count' || st === 'saving');
+      big.setAttribute('aria-label', st === 'rec' ? 'Arrêter et garder la prise' : 'Enregistrer');
+      big.replaceChildren(st === 'rec' ? icon('stop') : h('span', { class: 'rec-dot' }));
+      if (st === 'idle') { status.textContent = 'Touche le bouton rouge pour rapper sur la prod.'; timer.textContent = '0:00'; meter.firstChild.style.width = '0%'; counter.hidden = true; }
+      if (st === 'rec') status.textContent = 'Ça enregistre… Touche ■ pour arrêter et garder la prise.';
+      if (st === 'saving') status.textContent = 'J’enregistre la prise…';
+      fromStart.disabled = countdown.disabled = st !== 'idle';
+    },
+    say(t) { status.textContent = t; },
+    level(p) { meter.firstChild.style.width = `${Math.min(100, Math.round(p * 140))}%`; meter.classList.toggle('hot', p > 0.95); },
+    count(n) { counter.hidden = !n; counter.textContent = n ? String(n) : ''; if (n) status.textContent = 'Prépare-toi…'; },
+    time(s) { timer.textContent = fmtDur(s); },
+    async refresh() {
+      const rows = (await recStore.all()).filter((r) => r.beatId === vid);
+      list.replaceChildren(...(rows.length ? rows.map((r) => takeRow(r, ui.refresh)) : [h('p', { class: 'muted' }, 'Pas encore de prise sur cette prod.')]));
+    },
+  };
+  big.addEventListener('click', () => {
+    if (rec.state === 'idle') startRec(item, { fromStart: fromStart.checked, countdown: countdown.checked }, ui);
+    else stopRec(ui);
+  });
+
+  openDrawer('Rec sur la prod', [
+    h('div', { class: 'rec-beat' }, h('b', {}, displayTitle(item.title || '')), h('span', {}, [r0?.bpm ? `${r0.bpm} BPM` : null, r0?.key].filter(Boolean).join(' · ') || 'Prod YouTube')),
+    h('div', { class: 'rec-stage' }, counter, big, timer, meter, status),
+    h('div', { class: 'rec-opts' },
+      h('label', { for: 'recFromStart' }, fromStart, 'Repartir du début de la prod'),
+      h('label', { for: 'recCountdown' }, countdown, 'Décompte 3 s')),
+    h('p', { class: 'hint' }, 'Mets des écouteurs : sinon le micro enregistre aussi la prod. Seule ta voix est enregistrée ; à la réécoute, elle repart calée sur la prod.'),
+    h('div', { class: 'd-sec' }, h('h4', {}, 'Tes prises sur cette prod'), list),
+    h('details', { class: 'rec-adv' }, h('summary', {}, 'Voix en avance ou en retard sur la prod ?'),
+      h('div', { class: 'rec-lat' }, h('span', {}, 'Calage'), lat, latVal),
+      h('p', { class: 'hint' }, 'Si ta voix tombe à côté du temps, décale-la ici (s’applique à la réécoute de toutes tes prises).')),
+    h('button', { type: 'button', class: 'link', onclick: () => { closeDrawer(); showView('recs'); } }, 'Toutes mes recs →'),
+  ]);
+  drawerOnClose = () => { if (rec.state === 'rec') stopRec(null).then(() => renderRecs()); else if (rec.state !== 'idle') cancelRec(); };
+  ui.update();
+  ui.refresh();
+}
+
+async function renderRecs() {
+  const box = $('#recsList');
+  if (!box) return;
+  const rows = await recStore.all();
+  if (!rows.length) {
+    box.replaceChildren(h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, icon('mic')), h('h3', {}, 'Aucune rec pour l’instant'),
+      h('p', {}, 'Lance une prod, touche « Rec » dans la barre du bas, et rappe dessus.'),
+      h('button', { type: 'button', class: 'primary', onclick: () => showView('search') }, 'Trouver une prod')));
+    return;
+  }
+  const groups = new Map();
+  for (const r of rows) { if (!groups.has(r.beatId)) groups.set(r.beatId, []); groups.get(r.beatId).push(r); }
+  box.replaceChildren(...[...groups.values()].map((g) => h('div', { class: 'rec-group' },
+    h('div', { class: 'rec-group-head' }, h('b', {}, displayTitle(g[0].beatTitle || 'Prod')),
+      h('button', { type: 'button', class: 'ghost', onclick: () => openStudio({ id: g[0].beatId, url: g[0].beatUrl, title: g[0].beatTitle }) }, icon('mic'), 'Nouvelle prise')),
+    ...g.map((r) => takeRow(r, renderRecs)))));
+}
+
+let drawerOnClose = null; // nettoyage du panneau ouvert (ex. arrêter un enregistrement)
+function runDrawerCleanup() { const f = drawerOnClose; drawerOnClose = null; try { f?.(); } catch (e) { console.error(e); } }
 function openDrawer(title, nodes) {
+  runDrawerCleanup();
   lastFocus = document.activeElement;
   $('#drawerTitle').textContent = title;
   $('#drawerBody').replaceChildren(...nodes.filter(Boolean));
@@ -512,6 +879,7 @@ function openDrawer(title, nodes) {
   setTimeout(() => $('#drawerClose').focus(), 60);
 }
 function closeDrawer() {
+  runDrawerCleanup();
   $('#drawer').classList.remove('open');
   $('#drawer').setAttribute('aria-hidden', 'true');
   $('#scrim').classList.remove('open');
@@ -557,6 +925,7 @@ function openBeat(item, plan) {
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'primary', onclick: () => playItem(item) }, icon('play'), 'Écouter') : null,
       !WEB ? h('a', { class: 'primary', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, icon('play'), 'Écouter sur YouTube') : null,
       saveBtn,
+      WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => openStudio(item) }, icon('mic'), 'Rec dessus') : null,
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc(item) }, icon('down'), 'Sur mon PC') : null,
       item.url ? h('button', { type: 'button', class: 'ghost', onclick: () => copyText(item.url) }, 'Copier le lien') : null),
     WEB ? h('a', { class: 'link d-yt', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube', icon('ext')) : null,
@@ -1726,10 +2095,15 @@ function listenPc() {
       }
       return;
     }
-    if (m.pc === 'online' || m.pong) {
-      pc.info = { at: (d.time || 0) * 1000, dossier: String(m.dossier || ''), version: String(m.version || '') };
-      local.set('pcInfo', pc.info);
+    if (m.pc === 'online' || m.pc === 'alive' || m.pong) {
+      const at = (d.time || 0) * 1000;
+      if (at >= (pc.info?.at || 0)) {
+        pc.info = { ...(pc.info || {}), at, version: String(m.version || pc.info?.version || ''), dossier: String(m.dossier || pc.info?.dossier || '') };
+        local.set('pcInfo', pc.info);
+      }
       if (m.pong && pc.onPong) pc.onPong(m);
+      // Le PC vient de se rallumer : on renvoie ce qui a pu expirer pendant qu'il était éteint.
+      if (m.pc === 'online' && fresh) setTimeout(resendPending, 15e3);
       syncPcUi();
       return;
     }
@@ -1759,23 +2133,43 @@ async function sendToPc(item) {
   try { r = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
   // Le PC nomme le fichier « Titre [Clé, BPM].wav » (sans « free ») ; il relit aussi la description.
   const msg = { v: id, t: String(item.title || '').slice(0, 200), bpm: r?.bpm || null, key: r?.key || null, force: pc.queue[id]?.state === 'error' || undefined };
-  pc.queue[id] = { t: item.title || id, at: Date.now(), state: 'sending' };
+  pc.queue[id] = { t: item.title || id, at: Date.now(), state: 'sending', msg };
   syncPcUi();
   try {
     await ntfyPublish(msg);
     pc.queue[id].state = 'sent';
-    toast('Envoyée à ton PC');
+    pc.queue[id].lastSent = Date.now();
+    toast(pcOn() ? 'Envoyée à ton PC' : 'Ton PC est éteint : la prod est en file d’attente, elle arrivera dès qu’il se rallume');
   } catch {
-    pc.queue[id].state = 'error';
-    pc.queue[id].err = 'envoi impossible (connexion ?)';
-    toast('Envoi impossible : vérifie ta connexion');
+    pc.queue[id].state = 'unsent';
+    toast('Pas de réseau : la prod partira toute seule dès que tu en auras');
   }
   savePc();
   syncPcUi();
   listenPc();
 }
 
-const PC_LABEL = { sending: 'Envoi…', sent: 'Envoyée au PC (en attente)', done: 'Sur ton PC', error: 'Erreur' };
+// File d'attente : ntfy garde les envois ~12 h. Une prod pas encore reçue est
+// renvoyée avant d'expirer (et dès que le réseau revient) : elle arrive dès que
+// le PC se rallume, même des jours plus tard. Le PC ignore les doublons.
+const pcOn = () => !!pc.info && Date.now() - (pc.info.at || 0) < 40 * 60e3;
+let resending = false;
+async function resendPending() {
+  if (!WEB || !pc.info || resending || !navigator.onLine) return;
+  resending = true;
+  try {
+    const todo = Object.entries(pc.queue).filter(([, q]) => q.state === 'unsent' || (q.state === 'sent' && Date.now() - (q.lastSent || q.at || 0) > 10 * 3600e3)).slice(0, 25);
+    for (const [id, q] of todo) {
+      try {
+        await ntfyPublish({ ...(q.msg || { v: id, t: String(q.t || '').slice(0, 200) }), force: undefined });
+        pc.queue[id] = { ...q, state: 'sent', lastSent: Date.now() };
+      } catch { break; }
+    }
+    if (todo.length) { savePc(); syncPcUi(); }
+  } finally { resending = false; }
+}
+
+const PC_LABEL = { sending: 'Envoi…', sent: 'En file d’attente pour ton PC', unsent: 'Partira dès que tu as du réseau', done: 'Sur ton PC', error: 'Erreur' };
 function pcButton(item) {
   const id = ytIdOf(item);
   const st = pc.queue[id]?.state || '';
@@ -1792,7 +2186,12 @@ function syncPcUi() {
     b.replaceChildren(icon(st === 'done' ? 'check' : 'down'));
   });
   const dot = $('#pcDot');
-  if (dot) dot.hidden = !pc.info;
+  if (dot) {
+    const waiting = Object.values(pc.queue).filter((q) => q.state === 'sent' || q.state === 'unsent' || q.state === 'sending').length;
+    dot.hidden = !pc.info && !waiting;
+    dot.textContent = waiting ? String(waiting) : '✓';
+    dot.classList.toggle('wait', waiting > 0);
+  }
   if ($('#pcStatus')) renderPcStatus();
 }
 
@@ -1800,17 +2199,19 @@ function pcStatusText() {
   if (!pc.info) return { ok: false, t: 'PC pas encore connecté', s: 'Fais les 3 étapes ci-dessous.' };
   const ago = Date.now() - (pc.info.at || 0);
   const when = ago < 90e3 ? 'à l’instant' : ago < 3600e3 ? `il y a ${Math.round(ago / 60e3)} min` : ago < 864e5 ? `il y a ${Math.round(ago / 3600e3)} h` : `il y a ${Math.round(ago / 864e5)} j`;
-  return { ok: true, t: `PC connecté${pc.info.version ? ` · version ${pc.info.version}` : ''}`, s: `Dernier signe ${when}${pc.info.dossier ? ` · dossier ${pc.info.dossier}` : ''}` };
+  const waiting = Object.values(pc.queue).filter((q) => q.state === 'sent' || q.state === 'unsent').length;
+  if (!pcOn()) return { ok: false, off: true, t: 'PC éteint ou hors ligne', s: `Dernier signe ${when}. ${waiting ? `${waiting} prod${waiting > 1 ? 's' : ''} en file d’attente : elle${waiting > 1 ? 's' : ''} arrivera${waiting > 1 ? 'nt' : ''} dès qu’il se rallume.` : 'Tes envois l’attendront et arriveront dès qu’il se rallume.'}` };
+  return { ok: true, t: `PC allumé${pc.info.version ? ` · version ${pc.info.version}` : ''}`, s: `Dernier signe ${when}${pc.info.dossier ? ` · dossier ${pc.info.dossier}` : ''}` };
 }
 function renderPcStatus() {
   const st = pcStatusText();
-  $('#pcStatus').replaceChildren(h('div', { class: `pc-status${st.ok ? ' ok' : ''}` }, h('span', { class: 'pc-led', 'aria-hidden': 'true' }), h('div', {}, h('b', {}, st.t), h('span', {}, st.s))));
+  $('#pcStatus').replaceChildren(h('div', { class: `pc-status${st.ok ? ' ok' : ''}${st.off ? ' off' : ''}` }, h('span', { class: 'pc-led', 'aria-hidden': 'true' }), h('div', {}, h('b', {}, st.t), h('span', {}, st.s))));
   const list = Object.entries(pc.queue).sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 30);
   const box = $('#pcList');
   if (!box) return;
   box.replaceChildren(...(list.length ? list.map(([id, q]) => h('div', { class: `pc-row ${q.state}` },
     h('span', { class: 'pc-ico' }, icon(q.state === 'done' ? 'check' : q.state === 'error' ? 'x' : 'clock')),
-    h('div', { class: 'pc-row-main' }, h('b', {}, displayTitle(q.t || id)), h('span', {}, q.state === 'done' ? (q.file || 'Téléchargée') : q.state === 'error' ? (q.err || 'Erreur') : 'En attente du PC')),
+    h('div', { class: 'pc-row-main' }, h('b', {}, displayTitle(q.t || id)), h('span', {}, q.state === 'done' ? (q.file || 'Téléchargée') : q.state === 'error' ? (q.err || 'Erreur') : q.state === 'unsent' ? 'Partira dès que tu as du réseau' : pcOn() ? 'Le PC s’en occupe…' : 'En file d’attente : arrivera dès que le PC se rallume')),
     q.state !== 'done' ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc({ id, url: `https://www.youtube.com/watch?v=${id}`, title: q.t }) }, 'Renvoyer') : null))
     : [h('p', { class: 'muted' }, 'Aucune prod envoyée pour l’instant. Touche ', icon('down'), ' sur une prod.')]));
 }
@@ -1886,12 +2287,17 @@ function openPcSetup(pending) {
 function setupTarget() {
   document.body.classList.add(WEB ? 'web' : 'claude-page');
   if (WEB) {
+    $('#navRecs').hidden = false;
     const keyBtn = h('button', { type: 'button', class: 'link', id: 'keyBtn', onclick: openKeySettings }, ytKey() ? 'Clé YouTube' : 'Descriptions complètes (clé YouTube, facultatif)');
     $('.results-foot').append(keyBtn);
     if (!ytKey()) pipedInstances();
     const pcBtn = h('button', { type: 'button', class: 'verify-btn pc-head', id: 'pcHead', title: 'Télécharger les prods sur mon PC', onclick: () => openPcSetup() }, icon('down'), h('span', {}, 'Mon PC'), h('em', { class: 'dot', id: 'pcDot', hidden: !pc.info }, '✓'));
     $('#openVerify').before(pcBtn);
     if (pc.info || Object.values(pc.queue).some((q) => q.state === 'sent')) listenPc();
+    syncPcUi();
+    setTimeout(resendPending, 6000);
+    setInterval(resendPending, 20 * 60e3);
+    window.addEventListener('online', () => setTimeout(resendPending, 1500));
     $('.hero-sub').textContent = 'Décris la vibe ou cite un rappeur (Luther, Damso, Bu$hi…). Je trouve les type beats sur YouTube, je lis chaque description pour vérifier la licence, et tu écoutes direct ici.';
   } else {
     $('#hero').append(h('p', { class: 'web-tip' }, icon('play'), 'Pour écouter les prods sans quitter l’app, ouvre ',
