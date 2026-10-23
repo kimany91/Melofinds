@@ -4,6 +4,7 @@
 
 import { normalize, hasWord } from './text.js';
 import { MOODS, INSTRUMENTS, GENRES, GENRE_BY_ID } from './genres.js';
+import { findArtists } from './artistmatch.js';
 
 // Profondeur de recherche. Le mobile démarre en « rapide » (moins de requêtes,
 // moins de données), le PC en « normal ». On peut forcer « approfondie ».
@@ -39,6 +40,11 @@ const ARTISTS = (() => {
   return [...map.values()].map((a) => ({ ...a, aliases: [...a.aliases] }));
 })();
 
+// Un artiste présent dans plusieurs courants ne compte que pour le premier
+// (son courant principal), sinon chaque prod Lil Uzi serait aussi « Jersey club ».
+const ARTIST_OWNER = new Map();
+for (const g of GENRES) for (const name of g.artists) if (!ARTIST_OWNER.has(name)) ARTIST_OWNER.set(name, g.id);
+
 export function licenseSuffix(licenses = []) {
   const set = new Set(licenses);
   if (set.has('ffp') || set.has('upto')) return 'free for profit';
@@ -63,9 +69,9 @@ function detectGenres(n) {
   return GENRES.filter((g) => g.aliases.some((a) => hasWord(n, normalize(a)))).map((g) => g.id);
 }
 
-function detectArtists(n) {
-  return ARTISTS.filter((a) => a.aliases.some((al) => hasWord(n, al)));
-}
+const US_GENRES = new Map(ARTISTS.map((a) => [a.name, a.genres]));
+// Nom à taper sur YouTube (« Bu$hi » → « Bushi », apostrophes simples)
+const ytName = (name) => name.replace(/[’‘]/g, "'").replace(/\$/g, 's');
 
 function detectBpm(n) {
   const m = n.match(/(\d{2,3})\s*-?\s*bpm/) || n.match(/bpm\s*[:=]?\s*(\d{2,3})/);
@@ -88,7 +94,11 @@ export function buildPlan(prompt = '', opts = {}) {
   const moods = detectMoods(n);
   const instruments = detectInstruments(n);
   const namedGenres = detectGenres(n);
-  const namedArtists = detectArtists(n);
+  // Rappeurs cités (FR ou US), même mal écrits : « à la luther », « la feve »…
+  const found = findArtists(prompt);
+  const namedArtists = found.filter((f) => f.type === 'us').map((f) => ({ name: f.name, genres: US_GENRES.get(f.name) || [f.entry.genre] }));
+  const namedFr = found.filter((f) => f.type === 'fr').map((f) => f.entry.fr);
+  for (const f of found) if (!f.exact) notes.push(`J’ai compris « ${f.said} » comme ${f.name}.`);
   const explicitBpm = detectBpm(n);
   const moodIds = new Set(moods.map((m) => m.id));
 
@@ -105,6 +115,11 @@ export function buildPlan(prompt = '', opts = {}) {
     }
     if (namedGenres.includes(g.id)) { score += 8; why.unshift('cité directement'); }
     if (namedArtists.some((a) => a.genres.includes(g.id))) { score += 6; why.unshift('artiste cité'); }
+    for (const fr of namedFr) {
+      const i = fr.styles.indexOf(g.id);
+      if (i >= 0) { score += 12 - i * 3; why.unshift(`style de ${fr.name}`); }
+      if (fr.us.some((u) => ARTIST_OWNER.get(u) === g.id)) score += 2;
+    }
     if (explicitBpm) {
       const [lo, hi] = g.bpm;
       if (explicitBpm >= lo - 3 && explicitBpm <= hi + 3) score += 2;
@@ -134,6 +149,9 @@ export function buildPlan(prompt = '', opts = {}) {
     artists.push({ name, genre: genreId, genreLabel: GENRE_BY_ID[genreId]?.label || '', reason });
   };
   for (const a of namedArtists) pushArtist(a.name, a.genres[0], 'cité dans ta demande');
+  for (const fr of namedFr) {
+    for (const u of fr.us.slice(0, depth.id === 'rapide' ? 2 : 3)) pushArtist(u, ARTIST_OWNER.get(u) || fr.styles[0], `son proche de ${fr.name}`);
+  }
   for (const g of selected) {
     const list = GENRE_BY_ID[g.id].artists;
     let added = 0;
@@ -181,7 +199,10 @@ export function buildPlan(prompt = '', opts = {}) {
   const named = artists.filter((a) => a.reason === 'cité dans ta demande');
   const instrumentEn = { piano: 'piano', guitar: 'guitar', synth: 'synth', strings: 'violin', flute: 'flute', bells: 'bells', choir: 'choir', sax: 'sax', '808': '808', orchestra: 'orchestral' };
 
+  // Les beatmakers FR font aussi des « <rappeur FR> type beat »
+  for (const fr of namedFr.slice(0, 2)) addQuery(`${ytName(fr.name)} type beat${sfx}`, `type beats faits pour ${fr.name}`);
   for (const a of named) addQuery(`${a.name} type beat${sfx}`, `artiste que tu as cité`);
+  for (const a of artists.filter((x) => x.reason.startsWith('son proche de'))) addQuery(`${a.name} type beat${sfx}`, `${a.reason} (${a.genreLabel})`);
   for (const a of firstPerGenre) addQuery(`${a.name} type beat${sfx}`, `artiste phare du courant ${a.genreLabel}`);
   if (selected[0]) {
     const g = GENRE_BY_ID[selected[0].id];
@@ -231,6 +252,10 @@ export function buildPlan(prompt = '', opts = {}) {
     // Seulement les artistes vraiment utilisés dans les requêtes envoyées
     artists: artists.filter((a) => finalQueries.some((q) => q.q.toLowerCase().includes(a.name.toLowerCase()))),
     bpmRange,
+    // Rappeurs reconnus dans la description, avec ce que l'algo en a déduit
+    recognized: found.map((f) => (f.type === 'fr'
+      ? { name: f.name, type: 'fr', said: f.said, exact: f.exact, styles: f.entry.fr.styles.map((id) => GENRE_BY_ID[id]?.label).filter(Boolean), us: f.entry.fr.us, note: f.entry.fr.note }
+      : { name: f.name, type: 'us', said: f.said, exact: f.exact, styles: [GENRE_BY_ID[f.entry.genre]?.label].filter(Boolean), us: [] })),
     licenseSuffix: suffix,
     queries: finalQueries,
     notes,
@@ -240,10 +265,6 @@ export function buildPlan(prompt = '', opts = {}) {
 // ---------------------------------------------------------------------------
 // Classification d'une vidéo trouvée : à quels courants appartient cette prod ?
 
-// Un artiste présent dans plusieurs courants ne compte que pour le premier
-// (son courant principal), sinon chaque prod Lil Uzi serait aussi « Jersey club ».
-const ARTIST_OWNER = new Map();
-for (const g of GENRES) for (const name of g.artists) if (!ARTIST_OWNER.has(name)) ARTIST_OWNER.set(name, g.id);
 
 const GENRE_MATCHERS = GENRES.map((g) => ({
   id: g.id,

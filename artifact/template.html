@@ -18,6 +18,7 @@
   <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5H5V6h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5.5c0 4.3 3 7.9 7 9.5 4-1.6 7-5.2 7-9.5V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m9 12 2.2 2.2L15.5 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3.5Z" fill="currentColor"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 </svg>
 
@@ -36,13 +37,18 @@
   <section id="view-search" class="view active">
     <div class="hero" id="hero">
       <h1 class="hero-title">Quelle prod tu cherches&nbsp;?</h1>
-      <p class="hero-sub">Décris la vibe. Je trouve les type beats sur YouTube et je lis chaque description pour vérifier la licence.</p>
-      <form id="searchForm" class="searchbar" autocomplete="off">
-        <svg class="sb-ico" aria-hidden="true"><use href="#i-search"/></svg>
-        <input id="prompt" type="text" placeholder="rapide, énergique et musicale…" enterkeyhint="search" aria-label="Décris ta prod">
-        <button class="go" id="goBtn" type="submit"><span>Chercher</span><svg aria-hidden="true"><use href="#i-search"/></svg></button>
-      </form>
+      <p class="hero-sub">Décris la vibe ou cite un rappeur (Luther, Damso, Bu$hi…). Je trouve les type beats sur YouTube et je lis chaque description pour vérifier la licence.</p>
+      <div class="sb-wrap">
+        <form id="searchForm" class="searchbar" autocomplete="off">
+          <svg class="sb-ico" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="prompt" type="text" placeholder="une prod à la Luther, sombre et lente…" enterkeyhint="search" aria-label="Décris ta prod" aria-autocomplete="list" aria-controls="ac">
+          <button class="go" id="goBtn" type="submit"><span>Chercher</span><svg aria-hidden="true"><use href="#i-search"/></svg></button>
+        </form>
+        <div class="ac" id="ac" role="listbox" hidden></div>
+      </div>
+      <div class="recognized" id="recognized" hidden></div>
       <div class="chips" id="suggestions" aria-label="Suggestions"></div>
+      <button type="button" class="link browse" id="browseBtn">Voir tous les rappeurs et courants reconnus</button>
     </div>
 
     <div class="status" id="status" hidden>

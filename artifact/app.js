@@ -383,7 +383,7 @@ function errorKind(e) {
 // ---------------------------------------------------------------------------
 // Recherche
 
-const SUGGESTIONS = ['rapide', 'énergique', 'mélodique', 'sombre', 'triste', 'chill', 'agressif', 'drill', 'rage', 'pluggnb', 'jerk', 'piano', 'guitare', 'Lil Uzi', 'Ken Carson', 'Pop Smoke'];
+const SUGGESTIONS = ['rapide', 'énergique', 'mélodique', 'sombre', 'triste', 'chill', 'drill', 'rage', 'pluggnb', 'jerk', 'piano', 'Luther', 'Damso', 'La Fève', 'Ninho', 'Lil Uzi', 'Travis Scott'];
 const promptEl = $('#prompt');
 for (const w of SUGGESTIONS) $('#suggestions').append(h('button', { type: 'button', class: 'chip', 'data-word': w, onclick: () => toggleWord(w) }, w));
 function toggleWord(w) {
@@ -400,7 +400,122 @@ function syncChips() {
     c.classList.toggle('on', new RegExp(`[^a-z]${w}[^a-z]`).test(txt));
   });
 }
-promptEl.addEventListener('input', syncChips);
+promptEl.addEventListener('input', () => { syncChips(); onPromptInput(); });
+
+// ---------------------------------------------------------------------------
+// Rappeurs reconnus (en direct) + autocomplétion
+
+const artistStyles = (m) => (m.type === 'fr' ? m.entry.fr.styles : [m.entry.genre]).map((id) => GENRE_BY_ID[id]?.label).filter(Boolean);
+function renderRecognized() {
+  const found = findArtists(promptEl.value);
+  const box = $('#recognized');
+  box.hidden = !found.length;
+  box.replaceChildren(...found.map((m) => h('span', { class: 'rec', title: m.type === 'fr' ? m.entry.fr.note : '' },
+    icon('mic'),
+    h('b', {}, m.name),
+    h('em', { class: `flag${m.type === 'us' ? ' us' : ''}` }, m.type === 'fr' ? 'FR' : 'US'),
+    h('span', {}, artistStyles(m).slice(0, 2).join(' · ')),
+    m.type === 'fr' ? h('span', { class: 'rec-us' }, `→ ${m.entry.fr.us.slice(0, 3).join(', ')}`) : null)));
+}
+let acItems = [];
+let acIndex = -1;
+function fragmentAtCaret() {
+  const v = promptEl.value;
+  const caret = promptEl.selectionStart ?? v.length;
+  const before = v.slice(0, caret);
+  const seg = before.split(/[,;]/).pop();
+  const words = seg.trim().split(/\s+/).filter(Boolean);
+  for (const n of [3, 2, 1]) {
+    if (words.length < n) continue;
+    const frag = words.slice(-n).join(' ');
+    const list = suggestArtists(frag, 6);
+    if (list.length && frag.length >= 2) return { frag, start: before.length - (before.length - before.lastIndexOf(words[words.length - n])), list };
+  }
+  return null;
+}
+function hideAc() { $('#ac').hidden = true; acItems = []; acIndex = -1; promptEl.setAttribute('aria-expanded', 'false'); }
+function onPromptInput() {
+  clearTimeout(onPromptInput._t);
+  onPromptInput._t = setTimeout(() => {
+    renderRecognized();
+    const f = fragmentAtCaret();
+    const exactAlready = f && findArtists(f.frag).some((m) => m.exact && f.list[0] && m.name === f.list[0].name && artistKey(f.frag) === artistKey(m.name));
+    if (!f || exactAlready) { hideAc(); return; }
+    acItems = f.list;
+    acIndex = -1;
+    const ac = $('#ac');
+    ac.replaceChildren(...f.list.map((it, i) => {
+      const styles = (it.type === 'fr' ? it.entry.fr.styles : [it.entry.genre]).map((id) => GENRE_BY_ID[id]?.label).filter(Boolean).slice(0, 2).join(' · ');
+      const b = h('button', { type: 'button', class: 'ac-item', role: 'option', 'data-i': i },
+        h('em', { class: `flag${it.type === 'us' ? ' us' : ''}` }, it.type === 'fr' ? 'FR' : 'US'), h('b', {}, it.name), h('span', {}, styles));
+      b.addEventListener('mousedown', (e) => { e.preventDefault(); pickAc(i, f); });
+      return b;
+    }));
+    ac.hidden = false;
+    promptEl.setAttribute('aria-expanded', 'true');
+  }, 90);
+}
+function pickAc(i, f = fragmentAtCaret()) {
+  const it = acItems[i];
+  if (!it || !f) return;
+  const v = promptEl.value;
+  const caret = promptEl.selectionStart ?? v.length;
+  const start = f.start;
+  promptEl.value = `${v.slice(0, start)}${it.name}${v.slice(caret)}`;
+  const pos = start + it.name.length;
+  promptEl.setSelectionRange(pos, pos);
+  hideAc();
+  syncChips();
+  renderRecognized();
+  promptEl.focus();
+}
+promptEl.addEventListener('keydown', (e) => {
+  if ($('#ac').hidden || !acItems.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    acIndex = (acIndex + (e.key === 'ArrowDown' ? 1 : -1) + acItems.length) % acItems.length;
+    $$('.ac-item').forEach((b, i) => b.classList.toggle('on', i === acIndex));
+  } else if ((e.key === 'Enter' || e.key === 'Tab') && acIndex >= 0) {
+    e.preventDefault();
+    pickAc(acIndex);
+  } else if (e.key === 'Escape') hideAc();
+});
+promptEl.addEventListener('blur', () => setTimeout(hideAc, 120));
+
+// Liste complète des rappeurs et courants reconnus
+$('#browseBtn').addEventListener('click', openBrowse);
+function openBrowse() {
+  const filter = h('input', { class: 'a-filter', id: 'aFilter', type: 'search', placeholder: 'Cherche un rappeur ou un courant…', 'aria-label': 'Filtrer la liste' });
+  const count = h('p', { class: 'a-count' });
+  const list = h('div', { class: 'alist' });
+  const frSorted = [...FR_ARTISTS].sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  const run = (q) => { closeDrawer(); promptEl.value = q; syncChips(); renderRecognized(); showView('search'); startSearch(); };
+  const draw = () => {
+    const k = artistKey(filter.value);
+    const frRows = frSorted.filter((a) => !k || artistKey(a.name).includes(k) || a.aliases.some((al) => artistKey(al).includes(k)) || a.styles.some((id) => artistKey(GENRE_BY_ID[id]?.label || '').includes(k)) || a.us.some((u) => artistKey(u).includes(k)));
+    const gRows = GENRES.filter((g) => !k || artistKey(g.label).includes(k) || g.artists.some((u) => artistKey(u).includes(k)));
+    count.textContent = `${frRows.length} rappeurs FR · ${gRows.length} courants${k ? ' (filtrés)' : ''}`;
+    list.replaceChildren(
+      ...frRows.map((a) => h('div', { class: 'arow' },
+        h('b', {}, a.name, ' ', h('em', { class: 'flag' }, 'FR')),
+        h('div', { class: 'a-styles' }, a.styles.map((id) => GENRE_BY_ID[id]?.label).join(' · '), a.note ? ` — ${a.note}` : ''),
+        h('div', { class: 'a-us' }, 'Même son que : ', h('strong', {}, a.us.join(', '))),
+        h('button', { type: 'button', class: 'ghost', onclick: () => run(`une prod à la ${a.name}`) }, 'Chercher'))),
+      ...gRows.map((g) => h('div', { class: 'arow' },
+        h('b', {}, g.label, ' ', h('em', { class: 'flag us' }, 'COURANT')),
+        h('div', { class: 'a-styles' }, `${g.bpm[0]}–${g.bpm[1]} BPM`),
+        h('div', { class: 'a-us' }, 'Type beats : ', h('strong', {}, g.artists.join(', '))),
+        h('button', { type: 'button', class: 'ghost', onclick: () => run(g.aliases[0]) }, 'Chercher'))),
+    );
+  };
+  filter.addEventListener('input', () => { clearTimeout(draw._t); draw._t = setTimeout(draw, 80); });
+  draw();
+  openDrawer('Rappeurs & courants reconnus', [
+    h('p', { class: 'muted', style: 'margin:0' }, 'Écris un de ces noms dans la recherche (même mal orthographié) : je cherche ses type beats et ceux des artistes US au même son.'),
+    filter, count, list,
+  ]);
+  setTimeout(() => filter.focus(), 100);
+}
 
 // Filtres de licence (servent aussi à choisir « free for profit » dans les recherches)
 const searchPrefs = local.get('searchPrefs', { licenses: ['ffp', 'upto'], sort: 'licence', bpm: null });
@@ -454,6 +569,7 @@ function nextQueries(first) {
 
 $('#searchForm').addEventListener('submit', (e) => { e.preventDefault(); startSearch(); });
 function startSearch() {
+  hideAc();
   const prompt = promptEl.value.trim();
   if (!prompt) { promptEl.focus(); toast('Décris la prod que tu cherches'); return; }
   if (searching) return;
@@ -685,6 +801,10 @@ $('#howBtn').addEventListener('click', () => {
   const counts = (q) => [...session.items.values()].filter((i) => i.foundBy.includes(q)).length;
   openDrawer('Comment j’ai cherché', [
     h('p', { class: 'muted', style: 'margin:0' }, `Pour « ${session.prompt} », voici ce que l’algo a compris et les recherches lancées sur YouTube.`),
+    p.recognized?.length ? h('div', { class: 'd-sec' }, h('h4', {}, 'Rappeurs reconnus'), h('div', { class: 'alist' }, p.recognized.map((r) => h('div', { class: 'arow' },
+      h('b', {}, r.name, ' ', h('em', { class: `flag${r.type === 'us' ? ' us' : ''}` }, r.type === 'fr' ? 'FR' : 'US')),
+      h('div', { class: 'a-styles' }, r.styles.join(' · '), r.note ? ` — ${r.note}` : ''),
+      r.us.length ? h('div', { class: 'a-us' }, 'Même son que : ', h('strong', {}, r.us.join(', '))) : null)))) : null,
     h('div', { class: 'plan-grid' },
       h('div', { class: 'plan-card' }, h('h4', {}, 'Ambiances'), h('div', { class: 'tags' }, p.moods.length ? p.moods.map((m) => h('span', { class: 'tag' }, m.label)) : h('span', { class: 'muted' }, 'aucune reconnue'))),
       h('div', { class: 'plan-card' }, h('h4', {}, 'Courants de rap'), h('div', { class: 'tags' }, p.genres.map((g) => h('span', { class: 'tag' }, g.label)))),
@@ -707,6 +827,7 @@ function restoreSession() {
   if (!s?.items?.length) return;
   promptEl.value = s.prompt;
   syncChips();
+  renderRecognized();
   session = { prompt: s.prompt, plan: buildPlan(s.prompt, { licenses: searchPrefs.licenses, device, depth: device === 'mobile' ? 'rapide' : 'normal' }), done: s.done || [], items: new Map(s.items.map((i) => [i.id, i])), at: s.at };
   rendered = new Set(s.items.map((i) => i.id));
   $('#hero').classList.add('compact');
@@ -745,7 +866,7 @@ function updateEntry(id, patch) {
   persist.save('history');
   renderHistory(); renderSavedSearches(); updateDots();
 }
-function relaunch(e) { promptEl.value = e.prompt; syncChips(); showView('search'); startSearch(); }
+function relaunch(e) { promptEl.value = e.prompt; syncChips(); renderRecognized(); showView('search'); startSearch(); }
 
 function historyRow(e, i) {
   if (!e.prompt) return null;

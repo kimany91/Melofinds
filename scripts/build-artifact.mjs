@@ -13,6 +13,8 @@ const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 const MODULES = [
   'src/core/text.js',
   'src/core/genres.js',
+  'src/core/frartists.js',
+  'src/core/artistmatch.js',
   'src/core/license.js',
   'src/core/bpm.js',
   'src/core/planner.js',
