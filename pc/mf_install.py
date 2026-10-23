@@ -353,20 +353,30 @@ def add_device(cfg, pairing, name=""):
     return d
 
 
-def remove_own_files(folder):
-    """Supprime uniquement les fichiers créés par le programme (jamais tes prods)."""
+def remove_own_files(folder, wait=15):
+    """Supprime uniquement les fichiers créés par le programme (jamais tes prods).
+    Windows garde parfois un fichier verrouillé quelques secondes après l'arrêt : on réessaie."""
     folder = Path(folder)
-    for name in OWN_FILES:
-        try:
-            (folder / name).unlink(missing_ok=True)
-        except OSError:
-            pass
-    for name in OWN_DIRS:
-        shutil.rmtree(folder / name, ignore_errors=True)
+    end = time.time() + wait
+    while True:
+        left = []
+        for name in OWN_FILES:
+            try:
+                (folder / name).unlink(missing_ok=True)
+            except OSError:
+                left.append(name)
+        for name in OWN_DIRS:
+            shutil.rmtree(folder / name, ignore_errors=True)
+            if (folder / name).exists():
+                left.append(name)
+        if not left or time.time() > end:
+            break
+        time.sleep(0.5)
     try:
         folder.rmdir()  # seulement s'il est vide
     except OSError:
         pass
+    return not left
 
 
 def uninstall():
