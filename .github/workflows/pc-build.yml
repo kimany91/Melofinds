@@ -1,7 +1,15 @@
-# Construit MelofindsPC.exe sur Windows à chaque changement du programme PC,
-# le teste, puis le publie comme version GitHub (avec version.json + SHA-256).
-# Le programme installé se met à jour uniquement depuis ces versions.
-name: Melofinds PC (.exe)
+# Construit l'installateur Windows MelofindsSetup.exe à chaque changement du programme PC,
+# le teste (programme, installation, désinstallation, analyse Windows Defender), puis le
+# publie comme version GitHub (avec version.json + SHA-256). Le programme installé se met
+# à jour uniquement depuis ces versions.
+#
+# Pour éviter les fausses alertes antivirus :
+#  - programme en dossier (pas d'exe « un seul fichier » qui s'auto-extrait), sans UPX ;
+#  - lanceur PyInstaller recompilé ici (pas celui, très répandu, du paquet officiel) ;
+#  - nom, éditeur, version et icône dans les propriétés du fichier ;
+#  - outils inclus dans l'installateur : rien n'est téléchargé après l'installation ;
+#  - installateur standard (Inno Setup) : raccourcis, démarrage, désinstallation.
+name: Melofinds PC (installateur Windows)
 
 on:
   push:
@@ -20,7 +28,7 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 
@@ -31,36 +39,117 @@ jobs:
       - name: Tests
         run: python -m unittest pc/test_melofinds_pc.py -v
 
-      - name: Construire MelofindsPC.exe
+      - name: Version
+        shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install pyinstaller==6.11.1
-          pyinstaller --onefile --noconsole --name MelofindsPC --paths pc --hidden-import mf_gui pc/melofinds_pc.py
-          Copy-Item dist\MelofindsPC.exe dist\MelofindsSetup.exe
+          $ver = python pc/make_version_info.py build/version_info.txt
+          "MF_VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Version $ver"
 
-      - name: Auto-test (outils, fenêtres, installation + désinstallation, téléchargement)
+      - name: PyInstaller avec lanceur recompilé
+        shell: pwsh
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: '1'
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          python -m pip install --no-binary pyinstaller pyinstaller==6.11.1
+          pyinstaller --version
+
+      - name: Construire le programme (dossier)
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --onedir --noconsole --noupx --name MelofindsPC `
+            --icon pc/assets/melofinds.ico --version-file build/version_info.txt `
+            --paths pc --hidden-import mf_gui pc/melofinds_pc.py
+          Get-ChildItem dist\MelofindsPC | Select-Object Name, Length
+
+      - name: Outils inclus (yt-dlp, ffmpeg, Deno), empreintes vérifiées
+        shell: pwsh
+        run: |
+          python -c "import sys; sys.path.insert(0, 'pc'); import mf_core as C; C.P.set('build'); e = C.ensure_tools(print); print(e); sys.exit(1 if e else 0)"
+          Get-ChildItem build\tools | Select-Object Name, Length
+
+      - name: Auto-test du programme (outils, fenêtre, téléchargement)
         shell: pwsh
         env:
           MELOFINDS_TEST_VIDEO: jNQXAC9IVRw
         run: |
-          $p = Start-Process -FilePath dist\MelofindsPC.exe -ArgumentList '--selftest', "$PWD\selftest.json" -Wait -PassThru
+          New-Item -ItemType Directory -Force test | Out-Null
+          Copy-Item -Recurse dist\MelofindsPC test\MelofindsPC
+          Copy-Item -Recurse build\tools test\MelofindsPC\tools
+          $p = Start-Process -FilePath test\MelofindsPC\MelofindsPC.exe -ArgumentList '--selftest', "$PWD\selftest.json" -Wait -PassThru
           if (Test-Path selftest.json) { Get-Content selftest.json } else { Write-Host "selftest.json absent" }
           if ($p.ExitCode -ne 0) { Write-Error "Auto-test raté (code $($p.ExitCode))"; exit 1 }
+
+      - name: Construire l'installateur (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress | Out-Null
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          & $iscc "/DAppVersion=$env:MF_VERSION" pc\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-Item dist\MelofindsSetup.exe | Select-Object Name, Length
+
+      - name: Test d'installation + désinstallation
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'MF Install'
+          $prods = Join-Path $env:RUNNER_TEMP 'MF Prods'
+          $p = Start-Process dist\MelofindsSetup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=desktopicon,autostart' -Wait -PassThru
+          $r = [ordered]@{ setup_exit = $p.ExitCode }
+          $r.exe = Test-Path "$dir\MelofindsPC.exe"
+          $r.tools = (Test-Path "$dir\tools\yt-dlp.exe") -and (Test-Path "$dir\tools\ffmpeg.exe") -and (Test-Path "$dir\tools\deno.exe")
+          $desk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Melofinds PC.lnk'
+          $r.desktop_lnk = Test-Path $desk
+          $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $r.autostart = $null -ne (Get-ItemProperty -Path $run -Name MelofindsPC -ErrorAction SilentlyContinue)
+          $token = 'melofinds-' + [guid]::NewGuid().ToString('N') + '.' + [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
+          Start-Process "$dir\MelofindsPC.exe" -ArgumentList '--configure', '--dossier', "`"$prods`"", '--pair', $token -Wait
+          $r.configured = (Get-Content "$dir\config.json" -Raw | ConvertFrom-Json).devices.Count -eq 1
+          Start-Process "$dir\MelofindsPC.exe" -ArgumentList '--start-if-configured' -Wait
+          $online = $false
+          for ($i = 0; $i -lt 60 -and -not $online; $i++) { Start-Sleep -Milliseconds 500; $online = Test-Path "$dir\heartbeat" }
+          $r.online = $online
+          $u = Get-ChildItem "$dir\unins*.exe" | Select-Object -First 1
+          Start-Process $u.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
+          for ($i = 0; $i -lt 90 -and (Test-Path "$dir\MelofindsPC.exe"); $i++) { Start-Sleep -Milliseconds 500 }
+          Start-Sleep -Seconds 2
+          $r.removed = -not (Test-Path "$dir\MelofindsPC.exe") -and -not (Test-Path "$dir\tools") -and -not (Test-Path "$dir\config.json")
+          $r.desktop_lnk_removed = -not (Test-Path $desk)
+          $r.autostart_removed = $null -eq (Get-ItemProperty -Path $run -Name MelofindsPC -ErrorAction SilentlyContinue)
+          $r.prods_kept = Test-Path $prods
+          $r | ConvertTo-Json
+          $bad = @($r.GetEnumerator() | Where-Object { $_.Key -ne 'setup_exit' -and $_.Value -ne $true })
+          if ($r.setup_exit -ne 0 -or $bad.Count) { Write-Error "Test d'installation raté : $($bad.Key -join ', ')"; exit 1 }
+
+      - name: Analyse Windows Defender
+        shell: pwsh
+        run: |
+          $mp = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+          if (-not (Test-Path $mp)) { Write-Host "Windows Defender absent sur cette machine : analyse sautée."; exit 0 }
+          & $mp -SignatureUpdate | Out-Null
+          $found = $false
+          foreach ($f in @("$PWD\dist\MelofindsSetup.exe", "$PWD\dist\MelofindsPC")) {
+            $out = & $mp -Scan -ScanType 3 -File $f -DisableRemediation 2>&1 | Out-String
+            Write-Host "== $f (code $LASTEXITCODE)"; Write-Host $out
+            if ($LASTEXITCODE -eq 2 -or $out -match 'found \d+ threats|Threat\s*:') { $found = $true }
+          }
+          if ($found) { Write-Error "Windows Defender signale une menace : version non publiée."; exit 1 }
 
       - name: Publier la version
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $ver = (Select-String -Path pc/mf_core.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
+          $ver = $env:MF_VERSION
           $tag = "pc-v$ver"
-          $sha = (Get-FileHash dist\MelofindsPC.exe -Algorithm SHA256).Hash.ToLower()
-          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/MelofindsPC.exe"
-          @{ version = $ver; sha256 = $sha; url = $url } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM version.json
+          $sha = (Get-FileHash dist\MelofindsSetup.exe -Algorithm SHA256).Hash.ToLower()
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/MelofindsSetup.exe"
+          @{ version = $ver; sha256 = $sha; url = $url; setup_sha256 = $sha; setup_url = $url } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM version.json
           Get-Content version.json
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag dist\MelofindsPC.exe dist\MelofindsSetup.exe version.json --clobber
+            gh release upload $tag dist\MelofindsSetup.exe version.json --clobber
           } else {
-            gh release create $tag dist\MelofindsPC.exe dist\MelofindsSetup.exe version.json --title "Melofinds PC $ver" --target "${{ github.sha }}" --latest --notes "Programme Windows de Melofinds : reçoit les prods envoyées depuis Melofinds Web et les enregistre en .wav. Télécharge MelofindsSetup.exe et lance-le : il demande où s'installer, installe ses outils, crée un raccourci sur le bureau. Le panneau Melofinds PC gère la mise en ligne, le démarrage automatique, les appareils et le dossier des prods."
+            gh release create $tag dist\MelofindsSetup.exe version.json --title "Melofinds PC $ver" --target "${{ github.sha }}" --latest --notes "Installateur Windows de Melofinds PC : télécharge MelofindsSetup.exe et lance-le. Il demande où s'installer et où arrivent les prods, crée un raccourci sur le bureau et peut se lancer avec Windows. Le panneau Melofinds PC gère la mise en ligne, le démarrage automatique, les appareils et le dossier des prods."
           }

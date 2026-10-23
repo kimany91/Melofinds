@@ -171,30 +171,31 @@ class Appareils(unittest.TestCase):
         self.assertEqual(len(mpc.load_config()["devices"]), 1)
 
 
-class Installation2(unittest.TestCase):
-    def test_dossier_deja_utilise(self):
-        d = Path(tempfile.mkdtemp(prefix="mf-inst-"))
-        (d / "mes-sons.mp3").write_text("x")
-        self.assertEqual(inst.pick_install_dir(d), d / "Melofinds")  # jamais mélangé à tes fichiers
-        empty = Path(tempfile.mkdtemp(prefix="mf-inst-"))
-        self.assertEqual(inst.pick_install_dir(empty), empty)
+class Configuration(unittest.TestCase):
+    def test_reprise_ancienne_version_et_configuration(self):
+        old = Path(tempfile.mkdtemp(prefix="mf-old-"))
+        new = Path(tempfile.mkdtemp(prefix="mf-new-"))
+        code, key = "melofinds-" + "6f" * 16, "7a" * 32
+        (old / "config.json").write_text(json.dumps({"code": code, "cle": key, "dossier": str(old / "Prods")}))
+        (old / "tools").mkdir()
+        (old / "tools" / "yt-dlp.exe").write_text("x")
+        orig = mpc.previous_install_dirs
+        mpc.previous_install_dirs = lambda: [old]
+        try:
+            mpc.P.set(new)
+            cfg = inst.configure(dossier=str(new / "Mes prods"), pairing="melofinds-" + "8b" * 16 + "." + "9c" * 32, device_name="PC portable")
+        finally:
+            mpc.previous_install_dirs = orig
+        self.assertEqual([d["code"] for d in cfg["devices"]], [code, "melofinds-" + "8b" * 16])  # ancien téléphone gardé
+        self.assertEqual(cfg["dossier"], str(new / "Mes prods"))
+        self.assertTrue((new / "Mes prods").is_dir())
+        self.assertTrue((new / "tools" / "yt-dlp.exe").exists())  # outils repris, pas retéléchargés
+        self.assertTrue((old / "config.json").exists())  # l'ancien dossier n'est pas modifié
+
+    def test_code_invalide_refuse(self):
+        mpc.P.set(Path(tempfile.mkdtemp(prefix="mf-cfg-")))
         with self.assertRaises(ValueError):
-            inst.pick_install_dir("relatif/dossier")
-
-    def test_desinstallation_ne_touche_que_ses_fichiers(self):
-        d = Path(tempfile.mkdtemp(prefix="mf-rm-"))
-        for n in ("config.json", "state.json", mpc.MARKER, "melofinds.log"):
-            (d / n).write_text("x")
-        (d / "tools").mkdir()
-        (d / "tools" / "yt-dlp.exe").write_text("x")
-        (d / "ma-prod.wav").write_text("x")
-        inst.remove_own_files(d)
-        self.assertEqual(sorted(p.name for p in d.iterdir()), ["ma-prod.wav"])
-
-    def test_raccourci_guillemets(self):
-        s = inst.shortcut_script("[Environment]::GetFolderPath('Desktop')", r"C:\Users\O'Neil\Melofinds\MelofindsPC.exe", r"C:\Users\O'Neil\Melofinds", "Gérer")
-        self.assertIn("'C:\\Users\\O''Neil\\Melofinds\\MelofindsPC.exe'", s)
-        self.assertNotIn("O'Neil", s)
+            inst.configure(pairing="pas un code")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Melofinds PC — fenêtres : installateur et panneau de gestion."""
+"""Melofinds PC — panneau de gestion (l'installation est faite par MelofindsSetup.exe)."""
 
 import os
 import subprocess
@@ -92,108 +92,6 @@ def _open_path(p):
             os.startfile(str(p))  # noqa: S606 (dossier choisi par l'utilisateur)
         else:
             subprocess.Popen(["xdg-open", str(p)])
-    except OSError:
-        pass
-
-
-# ---------------------------------------------------------------------------
-# Installateur
-
-def setup_window(selftest=False):
-    import tkinter as tk
-    from tkinter import filedialog, ttk
-
-    root = tk.Tk()
-    root.title(f"Installer Melofinds PC {C.VERSION}")
-    root.geometry("640x600")
-    root.minsize(560, 560)
-    _style(root)
-    _icon(root)
-    outer = ttk.Frame(root, padding=24)
-    outer.pack(fill="both", expand=True)
-
-    prev_dir = C.resolve_install_dir()
-    prev_ver = I.installed_version() if prev_dir else None
-    prev_cfg = C.load_config() if prev_dir else {}
-
-    ttk.Label(outer, text="Installer Melofinds PC", style="Title.TLabel").pack(anchor="w")
-    intro = "Reçois les prods envoyées depuis ton téléphone, en .wav, même quand tu es loin."
-    if prev_dir:
-        intro = f"Déjà installé (version {prev_ver or '?'}) dans {prev_dir}. Tu peux le mettre à jour vers la version {C.VERSION}."
-    ttk.Label(outer, text=intro, style="Muted.TLabel", wraplength=580).pack(anchor="w", pady=(4, 16))
-
-    def path_row(label, var, title):
-        ttk.Label(outer, text=label, style="H.TLabel").pack(anchor="w")
-        row = ttk.Frame(outer)
-        row.pack(fill="x", pady=(4, 12))
-        ttk.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True)
-        ttk.Button(row, text="Parcourir…", command=lambda: var.set(filedialog.askdirectory(title=title, initialdir=var.get() or str(Path.home())) or var.get())).pack(side="left", padx=(8, 0))
-
-    inst = tk.StringVar(value=str(prev_dir or C.DEFAULT_INSTALL))
-    beats = tk.StringVar(value=prev_cfg.get("dossier") or C.default_folder())
-    path_row("Emplacement du programme (ses fichiers système)", inst, "Où installer Melofinds PC ?")
-    path_row("Dossier où arrivent les prods (.wav)", beats, "Où ranger les prods reçues ?")
-
-    ttk.Label(outer, text="Code d'appairage de ton téléphone (facultatif)", style="H.TLabel").pack(anchor="w")
-    ttk.Label(outer, text="Melofinds Web → Mon PC → Copier. Tu peux aussi l'ajouter plus tard dans « Appareils ».", style="Muted.TLabel", wraplength=580).pack(anchor="w")
-    pair = tk.StringVar()
-    ttk.Entry(outer, textvariable=pair, font=("Consolas", 9)).pack(fill="x", pady=(4, 12))
-
-    desk = tk.BooleanVar(value=True)
-    auto = tk.BooleanVar(value=True if not prev_dir else I.autostart_enabled() or not C.WINDOWS)
-    ttk.Checkbutton(outer, text="Créer un raccourci sur le bureau", variable=desk).pack(anchor="w")
-    ttk.Checkbutton(outer, text="Lancer Melofinds PC au démarrage de l'ordinateur", variable=auto).pack(anchor="w", pady=(2, 14))
-
-    status = tk.StringVar()
-    ttk.Label(outer, textvariable=status, style="Muted.TLabel", wraplength=580).pack(anchor="w")
-    bar = ttk.Progressbar(outer, mode="indeterminate")
-    btns = ttk.Frame(outer)
-    btns.pack(fill="x", pady=(12, 0), side="bottom")
-    go = ttk.Button(btns, text="Mettre à jour" if prev_dir else "Installer", style="Accent.TButton")
-    go.pack(side="right")
-    if prev_dir:
-        ttk.Button(btns, text="Ouvrir sans réinstaller", command=lambda: (root.destroy(), _launch_manager())).pack(side="right", padx=8)
-    ttk.Button(btns, text="Annuler", command=root.destroy).pack(side="left")
-
-    def run():
-        if pair.get().strip() and not C.parse_pairing(pair.get()):
-            status.set("Ce code n'est pas valide : dans Melofinds Web → Mon PC, touche « Copier » et colle-le ici (ou laisse vide).")
-            return
-        go.state(["disabled"])
-        bar.pack(fill="x", pady=(8, 0))
-        bar.start(12)
-
-        def work():
-            try:
-                issues = I.install(inst.get(), beats.get(), desktop=desk.get(), autostart=auto.get(),
-                                   pairing=pair.get().strip() or None, device_name="Mon téléphone",
-                                   progress=lambda s: root.after(0, status.set, s))
-                root.after(0, lambda: done(issues))
-            except Exception as e:  # affiché à l'utilisateur
-                root.after(0, lambda: (bar.stop(), status.set(f"Erreur : {e}"), go.state(["!disabled"])))
-        threading.Thread(target=work, daemon=True).start()
-
-    def done(issues):
-        bar.stop()
-        bar.pack_forget()
-        msg = "C'est installé ✓ Le panneau de gestion va s'ouvrir."
-        if issues:
-            msg = "Installé, avec un souci :\n- " + "\n- ".join(issues) + "\nTu peux réessayer plus tard depuis le panneau."
-        status.set(msg)
-        root.after(1600 if not issues else 4000, lambda: (root.destroy(), _launch_manager()))
-
-    go.configure(command=run)
-    if selftest:
-        root.update()
-        root.destroy()
-        return
-    root.mainloop()
-
-
-def _launch_manager():
-    flags = I.DETACHED if C.WINDOWS else 0
-    try:
-        subprocess.Popen(I.launcher(), creationflags=flags, close_fds=True)
     except OSError:
         pass
 
@@ -373,8 +271,6 @@ def manager_window(selftest=False):
     r5.pack(fill="x")
     ttk.Button(r5, text="Ouvrir", command=lambda: _open_path(P.base)).pack(side="left")
     ttk.Button(r5, text="Journal", command=lambda: _open_path(P.log)).pack(side="left", padx=8)
-    ttk.Button(r5, text="Recréer le raccourci du bureau", command=lambda: msg_var.set(
-        "Raccourci recréé." if "bureau" in I.create_shortcuts(desktop=True, start_menu=False) else "Raccourci impossible (voir le journal).")).pack(side="left")
 
     c6 = card(set_tab)
     ttk.Label(c6, text="Mises à jour", style="CardH.TLabel").pack(anchor="w")
@@ -396,10 +292,13 @@ def manager_window(selftest=False):
     ttk.Button(r6, text="Vérifier maintenant", command=upd).pack(side="left")
 
     def remove():
-        if not messagebox.askyesno("Désinstaller", "Désinstaller Melofinds PC ?\nTes prods restent dans leur dossier.", parent=root):
+        unins = I.uninstaller()
+        if not unins:
+            messagebox.showinfo("Melofinds PC", "Pour désinstaller : Paramètres Windows → Applications → Melofinds PC.", parent=root)
             return
-        I.uninstall()
-        messagebox.showinfo("Melofinds PC", "Désinstallé. Tes prods sont toujours dans leur dossier.", parent=root)
+        # Le désinstalleur Windows (créé par l'installateur) demande confirmation, arrête le
+        # programme et retire tout, sauf tes prods.
+        subprocess.Popen([str(unins)], close_fds=True)
         root.destroy()
     ttk.Button(set_tab, text="Désinstaller Melofinds PC", style="Danger.TButton", command=remove).pack(anchor="e", pady=(4, 0))
     msg_var = tk.StringVar()

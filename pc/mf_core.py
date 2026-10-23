@@ -31,7 +31,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.0.0"
+VERSION = "3.1.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -108,20 +108,36 @@ def registry_install_dir():
         return None
 
 
+def _writable(d):
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        probe = d / ".melofinds-test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
 def resolve_install_dir():
-    """Où sont les fichiers du programme, ou None s'il n'est pas installé."""
+    """Où le programme range ses fichiers (réglages, outils, journal) : son propre dossier
+    d'installation (choisi dans l'installateur), sinon un dossier à toi dans AppData."""
     if not WINDOWS:
         return Path(os.environ.get("MELOFINDS_HOME") or Path.home() / ".melofinds")
     if getattr(sys, "frozen", False):
         here = Path(sys.executable).resolve().parent
-        if (here / "config.json").exists() or (here / MARKER).exists():
-            return here
+        return here if _writable(here) else LEGACY_DIR / "data"
+    return Path(os.environ.get("MELOFINDS_HOME") or LEGACY_DIR / "dev")
+
+
+def previous_install_dirs():
+    """Anciennes installations (2.x, 3.0) dont on reprend les réglages."""
+    out = []
     r = registry_install_dir()
-    if r and Path(r).is_dir():
-        return Path(r)
-    if (LEGACY_DIR / "config.json").exists():
-        return LEGACY_DIR  # installation 2.x
-    return None
+    if r:
+        out.append(Path(r))
+    out.append(LEGACY_DIR)
+    return [d for d in out if (d / "config.json").exists()]
 
 
 # ---------------------------------------------------------------------------
@@ -583,9 +599,11 @@ def download(video_id, root, info):
 # Mise à jour du programme (uniquement depuis les versions officielles)
 
 def check_update():
-    """Renvoie (version, url, sha256) si une version plus récente existe."""
+    """Renvoie (version, url de l'installateur, sha256) si une version plus récente existe."""
     data = json.loads(http_get(MANIFEST_URL, timeout=20).decode("utf-8-sig"))
-    ver, url, sha = str(data.get("version", "")), str(data.get("url", "")), str(data.get("sha256", "")).lower()
+    ver = str(data.get("version", ""))
+    url = str(data.get("setup_url") or data.get("url") or "")
+    sha = str(data.get("setup_sha256") or data.get("sha256") or "").lower()
     if not url.startswith(f"{RELEASES}/download/") or not re.fullmatch(r"[a-f0-9]{64}", sha):
         raise ValueError("fichier de version invalide")
     if version_tuple(ver) <= version_tuple(VERSION):
@@ -594,33 +612,27 @@ def check_update():
 
 
 def apply_update(progress=None):
-    """Télécharge, vérifie et installe la nouvelle version. Renvoie un message."""
+    """Télécharge le nouvel installateur officiel, vérifie son empreinte et le lance en
+    mode silencieux dans le même dossier : il arrête proprement le programme, remplace
+    les fichiers et le remet en ligne. Renvoie un message."""
     if not getattr(sys, "frozen", False) or not WINDOWS:
-        return "Mise à jour automatique : seulement pour MelofindsPC.exe sur Windows."
+        return "Mise à jour automatique : seulement pour la version installée sur Windows."
     found = check_update()
     if not found:
         return f"Déjà à jour (version {VERSION})."
     ver, url, sha = found
-    P.base.mkdir(parents=True, exist_ok=True)
-    new = P.base / "MelofindsPC.new.exe"
-    got = download_file(url, new, progress, f"Version {ver}")
+    folder = P.base / "updates"
+    folder.mkdir(parents=True, exist_ok=True)
+    setup = folder / f"MelofindsSetup-{re.sub(r'[^0-9.]', '', ver)}.exe"
+    got = download_file(url, setup, progress, f"Version {ver}")
     if got != sha:
-        new.unlink(missing_ok=True)
+        setup.unlink(missing_ok=True)
         raise ValueError("empreinte SHA-256 incorrecte : mise à jour refusée")
-    target = P.base / EXE_NAME
-    bat = P.base / "update.bat"
-    bat.write_text(
-        "@echo off\r\n"
-        "timeout /t 2 /nobreak >nul\r\n"
-        f'taskkill /f /im "{EXE_NAME}" >nul 2>&1\r\n'
-        "timeout /t 1 /nobreak >nul\r\n"
-        f'move /y "{new}" "{target}" >nul\r\n'
-        f'start "" "{target}" --background\r\n'
-        'del "%~f0"\r\n', encoding="utf-8")
-    subprocess.Popen(["cmd", "/c", str(bat)], creationflags=NO_WINDOW | 0x00000008, close_fds=True)
-    log(f"Mise à jour vers la version {ver} : redémarrage")
+    app_dir = Path(sys.executable).resolve().parent
+    subprocess.Popen([str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", f"/DIR={app_dir}"],
+                     creationflags=0x00000008, close_fds=True)
+    log(f"Mise à jour vers la version {ver} lancée")
     return f"Mise à jour vers la version {ver}…"
-
 
 
 class SingleInstance:

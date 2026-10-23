@@ -82,11 +82,17 @@ navigateur (onglet **Recs**) et se téléchargent. Conseil : mets des écouteurs
 ## Télécharger les prods sur ton PC (même loin de chez toi)
 
 Installateur Windows : **MelofindsSetup.exe**
-(https://github.com/kimany91/Melofinds/releases/latest/download/MelofindsSetup.exe).
-Il demande où mettre les fichiers du programme et où arrivent les prods, installe ce
-qui manque (yt-dlp, ffmpeg, Deno), crée un raccourci « Melofinds PC » sur le bureau et
-dans le menu Démarrer, l'inscrit dans « Applications installées » et peut le lancer au
-démarrage de l'ordinateur.
+(https://github.com/kimany91/Melofinds/releases/latest/download/MelofindsSetup.exe),
+un installateur standard (Inno Setup, `pc/installer.iss`) : il demande où installer le
+programme, où arrivent les prods et (facultatif) le code du téléphone, copie le programme
+et ses outils (yt-dlp, ffmpeg, Deno — inclus, rien n'est téléchargé après coup), crée les
+raccourcis bureau + menu Démarrer, propose le lancement avec Windows et s'inscrit dans
+« Applications installées » avec un désinstalleur standard.
+
+Antivirus : pour éviter les fausses alertes, le programme est construit en dossier (pas
+d'exe qui s'auto-extrait), avec un lanceur PyInstaller recompilé, sans UPX, avec icône et
+informations de version ; il n'utilise ni script caché, ni PowerShell, ni `taskkill`. La
+construction analyse l'installateur avec Windows Defender avant de le publier.
 
 Le raccourci ouvre le **panneau de gestion** :
 - **Accueil** : « Mettre en ligne » / « Mettre hors ligne », démarrage automatique,
@@ -103,12 +109,12 @@ Le raccourci ouvre le **panneau de gestion** :
 - Mises à jour : bouton « Mettre à jour le PC » dans l'app (et vérification quotidienne).
   Le programme n'accepte que les versions publiées sur ce dépôt
   (`releases/latest/download/version.json`, empreinte SHA-256 vérifiée).
-- Construction : `.github/workflows/pc-build.yml` (Windows) teste, construit le .exe
-  avec PyInstaller, fait un auto-test (outils + fenêtre) et publie la version
-  `pc-v<VERSION>`. Pour publier une mise à jour : changer `VERSION` dans
+- Construction : `.github/workflows/pc-build.yml` (Windows) teste, construit le programme
+  et l'installateur, fait une vraie installation + désinstallation, l'analyse avec Windows
+  Defender et publie la version `pc-v<VERSION>`. Pour publier une mise à jour : changer `VERSION` dans
   `pc/mf_core.py` et pousser.
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
-  `mf_install.py`, `mf_gui.py`) · tests : `npm run test:pc`.
+  `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
 ## Lancer l'app complète (recherche YouTube automatique)
 
