@@ -432,8 +432,15 @@ def unique_path(root, name):
     return p
 
 
+def decode(b):
+    try:
+        return (b or b"").decode("utf-8")
+    except UnicodeDecodeError:
+        return (b or b"").decode("cp1252" if WINDOWS else "latin-1", "replace")  # console Windows
+
+
 def last_line(b):
-    lines = [l for l in (b or b"").decode("utf-8", "replace").splitlines() if l.strip()]
+    lines = [l for l in decode(b).splitlines() if l.strip()]
     return (lines[-1] if lines else "erreur inconnue")[:200]
 
 
@@ -454,7 +461,7 @@ def download(video_id, root, info):
     if r.returncode != 0:
         return False, last_line(r.stderr)
     try:
-        meta = json.loads(r.stdout.decode("utf-8", "replace"))
+        meta = json.loads(decode(r.stdout))
     except ValueError:
         return False, "réponse illisible de yt-dlp"
     if meta.get("is_live") or (meta.get("duration") or 0) > MAX_DURATION:
