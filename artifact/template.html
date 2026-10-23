@@ -11,6 +11,7 @@
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
   <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.6-9.3-9.3C1.5 7.9 3.8 4.5 7.3 4.5c2 0 3.6 1.1 4.7 2.7 1.1-1.6 2.7-2.7 4.7-2.7 3.5 0 5.8 3.4 4.6 6.7-1.8 4.7-9.3 9.3-9.3 9.3Z" fill="currentColor"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.2" fill="currentColor"/><rect x="13.5" y="5" width="4" height="14" rx="1.2" fill="currentColor"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
@@ -123,6 +124,18 @@
   </div>
   <div class="drawer-body" id="drawerBody"></div>
 </aside>
+
+<!-- Lecteur : YouTube tourne en invisible, on ne voit que cette mini-barre -->
+<div class="mini" id="mini" hidden>
+  <button type="button" class="mini-toggle" id="miniToggle" aria-label="Pause"><svg class="i-pause"><use href="#i-pause"/></svg><svg class="i-play"><use href="#i-play"/></svg></button>
+  <div class="mini-info">
+    <div class="mini-text"><b id="miniTitle"></b><span id="miniSub"></span></div>
+    <div class="mini-bar" id="miniBar" role="slider" aria-label="Position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0"><i id="miniFill"></i></div>
+  </div>
+  <a class="mini-ext" id="miniExt" target="_blank" rel="noopener" hidden>Ouvrir sur YouTube</a>
+  <button type="button" class="icon-btn mini-close" id="miniClose" aria-label="Arrêter la lecture"><svg><use href="#i-x"/></svg></button>
+</div>
+<div class="yt-host" id="ytHost" aria-hidden="true"></div>
 
 <div id="toast" class="toast" role="status" aria-live="polite"><span id="toastMsg"></span><button type="button" id="toastAction" hidden></button></div>
 

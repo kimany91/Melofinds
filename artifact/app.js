@@ -231,12 +231,13 @@ function syncHearts() {
 function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
   const L = r.license;
   const cat = L.category;
-  const card = h('article', { class: `card cat-${cat}${isNew ? ' new' : ''}${item.status === 'unread' ? ' unread' : ''}`, style: `--i:${index}` });
+  const vid = ytIdOf(item);
+  const card = h('article', { class: `card cat-${cat}${isNew ? ' new' : ''}${item.status === 'unread' ? ' unread' : ''}${vid && vid === player.vid ? ' playing' : ''}`, style: `--i:${index}`, 'data-vid': vid });
   const style = r.styles?.[0]?.label || 'Type beat';
-  card.append(h('a', { class: 'cover', href: item.url || ytSearchUrl(item.title), target: '_blank', rel: 'noopener', 'aria-label': `Écouter « ${item.title} » sur YouTube` },
+  card.append(h('button', { type: 'button', class: 'cover', 'aria-label': `Écouter « ${item.title} »`, onclick: () => playItem(item) },
     h('span', { class: 'lic-chip' }, chipLabel(L)),
     item.status === 'unread' ? h('span', { class: 'unread-chip' }, 'non vérifiée') : null,
-    h('span', { class: 'play' }, icon('play')),
+    h('span', { class: 'play' }, icon('play'), icon('pause'), h('span', { class: 'eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'))),
     h('span', { class: 'cover-meta' }, style, r.key ? h('small', {}, r.key) : null),
     r.bpm ? h('span', { class: 'cover-bpm' }, r.bpm, h('small', {}, 'BPM')) : h('span', { class: 'cover-bpm none' }, 'BPM ?')));
   const heart = h('button', { type: 'button', class: `heart${isSaved(item.id) ? ' on' : ''}`, 'data-id': item.id, 'aria-label': 'Ajouter aux favoris', 'aria-pressed': String(isSaved(item.id)) }, icon('heart'));
@@ -254,6 +255,185 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
   card.append(main);
   return card;
 }
+
+// ---------------------------------------------------------------------------
+// Lecteur intégré : un lecteur YouTube invisible (rien ne s'ouvre, rien ne
+// s'agrandit), piloté par la mini-barre en bas. Si le navigateur ou la page
+// bloquent la lecture, on le détecte et on le dit au lieu de rester muet.
+
+function ytIdOf(item) {
+  const m = (item?.url || '').match(/[?&]v=([\w-]{11})/);
+  if (m) return m[1];
+  return /^[\w-]{11}$/.test(item?.id || '') ? item.id : null;
+}
+const YT_ERRORS = {
+  2: 'Vidéo introuvable.',
+  5: 'Ce navigateur ne peut pas lire cette vidéo.',
+  100: 'Vidéo supprimée ou privée.',
+  101: 'Le beatmaker a désactivé la lecture en dehors de YouTube.',
+  150: 'Le beatmaker a désactivé la lecture en dehors de YouTube.',
+  153: 'YouTube refuse la lecture intégrée sur cette page.',
+};
+const player = { item: null, vid: null, frame: null, ready: false, state: -1, time: 0, dur: 0, status: 'idle', timers: [], listen: null };
+const fmtTime = (s) => (s > 0 ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '0:00');
+const isPlaying = () => player.state === 1 || player.state === 3;
+
+function ytSend(func, args = []) {
+  try { player.frame?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func, args, id: 1, channel: 'widget' }), '*'); } catch { /* cadre parti */ }
+}
+function playerReset() {
+  player.timers.forEach(clearTimeout);
+  clearInterval(player.listen);
+  player.timers = [];
+  player.listen = null;
+  player.frame?.remove();
+  Object.assign(player, { frame: null, ready: false, state: -1, time: 0, dur: 0 });
+}
+function later(fn, ms) { player.timers.push(setTimeout(fn, ms)); }
+
+function playItem(item) {
+  const vid = ytIdOf(item);
+  if (!vid) { toast('Pas de vidéo YouTube pour cette prod'); return; }
+  if (player.vid === vid && player.frame) { togglePlay(); return; }
+  playerReset();
+  Object.assign(player, { item, vid, status: 'loading' });
+  const params = new URLSearchParams({ autoplay: '1', enablejsapi: '1', controls: '0', playsinline: '1', rel: '0', iv_load_policy: '3', fs: '0', disablekb: '1' });
+  if (location.origin && location.origin !== 'null') params.set('origin', location.origin);
+  const f = document.createElement('iframe');
+  f.src = `https://www.youtube-nocookie.com/embed/${vid}?${params}`;
+  f.allow = 'autoplay; encrypted-media';
+  f.referrerPolicy = 'strict-origin-when-cross-origin';
+  f.title = 'Lecteur audio';
+  f.tabIndex = -1;
+  // Comme l'API officielle : on se signale jusqu'à ce que le lecteur réponde.
+  const hello = () => { try { f.contentWindow?.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*'); } catch { /* pas encore prêt */ } };
+  f.addEventListener('load', hello);
+  player.listen = setInterval(hello, 300);
+  $('#ytHost').replaceChildren(f);
+  player.frame = f;
+  later(() => { if (!player.ready) playerBlocked('La page bloque le lecteur YouTube.'); }, 8000);
+  renderMini();
+}
+
+function onPlayerReady() {
+  if (player.ready) return;
+  player.ready = true;
+  clearInterval(player.listen);
+  player.status = 'ready';
+  // Lecture auto refusée (souvent sur iPhone) : on relance, puis on demande un toucher.
+  later(() => { if (!isPlaying() && player.state !== 0 && player.state !== 2) ytSend('playVideo'); }, 1800);
+  later(() => { if (!isPlaying() && player.state !== 0 && player.state !== 2) { player.status = 'tap'; renderMini(); } }, 4200);
+  renderMini();
+}
+
+function togglePlay() {
+  if (!player.frame) { if (player.item) playItem(player.item); return; }
+  if (isPlaying()) { ytSend('pauseVideo'); player.state = 2; renderMini(); return; }
+  if (player.state === 0) ytSend('seekTo', [0, true]);
+  ytSend('playVideo');
+  if (player.status === 'tap') {
+    later(() => { if (!isPlaying()) playerBlocked('Ton navigateur bloque la lecture dans cette page.'); }, 2500);
+  }
+}
+
+function playerBlocked(msg) {
+  playerReset();
+  player.status = 'blocked';
+  player.message = msg;
+  renderMini();
+}
+
+function stopPlayer() {
+  playerReset();
+  Object.assign(player, { item: null, vid: null, status: 'idle' });
+  renderMini();
+}
+
+window.addEventListener('message', (e) => {
+  if (!player.frame || e.source !== player.frame.contentWindow) return;
+  if (!/^https:\/\/(?:www\.)?youtube(?:-nocookie)?\.com$/.test(e.origin)) return;
+  let d = e.data;
+  if (typeof d === 'string') { try { d = JSON.parse(d); } catch { return; } }
+  if (!d || typeof d !== 'object') return;
+  if (d.event === 'onReady' || d.event === 'initialDelivery') onPlayerReady();
+  if ((d.event === 'infoDelivery' || d.event === 'initialDelivery') && d.info && typeof d.info === 'object') {
+    const i = d.info;
+    if (typeof i.playerState === 'number') player.state = i.playerState;
+    if (typeof i.currentTime === 'number') player.time = i.currentTime;
+    if (typeof i.duration === 'number' && i.duration > 0) player.dur = i.duration;
+    if (!player.ready && (i.playerState === 1 || typeof i.currentTime === 'number')) onPlayerReady();
+  }
+  if (d.event === 'onStateChange' && typeof d.info === 'number') player.state = d.info;
+  if (d.event === 'onError') { playerBlocked(YT_ERRORS[d.info] || 'Lecture impossible ici.'); return; }
+  if (isPlaying() && player.status !== 'ready') player.status = 'ready';
+  renderMini();
+});
+
+function renderMini() {
+  const mini = $('#mini');
+  const on = Boolean(player.item);
+  document.body.classList.toggle('has-mini', on);
+  if (!on) {
+    mini.classList.remove('show');
+    later(() => { if (!player.item) mini.hidden = true; }, 320);
+  } else if (mini.hidden) {
+    mini.hidden = false;
+    requestAnimationFrame(() => mini.classList.add('show'));
+  }
+  if (on) {
+    const playing = isPlaying();
+    mini.classList.toggle('playing', playing);
+    mini.classList.toggle('blocked', player.status === 'blocked');
+    $('#miniTitle').textContent = player.item.title || 'Prod';
+    const sub = player.status === 'blocked' ? player.message
+      : player.status === 'loading' ? 'Chargement…'
+      : player.status === 'tap' && !playing ? 'Touche ▶ pour lancer le son'
+      : player.state === 0 ? 'Terminé'
+      : `${fmtTime(player.time)} / ${fmtTime(player.dur)}`;
+    $('#miniSub').textContent = sub;
+    const pct = player.dur ? Math.min(100, (player.time / player.dur) * 100) : 0;
+    $('#miniFill').style.width = `${pct}%`;
+    $('#miniBar').setAttribute('aria-valuenow', String(Math.round(pct)));
+    const ext = $('#miniExt');
+    ext.hidden = player.status !== 'blocked';
+    ext.href = player.item.url || `https://www.youtube.com/watch?v=${player.vid}`;
+    const tg = $('#miniToggle');
+    tg.hidden = player.status === 'blocked';
+    tg.setAttribute('aria-label', playing ? 'Pause' : 'Lecture');
+  }
+  $$('.card[data-vid]').forEach((c) => {
+    const me = on && c.dataset.vid === player.vid && player.status !== 'blocked';
+    c.classList.toggle('playing', me);
+    c.classList.toggle('paused', me && !isPlaying());
+  });
+}
+
+$('#miniToggle').addEventListener('click', togglePlay);
+$('#miniClose').addEventListener('click', stopPlayer);
+function seekFromBar(clientX) {
+  if (!player.dur || !player.frame) return;
+  const r = $('#miniBar').getBoundingClientRect();
+  const t = Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * player.dur;
+  player.time = t;
+  ytSend('seekTo', [t, true]);
+  renderMini();
+}
+$('#miniBar').addEventListener('click', (e) => seekFromBar(e.clientX));
+$('#miniBar').addEventListener('keydown', (e) => {
+  if (!player.dur || !player.frame) return;
+  const step = e.key === 'ArrowRight' ? 5 : e.key === 'ArrowLeft' ? -5 : 0;
+  if (!step) return;
+  e.preventDefault();
+  player.time = Math.max(0, Math.min(player.dur, player.time + step));
+  ytSend('seekTo', [player.time, true]);
+  renderMini();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' || !player.item || player.status === 'blocked') return;
+  if (e.target.closest('input, textarea, select, button, [contenteditable], [role="button"], [role="slider"]')) return;
+  e.preventDefault();
+  togglePlay();
+});
 
 let lastFocus = null;
 function openDrawer(title, nodes) {
@@ -308,9 +488,10 @@ function openBeat(item, plan) {
     verdictBox(r.license, item.status === 'unread'),
     h('div', {}, h('h3', { class: 'd-title' }, item.title), h('p', { class: 'd-meta' }, [item.views ? `${item.views} vues` : null, item.age].filter(Boolean).join(' · ') || 'YouTube')),
     h('div', { class: 'd-actions' },
-      item.url ? h('a', { class: 'primary', href: item.url, target: '_blank', rel: 'noopener' }, icon('play'), 'Écouter sur YouTube') : null,
+      ytIdOf(item) ? h('button', { type: 'button', class: 'primary', onclick: () => playItem(item) }, icon('play'), 'Écouter') : null,
       saveBtn,
       item.url ? h('button', { type: 'button', class: 'ghost', onclick: () => copyText(item.url) }, 'Copier le lien') : null),
+    item.url ? h('a', { class: 'link d-yt', href: item.url, target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube', icon('ext')) : null,
     ...beatDetails(item, r, findTerms()),
     claude,
   ]);

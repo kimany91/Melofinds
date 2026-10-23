@@ -164,3 +164,33 @@ test('réel : « [FREE] … free for Non Profit use only… purchase/lease to up
   assert.equal(r.category, 'fnp');
   assert.equal(r.confidence, 'haute');
 });
+
+// --- « YouTube / SoundCloud only » = pas libre pour Spotify ------------------
+
+test('« soundcloud and youtube only » dans la description → pas free for profit (titre trompeur)', () => {
+  const T = '[FREE FOR PROFIT] Lucki x Summrs Type Beat - "Lost"';
+  for (const d of [
+    'Soundcloud and youtube only',
+    'This beat is free for profit\nSoundcloud and Youtube only !',
+    'YouTube & SoundCloud only. Buy a lease for Spotify: link',
+    'Free for YouTube/SoundCloud use only',
+    'For non-monetized YouTube videos only',
+    'Only allowed on YouTube and SoundCloud',
+    'Usage: youtube, soundcloud, tiktok only',
+    'Uniquement youtube et soundcloud',
+    'Pour youtube / soundcloud seulement',
+    'You can only use it on youtube and soundcloud',
+    'free for profit up to 5000 streams, soundcloud & youtube only',
+  ]) {
+    const r = analyzeLicense(T, d);
+    assert.equal(r.category, 'fnp', d);
+    assert.equal(r.misleading, true, d);
+  }
+});
+
+test('YouTube / SoundCloud cités sans « only » → reste free for profit', () => {
+  const T = '[FREE FOR PROFIT] Type Beat';
+  assert.equal(cat(T, 'Free for profit, use it on spotify, youtube, soundcloud, anywhere'), 'ffp');
+  assert.equal(cat(T, 'Subscribe to my youtube! Follow my soundcloud. Free for profit, no credit needed'), 'ffp');
+  assert.equal(cat(T, 'Free for profit: allowed on Spotify, Apple Music, YouTube, SoundCloud. Not for youtube only'), 'ffp');
+});

@@ -451,3 +451,60 @@ body.mobile .plan-grid { grid-template-columns: 1fr; }
 body.mobile .recognized { justify-content: flex-start; }
 body.mobile .rec { flex-wrap: wrap; }
 body.mobile .a-filter { font-size: 16px; }
+
+/* =========================================================
+   Lecteur intégré : YouTube invisible + mini-barre
+   ========================================================= */
+.mini[hidden], .mini [hidden] { display: none !important; }
+.yt-host { position: fixed; left: 0; bottom: 0; width: 200px; height: 200px; opacity: 0; pointer-events: none; z-index: -1; overflow: hidden; }
+.yt-host iframe { width: 200px; height: 200px; border: 0; }
+
+button.cover { width: 100%; border: 0; padding: 0; margin: 0; font: inherit; text-align: left; cursor: pointer; }
+.play .eq { display: none; gap: 3px; align-items: flex-end; height: 18px; }
+.play .eq i { width: 4px; height: 100%; border-radius: 2px; background: currentColor; transform-origin: bottom; animation: eq .9s ease-in-out infinite; }
+.play .eq i:nth-child(2) { animation-delay: -.3s; }
+.play .eq i:nth-child(3) { animation-delay: -.6s; }
+.play svg + svg { display: none; }
+.card.playing .play { opacity: 1; transform: scale(1); background: var(--accent); color: var(--on-accent); }
+.card.playing:not(.paused) .play > svg { display: none; }
+.card.playing:not(.paused) .play .eq { display: flex; }
+.card.playing:not(.paused):hover .play .eq { display: none; }
+.card.playing:not(.paused):hover .play svg + svg { display: block; margin-left: 0; }
+.card.playing { box-shadow: 0 0 0 2px var(--accent), var(--shadow-sm); }
+.d-yt { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.d-yt svg { width: 14px; height: 14px; }
+
+.mini {
+  position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); z-index: 80;
+  display: flex; align-items: center; gap: 12px; width: min(560px, calc(100vw - 32px)); padding: 10px 10px 10px 10px;
+  border-radius: 18px; background: color-mix(in srgb, var(--panel-2) 92%, transparent); border: 1px solid var(--line-2);
+  box-shadow: var(--shadow); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  transform: translate(-50%, 30px); opacity: 0; transition: transform .4s var(--ease), opacity .3s;
+}
+.mini.show { transform: translate(-50%, 0); opacity: 1; }
+.mini-toggle { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--grad); color: #fff; box-shadow: 0 6px 18px rgba(139, 92, 246, .4); transition: transform .2s var(--ease); }
+.mini-toggle:hover { transform: scale(1.06); }
+.mini-toggle:active { transform: scale(.94); }
+.mini-toggle svg { width: 20px; height: 20px; }
+.mini-toggle .i-pause { display: none; }
+.mini.playing .mini-toggle .i-pause { display: block; }
+.mini.playing .mini-toggle .i-play { display: none; }
+.mini-toggle .i-play { margin-left: 2px; }
+.mini-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.mini-text { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.mini-text b { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-text span { flex: none; font: 600 11.5px/1 var(--f-mono); color: var(--muted); }
+.mini.blocked .mini-text { flex-direction: column; gap: 3px; }
+.mini.blocked .mini-text span { font-family: var(--f-body); font-size: 12.5px; color: var(--warn); white-space: normal; }
+.mini-bar { position: relative; height: 5px; border-radius: 3px; background: var(--line-2); cursor: pointer; }
+.mini-bar::before { content: ""; position: absolute; inset: -8px 0; }
+.mini-bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 3px; background: var(--grad); transition: width .3s linear; }
+.mini.blocked .mini-bar { display: none; }
+.mini-ext { flex: none; padding: 9px 12px; border-radius: 12px; background: var(--panel-3); color: var(--text); font-size: 13px; font-weight: 700; text-decoration: none; }
+.mini-close { flex: none; }
+body.has-mini main { padding-bottom: 96px; }
+body.has-mini .toast { bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
+body.mobile .mini { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); gap: 10px; padding: 8px; }
+body.mobile.has-mini .toast { bottom: calc(158px + env(safe-area-inset-bottom, 0px)); }
+body.mobile.has-mini main { padding-bottom: 170px; }
+@media (prefers-reduced-motion: reduce) { .play .eq i { animation: none; } .mini { transition: none; } }
