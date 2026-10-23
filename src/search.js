@@ -107,6 +107,7 @@ export async function runSearch(params, provider) {
       styles: r.styles,
       moods: r.moods,
       isBeat: r.isBeat,
+      keyLines: r.keyLines,
       score: r.score,
     };
   });

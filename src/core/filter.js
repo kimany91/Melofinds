@@ -1,6 +1,31 @@
 // Filtres et tris appliqués aux résultats (côté navigateur : instantané).
 
 import { CATEGORY_ORDER } from './license.js';
+import { normalize } from './text.js';
+
+/**
+ * Recherche dans les descriptions : « spotify wav », « "free for profit" »,
+ * « drill -lease » (le « - » exclut un mot).
+ */
+export function parseTextQuery(q = '') {
+  const include = [];
+  const exclude = [];
+  const re = /(-?)"([^"]+)"|(-?)(\S+)/g;
+  let m;
+  while ((m = re.exec(q))) {
+    const neg = m[1] || m[3];
+    const term = normalize(m[2] ?? m[4]).trim();
+    if (!term || term === '-') continue;
+    (neg ? exclude : include).push(term);
+  }
+  return { include, exclude };
+}
+
+export function matchesText(r, parsed) {
+  if (!parsed || (!parsed.include.length && !parsed.exclude.length)) return true;
+  const hay = normalize(`${r.title}\n${r.channel || ''}\n${r.description || ''}`);
+  return parsed.include.every((t) => hay.includes(t)) && !parsed.exclude.some((t) => hay.includes(t));
+}
 
 /**
  * @param {object[]} results  vidéos analysées
@@ -10,16 +35,19 @@ import { CATEGORY_ORDER } from './license.js';
  *   bpm:        { enabled, min, max, requireBpm }
  *   style:      id de courant ('' = tous)
  *   noCredit:   true = écarter les prods où le crédit est obligatoire
+ *   text:       recherche dans titre + description
  *   beatsOnly:  true = écarter ce qui ne ressemble pas à une prod
  */
 export function filterResults(results, f = {}) {
   const licenses = new Set(f.licenses?.length ? f.licenses : CATEGORY_ORDER);
+  const parsed = f.text ? parseTextQuery(f.text) : null;
   return results.filter((r) => {
     if (f.beatsOnly !== false && !r.isBeat) return false;
     if (!licenses.has(r.license.category)) return false;
     if (r.license.category === 'upto' && f.uptoMin && (r.license.limit || 0) < f.uptoMin) return false;
     if (f.noCredit && r.license.creditRequired) return false;
     if (f.style && !r.styles.some((s) => s.id === f.style)) return false;
+    if (parsed && !matchesText(r, parsed)) return false;
     if (f.bpm?.enabled) {
       if (r.bpm == null) return !f.bpm.requireBpm;
       if (f.bpm.min && r.bpm < f.bpm.min) return false;

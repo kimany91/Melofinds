@@ -1,6 +1,6 @@
 // Analyse d'une vidéo : licence, BPM, tonalité, courants, pertinence.
 
-import { analyzeLicense } from './license.js';
+import { analyzeLicense, extractKeyLines } from './license.js';
 import { extractBpm, extractKey } from './bpm.js';
 import { classifyStyles, classifyMoods } from './planner.js';
 import { normalize, hasWord } from './text.js';
@@ -47,5 +47,6 @@ export function analyzeVideo(video, plan) {
   if (video.views) score += Math.min(8, Math.log10(video.views + 1) * 1.3);
   if (!isBeat) score -= 30;
 
-  return { ...video, license, bpm, key, styles, moods, isBeat, score: Math.round(score * 10) / 10 };
+  const keyLines = extractKeyLines(description);
+  return { ...video, license, bpm, key, styles, moods, isBeat, keyLines, score: Math.round(score * 10) / 10 };
 }

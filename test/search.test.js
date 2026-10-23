@@ -64,3 +64,25 @@ test('utilitaires', () => {
   assert.equal(parseViews('1.2M views'), 1200000);
   assert.equal(parseViews('3,456 views'), 3456);
 });
+
+test('recherche dans les descriptions (mots, phrases, exclusions)', async () => {
+  const { parseTextQuery } = await import('../src/core/filter.js');
+  assert.deepEqual(parseTextQuery('spotify "free for profit" -lease'), { include: ['spotify', 'free for profit'], exclude: ['lease'] });
+  const mk = (id, description) => ({ id, title: 'beat', description, isBeat: true, score: 0, styles: [], license: { category: 'ffp' } });
+  const rs = [mk('a', 'Spotify OK, WAV free'), mk('b', 'Spotify: buy a lease'), mk('c', 'nothing')];
+  assert.deepEqual(filterResults(rs, { text: 'spotify' }).map((r) => r.id), ['a', 'b']);
+  assert.deepEqual(filterResults(rs, { text: 'spotify -lease' }).map((r) => r.id), ['a']);
+});
+
+test('démo : titres trompeurs écartés de Free for profit', async () => {
+  const out = await runSearch({ prompt: 'Lil Baby Gunna Lil Uzi', licenses: ['ffp'], device: 'desktop', depth: 'approfondie' }, createDemoProvider());
+  const baby = out.results.find((r) => r.id === 'demo-baby1');
+  const gunna = out.results.find((r) => r.id === 'demo-gunna1');
+  const uzi = out.results.find((r) => r.id === 'demo-uzi3');
+  assert.equal(baby.license.category, 'fnp');
+  assert.equal(baby.license.misleading, true);
+  assert.equal(gunna.license.misleading, true);
+  assert.equal(uzi.license.category, 'ffp');
+  assert.equal(uzi.license.confidence, 'haute');
+  assert.ok(baby.keyLines.some((l) => /Spotify/.test(l.text)));
+});

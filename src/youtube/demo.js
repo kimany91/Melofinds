@@ -63,6 +63,12 @@ export const DEMO_VIDEOS = [
     'FREE FOR PROFIT (5k streams), then purchase a license\n142 BPM'),
   V('babyface1', 'Babyface Ray Type Beat "Motor City" | Detroit Type Beat', 'det.keys (démo)', 9600, '2026-07-21',
     'Leases: $20 / $40 / $100 exclusive\nBPM 100'),
+  V('baby1', '[FREE FOR PROFIT] Lil Baby Type Beat "Real Story" | Melodic Trap 2026', 'trapwave (démo)', 54300, '2026-10-08',
+    'Thanks for listening 🙏\nThis beat is free for non-profit only (YouTube, SoundCloud).\nFor Spotify / Apple Music you need to purchase a lease: https://beatstars.com/demo\n145 BPM | Key: E minor\nBusiness: trapwave@mail.com'),
+  V('gunna1', 'FREE FOR PROFIT Gunna Type Beat "Wunna Drip" | Energetic Trap', 'dripz (démo)', 26100, '2026-09-21',
+    'YouTube ✅\nSpotify ❌\nApple Music ❌\nDM me before releasing on streaming platforms.\n150 bpm'),
+  V('uzi3', '[FREE FOR PROFIT] Lil Uzi Vert Type Beat "Neon Pink" | Fast Energetic Synth', 'neonprod (démo)', 19400, '2026-10-20',
+    'FREE FOR PROFIT ✅\nSpotify ✅ Apple Music ✅ — no lease needed, just credit (prod. neon)\nBPM: 158 | Key: G# minor\nUntagged WAV on beatstars if you want to support'),
   V('song1', 'Lil Uzi Vert - Just Wanna Rock (Official Video)', 'Artiste officiel (démo)', 9000000, '2022-10-17',
     'Stream the album now.'),
 ];

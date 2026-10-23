@@ -84,6 +84,9 @@ const FFP_STRONG = [
   /no\s*need\s*to\s*(?:buy|purchase|pay|lease)/g,
   /(?:pas\s*besoin|aucun\s*besoin)\s*d'?\s*(?:acheter|payer)/g,
   /free\s*(?:for\s*)?(?:all|any)\s*(?:uses?|purposes?|platforms?)/g,
+  // Spotify ✅ / streaming: yes / ok pour spotify
+  /(?:spotify|streaming|all\s*platforms|dsps?)\s*[:\-=]?\s*(?:✅|✔|☑|💯|yes\b|ok\b|allowed|oui\b|autorise)/g,
+  /(?:ok|allowed|autorise|good)\s*(?:on|for|to\s*use\s*on|sur|pour)\s*spotify/g,
 ];
 
 const FFP_WEAK = [
@@ -113,6 +116,28 @@ const BUY_REQUIRED = [
   /(?:il\s*faut|faut|tu\s*dois|vous\s*devez|obligatoire\s*d'?)\s*(?:l'?\s*)?(?:acheter|payer|louer|prendre\s*une\s*licence)/g,
   /achat\s*(?:de\s*(?:la\s*)?licence\s*)?obligatoire/g,
 ];
+
+// La description interdit / limite Spotify & co (même si le titre dit « free for profit »)
+const SPOTIFY_NO = [
+  // Spotify ❌ / streaming: no / apple music - not allowed
+  /(?:spotify|streaming|apple\s*music|dsps?|distribution|plateformes?)\s*[:\-=]?\s*(?:❌|✖|✗|⛔|🚫|no\b|nope|non\b|not\s*(?:allowed|permitted|included)|interdit|pas\s*autorise)/g,
+  // not allowed on spotify / can't upload to spotify
+  /(?:not\s*(?:allowed|permitted)|can'?t|cannot|can\s*not|do\s*not|don'?t|forbidden\s*to)\s*(?:to\s*)?(?:upload\w*|releas\w*|put\w*|us\w*|drop\w*|distribut\w*|moneti[sz]\w*)?\s*(?:it\s*|this\s*(?:beat)?\s*)?(?:on|to|for)\s*(?:spotify|streaming|apple\s*music|dsps?|all\s*platforms)/g,
+  // free for profit ... youtube only / ffp (soundcloud only)
+  /(?:free\s*(?:for|4)?\s*profit|ffp|f4p)[^.\n]{0,40}(?:youtube|soundcloud|tiktok|instagram)\s*only/g,
+  /(?:only|uniquement|seulement)\s*(?:on|for|sur|pour)\s*(?:youtube|soundcloud|tiktok)/g,
+  // pas sur spotify / interdit sur spotify
+  /(?:pas|interdit|non\s*autorise)\s*(?:de\s*(?:le\s*)?(?:sortir|mettre|publier)\s*)?(?:sur|pour)\s*(?:spotify|les\s*plateformes|le\s*streaming)/g,
+  // contact me before releasing on spotify
+  /(?:contact|dm|email|e-mail|message|hit\s*me\s*up|hmu)\s*(?:me\s*)?[^.\n]{0,30}(?:before|to|if\s*you\s*want\s*to|avant\s*de)\s*(?:releas|upload|put|drop|us|sortir|publi)\w*[^.\n]{0,30}(?:spotify|streaming|platforms?|apple\s*music|commercial|profit|plateformes)/g,
+  // for spotify / apple music you need a lease / pour spotify il faut acheter
+  /(?:for|on|to|sur|pour)\s*(?:spotify|apple\s*music|streaming\s*(?:platforms|services|sites)?|dsps?|distrokid|tunecore|digital\s*platforms|les\s*plateformes)[^.\n|]{0,40}(?:need|must|have\s*to|requires?|required|il\s*faut|faut|dois|devez|obligatoire|=|->|→)\s*(?:to\s*)?(?:buy|purchase|get|grab|prendre)?\s*(?:a\s*|an\s*|la\s*|une\s*)?(?:buy|purchase|lease|licen[cs]e|licence|paid|pay|acheter|payer)/g,
+  // for streaming platforms buy a lease (impératif, seulement après « for / pour »)
+  /(?:for|pour)\s*(?:spotify|apple\s*music|streaming\s*(?:platforms|services|sites)?|dsps?|digital\s*platforms|les\s*plateformes)\s*[,:]?\s*(?:please\s*)?(?:buy|purchase|grab|get|achete|prends)\s*(?:a|an|the|my|une|la)?\s*(?:lease|licen[cs]e|licence)/g,
+];
+
+// « no lease needed », « sans licence »… : annule une clause d'achat
+const NO_NEED = /no\s*(?:need|lease|licen[cs]e)|without\s*(?:a\s*)?(?:lease|licen[cs]e|buying|paying)|don'?t\s*(?:need|have)\s*to|pas\s*besoin|sans\s*(?:pay|achet|licen|rien\s*payer)|not\s*required|free\s*(?:of\s*charge)?\s*(?:on|for)\s*spotify/;
 
 const FREE_ANY = [
   /\[\s*free\s*\]|\(\s*free\s*\)|\{\s*free\s*\}|「\s*free\s*」/g,
@@ -226,26 +251,40 @@ export function findStreamLimit(text) {
 
 /**
  * Analyse complète.
- * @returns {{category, label, limit, limitUnit, spotify, creditRequired, confidence, reasons: {text, quote}[]}}
+ * Principe : la DESCRIPTION fait foi. Le titre « free for profit » ne compte
+ * que si la description ne dit pas le contraire (payer pour Spotify, YouTube
+ * only, Spotify ❌…). Dans ce cas la prod est marquée « titre trompeur ».
  */
 export function analyzeLicense(title = '', description = '') {
   const full = `${title}\n${description}`;
   const norm = normalizeWithMap(full);
   const t = norm.text;
   const titleLen = normalizeWithMap(title).text.length;
+  const inTitle = (h) => h.start < titleLen;
+  const inDesc = (h) => h.start > titleLen;
   const reasons = [];
   const quote = (h) => snippet(norm, h.start, h.end);
+  const hasDescription = description.trim().length > 0;
 
   const ffpHitsAll = findAll(FFP_STRONG, t, { skipNegated: true });
   const ffpHits = ffpHitsAll.filter((h) => !h.negated);
   const ffpNegated = ffpHitsAll.filter((h) => h.negated);
   const ffpWeak = findAll(FFP_WEAK, t);
   const fnpHits = findAll(FNP, t);
-  const buyHits = findAll(BUY_REQUIRED, t);
+  // On regarde aussi un peu après la clause : « …sur Spotify sans payer ».
+  const noNeed = (h) => NO_NEED.test(t.slice(Math.max(0, h.start - 12), h.end + 25));
+  const buyHits = findAll(BUY_REQUIRED, t).filter((h) => !noNeed(h));
+  // « can't upload to Spotify without a lease » : la négation confirme la restriction.
+  const spotifyNo = findAll(SPOTIFY_NO, t).filter((h) => /not|n't|cannot|forbidden|interdit|pas|❌|✖|✗|⛔|🚫/.test(h.match[0]) || !noNeed(h));
   const limit = findStreamLimit(t);
   const creditHits = findAll(CREDIT, t);
   const paidHits = findAll(PAID, t);
-  const soldInTitle = paidHits.some((h) => h.start < titleLen && /sold|vendu/.test(h.match[0]));
+  const soldInTitle = paidHits.some((h) => inTitle(h) && /sold|vendu/.test(h.match[0]));
+
+  // Ce qui restreint l'usage commercial (surtout dans la description)
+  const restrict = [...spotifyNo, ...buyHits, ...fnpHits].sort((a, b) => a.start - b.start);
+  const ffpTitle = ffpHits.filter(inTitle);
+  const ffpDesc = ffpHits.filter(inDesc);
 
   // Les mentions « free » qui ne sont pas déjà des free for profit / non profit
   const covered = [...ffpHitsAll, ...fnpHits];
@@ -262,7 +301,7 @@ export function analyzeLicense(title = '', description = '') {
   if (soldInTitle) {
     category = 'paid';
     confidence = 'haute';
-    reasons.push({ text: 'Prod marquée « SOLD » / vendue dans le titre.', quote: quote(paidHits.find((h) => h.start < titleLen)) });
+    reasons.push({ text: 'Prod marquée « SOLD » / vendue dans le titre.', quote: quote(paidHits.find(inTitle)) });
   } else if (ffpNegated.length && !ffpHits.length) {
     category = freeHits.length || fnpHits.length ? 'fnp' : 'paid';
     confidence = 'haute';
@@ -274,26 +313,40 @@ export function analyzeLicense(title = '', description = '') {
     limitUnit = limit.unit;
     if (ffpHits.length) reasons.push({ text: 'Mention free for profit trouvée.', quote: quote(ffpHits[0]) });
     reasons.push({
-      text: `Limite détectée : gratuit jusqu’à ${formatCount(limit.value)} ${limit.unit}, ensuite il faut une licence.`,
+      text: `Limite détectée dans la description : gratuit jusqu’à ${formatCount(limit.value)} ${limit.unit}, ensuite il faut une licence.`,
       quote: quote(limit),
     });
-  } else if (ffpHits.length && buyHits.length) {
-    // « Free for profit » mais la description exige un achat pour sortir le son :
-    // la clause d'achat est plus précise, elle l'emporte.
+  } else if ((ffpHits.length || ffpWeak.length) && restrict.length) {
+    // « Free for profit » annoncé, mais la description exige de payer pour
+    // Spotify / le limite à YouTube : la clause restrictive l'emporte.
     category = 'fnp';
-    confidence = 'moyenne';
-    reasons.push({ text: 'Le titre/la description dit « free for profit »…', quote: quote(ffpHits[0]) });
-    reasons.push({ text: '…mais il faut quand même acheter une licence pour sortir le son sur les plateformes.', quote: quote(buyHits[0]) });
+    confidence = 'haute';
+    const claim = ffpHits[0] || ffpWeak[0];
+    reasons.push({ text: `${inTitle(claim) ? 'Le titre' : 'La description'} annonce « free for profit »…`, quote: quote(claim) });
+    reasons.push({ text: '…mais la description dit qu’il faut payer / qu’il n’est pas libre pour Spotify & co.', quote: quote(restrict[0]) });
   } else if (ffpHits.length) {
     category = 'ffp';
-    confidence = 'haute';
-    reasons.push({ text: 'Mention free for profit / usage commercial libre.', quote: quote(ffpHits[0]) });
-    if (ffpHits.length > 1) reasons.push({ text: `${ffpHits.length} mentions au total, aucune clause d’achat obligatoire pour sortir le son.`, quote: '' });
-  } else if (fnpHits.length || buyHits.length) {
+    if (ffpDesc.length) {
+      confidence = 'haute';
+      reasons.push({ text: 'La description confirme : free for profit / usage commercial libre.', quote: quote(ffpDesc[0]) });
+      if (ffpTitle.length) reasons.push({ text: 'Le titre dit la même chose.', quote: quote(ffpTitle[0]) });
+    } else {
+      confidence = 'moyenne';
+      reasons.push({ text: '« Free for profit » dans le titre.', quote: quote(ffpTitle[0]) });
+      reasons.push({
+        text: hasDescription
+          ? 'La description ne le confirme pas, mais ne demande pas non plus de payer. Vérifie avant de sortir le son.'
+          : 'Description vide : rien pour confirmer. Vérifie avant de sortir le son.',
+        quote: '',
+      });
+    }
+    reasons.push({ text: 'Aucune clause « payer pour Spotify » trouvée dans la description.', quote: '' });
+  } else if (restrict.length) {
     category = fnpHits.length || freeHits.length || ffpWeak.length ? 'fnp' : 'paid';
-    confidence = fnpHits.length ? 'haute' : 'moyenne';
+    confidence = fnpHits.length || spotifyNo.length ? 'haute' : 'moyenne';
     if (fnpHits.length) reasons.push({ text: 'Gratuit seulement pour un usage non-commercial.', quote: quote(fnpHits[0]) });
-    if (buyHits.length) reasons.push({ text: 'Il faut acheter une licence pour sortir le son (Spotify, streaming…).', quote: quote(buyHits[0]) });
+    const pay = [...spotifyNo, ...buyHits].sort((a, b) => a.start - b.start)[0];
+    if (pay) reasons.push({ text: 'Il faut payer une licence pour sortir le son (Spotify, streaming…).', quote: quote(pay) });
   } else if (ffpWeak.length) {
     category = 'ffp';
     confidence = 'moyenne';
@@ -317,6 +370,9 @@ export function analyzeLicense(title = '', description = '') {
     reasons.push({ text: 'Crédit du producteur obligatoire (ex. « prod. by … » dans le titre).', quote: quote(creditHits[0]) });
   }
 
+  // Titre trompeur : « free for profit » dans le titre, mais la description dit autre chose.
+  const misleading = ffpTitle.length > 0 && !['ffp', 'upto'].includes(category);
+
   const cat = CATEGORIES[category];
   return {
     category,
@@ -326,6 +382,36 @@ export function analyzeLicense(title = '', description = '') {
     spotify: cat.spotify,
     creditRequired,
     confidence,
+    misleading,
+    descriptionChecked: hasDescription,
     reasons,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Infos clés : les lignes de la description qui parlent de droits, crédit,
+// tempo, contact… (pour ne pas avoir à lire tout le pavé).
+
+const KEY_LINE_TYPES = [
+  { type: 'licence', re: /spotify|stream|profit|lease|licen[cs]e|licence|commercial|monetiz|monetis|royalty|droits?|purchase|buy\b|acheter|payer|free|gratuit|sold|exclusive|apple\s*music|distrib|youtube\s*only|soundcloud\s*only|untagged/ },
+  { type: 'credit', re: /credit|prod\.?\s*(?:by|par)|produced\s*by|tag\b/ },
+  { type: 'tempo', re: /\bbpm\b|tempo|\bkey\b|tonalite|scale|\b[a-g](?:#|b)?\s*(?:minor|major|min|maj)\b/ },
+  { type: 'contact', re: /contact|e-?mail|@[a-z0-9._-]+\.[a-z]{2,}|business|dm\b|instagram|insta\b/ },
+];
+
+export function extractKeyLines(description = '', max = 8) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of String(description).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.length < 3) continue;
+    const n = normalizeWithMap(line).text;
+    if (/^#\S+(\s+#\S+)*$/.test(n)) continue; // lignes de hashtags
+    const hit = KEY_LINE_TYPES.find((k) => k.re.test(n));
+    if (!hit || seen.has(n)) continue;
+    seen.add(n);
+    out.push({ type: hit.type, text: line.length > 220 ? `${line.slice(0, 217)}…` : line });
+    if (out.length >= max) break;
+  }
+  return out;
 }

@@ -87,3 +87,57 @@ test('les raisons citent l’extrait original de la description', () => {
   const r = analyzeLicense('Beat', 'Intro\nFREE FOR PROFIT up to 10k streams\nOutro');
   assert.ok(r.reasons.some((x) => x.quote.includes('FREE FOR PROFIT up to 10k streams')));
 });
+
+// --- Titre « free for profit » vs description : la description fait foi -----
+
+test('titre FFP mais description « free for non-profit, lease pour Spotify » → écarté + titre trompeur', () => {
+  const r = analyzeLicense('[FREE FOR PROFIT] Lil Baby Type Beat', 'This beat is free for non-profit only. Purchase a lease for Spotify.');
+  assert.equal(r.category, 'fnp');
+  assert.equal(r.misleading, true);
+  assert.equal(r.confidence, 'haute');
+});
+
+test('titre FFP mais « Spotify ❌ » dans la description', () => {
+  const r = analyzeLicense('Free For Profit Gunna Type Beat', 'YouTube ✅\nSpotify ❌\nApple Music ❌');
+  assert.equal(r.category, 'fnp');
+  assert.equal(r.misleading, true);
+});
+
+test('titre FFP mais « youtube only » / payer pour les plateformes', () => {
+  assert.equal(analyzeLicense('FREE FOR PROFIT Type Beat', 'free for profit on youtube only. For streaming platforms buy a lease.').misleading, true);
+  assert.equal(analyzeLicense('FREE FOR PROFIT Type Beat', 'Pour Spotify il faut acheter la licence').category, 'fnp');
+  assert.equal(analyzeLicense('FREE FOR PROFIT Type Beat', 'DM me before releasing on Spotify').category, 'fnp');
+  assert.equal(analyzeLicense('FREE FOR PROFIT Type Beat', 'You cannot upload this beat to Spotify without a lease').category, 'fnp');
+});
+
+test('description qui confirme → FFP confiance haute ; titre seul → confiance moyenne', () => {
+  const ok = analyzeLicense('FREE FOR PROFIT Type Beat', 'Spotify ✅ Apple Music ✅ just credit me');
+  assert.equal(ok.category, 'ffp');
+  assert.equal(ok.confidence, 'haute');
+  assert.equal(ok.misleading, false);
+  const titleOnly = analyzeLicense('FREE FOR PROFIT Type Beat', 'Instagram: @prodx');
+  assert.equal(titleOnly.category, 'ffp');
+  assert.equal(titleOnly.confidence, 'moyenne');
+});
+
+test('« sans licence / no lease needed » ne déclenche pas de faux « payant »', () => {
+  assert.equal(cat('FREE FOR PROFIT beat', 'You can upload it to Spotify, no lease needed'), 'ffp');
+  assert.equal(cat('FREE FOR PROFIT beat', 'Sur Spotify sans payer, juste crédit'), 'ffp');
+});
+
+test('titre FFP + limite dans la description → Up to (pas trompeur)', () => {
+  const r = analyzeLicense('FREE FOR PROFIT Type Beat', 'free for profit up to 10k streams, then buy a lease');
+  assert.equal(r.category, 'upto');
+  assert.equal(r.misleading, false);
+});
+
+test('infos clés extraites de la description', async () => {
+  const { extractKeyLines } = await import('../src/core/license.js');
+  const lines = extractKeyLines('🔥 New beat\nFREE FOR PROFIT up to 5k streams\nCredit: (prod. nova)\nBPM 150 | Key: A minor\nBusiness: nova@mail.com\n#trap #beat');
+  assert.deepEqual(lines.map((l) => l.type), ['licence', 'credit', 'tempo', 'contact']);
+});
+
+test('liens Spotify du producteur ≠ obligation de payer', () => {
+  assert.equal(cat('FREE FOR PROFIT Type Beat', 'Free for profit, just credit\nFollow me on Spotify: https://open.spotify.com/x | Buy untagged: beatstars.com/x'), 'ffp');
+  assert.equal(cat('FREE FOR PROFIT Type Beat', 'Free for profit\nListen to my album on Spotify'), 'ffp');
+});
