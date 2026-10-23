@@ -18,6 +18,7 @@ const MODULES = [
   'src/core/planner.js',
   'src/core/analyze.js',
   'src/core/filter.js',
+  'src/core/ytparse.js',
   'src/youtube/demo.js',
 ];
 

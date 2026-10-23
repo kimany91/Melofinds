@@ -147,3 +147,20 @@ test('« Free For Profit » en fin de titre + « 1.2K views » à la ligne suiva
   assert.equal(r.category, 'ffp');
   assert.equal(r.limit, null);
 });
+
+// --- Vraies descriptions YouTube (lues via Parallel Search) -------------------
+
+test('réel : « surpasses 5000 (5k) monetized streams… buy a license » → Up to 5K', () => {
+  const r = analyzeLicense('[FREE FOR PROFIT] Lil Uzi Vert Type Beat - "bankroll"',
+    '►BUY THIS BEAT(untagged): https://bsta.rs/33a587d4e bpm: 155 key: B min\n🕊 IMPORTANT terms / must read * MUST credit the producer: tao x jvsper * You can not content ID your songs using my beats unless you are the exclusive owner of the beat. By downloading/using this beat, you agree that whenever your song using this musical piece surpasses 5000 (5k) monetized streams or plays, you\'ll buy a license as soon as possible.');
+  assert.equal(r.category, 'upto');
+  assert.equal(r.limit, 5000);
+  assert.equal(r.creditRequired, true);
+});
+
+test('réel : « [FREE] … free for Non Profit use only… purchase/lease to upload to streaming » → Free', () => {
+  const r = analyzeLicense('[FREE] Lil Uzi Vert Type Beat "Salute Me"',
+    'Key: E Major BPM: 140 🌏 Beat https://bsta.rs/9cead7d65 Beats are free for Non Profit use only! Must Credit: (Prod. 99LA) You must purchase/lease in order to upload to streaming services. Failure to do so may result in a copyright claim.');
+  assert.equal(r.category, 'fnp');
+  assert.equal(r.confidence, 'haute');
+});

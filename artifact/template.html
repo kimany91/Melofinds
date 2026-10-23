@@ -2,177 +2,121 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700&display=swap">
 <style>
 /*__STYLE__*/
 </style>
 
-<header class="topbar">
-  <div class="brand"><span class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>Melo<b>finds</b></span></div>
-  <nav class="tabs" role="tablist" aria-label="Sections">
-    <button class="tab active" id="tab-search" data-view="search" role="tab"><i aria-hidden="true">🔎</i><span>Recherche</span></button>
-    <button class="tab" id="tab-verify" data-view="verify" role="tab"><i aria-hidden="true">📖</i><span>Vérifier</span></button>
-    <button class="tab" id="tab-list" data-view="list" role="tab"><i aria-hidden="true">🗂️</i><span>Ma liste</span><em id="listCount" class="dot" hidden></em></button>
-    <button class="tab" id="tab-history" data-view="history" role="tab"><i aria-hidden="true">🕘</i><span>Historique</span></button>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.6-9.3-9.3C1.5 7.9 3.8 4.5 7.3 4.5c2 0 3.6 1.1 4.7 2.7 1.1-1.6 2.7-2.7 4.7-2.7 3.5 0 5.8 3.4 4.6 6.7-1.8 4.7-9.3 9.3-9.3 9.3Z" fill="currentColor"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5H5V6h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5.5c0 4.3 3 7.9 7 9.5 4-1.6 7-5.2 7-9.5V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m9 12 2.2 2.2L15.5 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3.5Z" fill="currentColor"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<header class="top">
+  <button type="button" class="brand" id="brand" aria-label="Accueil Melofinds"><span class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>Melofinds</span></button>
+  <nav class="nav" role="tablist" aria-label="Sections">
+    <button class="nav-item active" type="button" data-view="search" role="tab"><svg><use href="#i-search"/></svg><span>Rechercher</span></button>
+    <button class="nav-item" type="button" data-view="saved" role="tab"><svg><use href="#i-heart"/></svg><span>Favoris</span><em class="dot" id="savedDot" hidden></em></button>
+    <button class="nav-item" type="button" data-view="history" role="tab"><svg><use href="#i-clock"/></svg><span>Historique</span></button>
   </nav>
-  <div class="top-actions">
-    <span id="syncBadge" class="sync" title="Où sont gardés ton historique et ta liste">…</span>
-    <button id="deviceBadge" class="pill-btn" type="button" title="L’algo s’adapte à ton appareil. Clique pour forcer l’autre mode.">💻 PC</button>
-  </div>
+  <button type="button" class="verify-btn" id="openVerify" title="Vérifier la licence d’une prod"><svg><use href="#i-shield"/></svg><span>Vérifier une prod</span></button>
 </header>
 
 <main>
-  <!-- ======================= RECHERCHE ======================= -->
-  <section id="view-search" class="view active" aria-labelledby="tab-search">
-    <div class="layout">
-      <aside class="sidebar">
-        <form id="searchForm" class="form-panel" autocomplete="off">
-          <button type="button" id="formToggle" class="form-toggle"><span>✏️ <b id="formToggleText">Modifier la recherche</b></span><span aria-hidden="true">▾</span></button>
-          <div class="form-body">
-            <section class="step">
-              <h3><span class="num">1</span> Décris ta prod</h3>
-              <div class="prompt-box">
-                <textarea id="prompt" rows="3" placeholder="ex. rapide, énergique et musicale&#10;ou : sombre, drill, piano, 145 bpm"></textarea>
-                <button type="button" id="clearPrompt" class="clear-btn" title="Effacer" aria-label="Effacer la description">✕</button>
-              </div>
-              <div id="suggestions" class="sugg"></div>
-              <label class="direct" for="manualQuery"><span>ou cherche directement</span>
-                <input id="manualQuery" type="text" placeholder="Lil Uzi Vert type beat" enterkeyhint="go">
-              </label>
-            </section>
+  <!-- ================= RECHERCHER ================= -->
+  <section id="view-search" class="view active">
+    <div class="hero" id="hero">
+      <h1 class="hero-title">Quelle prod tu cherches&nbsp;?</h1>
+      <p class="hero-sub">Décris la vibe. Je trouve les type beats sur YouTube et je lis chaque description pour vérifier la licence.</p>
+      <form id="searchForm" class="searchbar" autocomplete="off">
+        <svg class="sb-ico" aria-hidden="true"><use href="#i-search"/></svg>
+        <input id="prompt" type="text" placeholder="rapide, énergique et musicale…" enterkeyhint="search" aria-label="Décris ta prod">
+        <button class="go" id="goBtn" type="submit"><span>Chercher</span><svg aria-hidden="true"><use href="#i-search"/></svg></button>
+      </form>
+      <div class="chips" id="suggestions" aria-label="Suggestions"></div>
+    </div>
 
-            <section class="step">
-              <h3><span class="num">2</span> Licences voulues</h3>
-              <div class="license-grid" id="licenseGrid"></div>
-              <p class="hint">« Free for profit » ou « Up to » cochés → les recherches YouTube ajoutent <code>free for profit</code>.</p>
-            </section>
+    <div class="status" id="status" hidden>
+      <div class="status-bar"><i id="statusFill"></i></div>
+      <span id="statusText"></span>
+    </div>
+    <div id="notice"></div>
 
-            <details class="step adv" id="advBox">
-              <summary><h3><span class="num">3</span> Profondeur</h3></summary>
-              <label class="row" for="depth"><span>Nombre de recherches</span>
-                <select id="depth">
-                  <option value="">Auto</option>
-                  <option value="rapide">Rapide · 3</option>
-                  <option value="normal">Normale · 5</option>
-                  <option value="approfondie">Approfondie · 8</option>
-                </select>
-              </label>
-            </details>
-          </div>
-          <div class="cta">
-            <button type="submit" class="primary" id="goBtn">Lancer la recherche</button>
-          </div>
-        </form>
-      </aside>
-
-      <div class="results-col" id="planCol">
-        <div class="plan-head">
-          <div>
-            <p class="eyebrow">Ta recherche</p>
-            <h2 id="planTitle">Ta recherche</h2>
-          </div>
-          <button type="button" id="favNow" class="mini" hidden>☆ Mettre en favori</button>
+    <div class="results" id="results" hidden>
+      <div class="rbar" id="rbar">
+        <div class="pills" id="licPills" role="group" aria-label="Licences affichées"></div>
+        <div class="rtools">
+          <label class="find" for="findInput"><svg aria-hidden="true"><use href="#i-search"/></svg><input id="findInput" type="search" placeholder="Filtrer : spotify, wav…"></label>
+          <select id="sort" aria-label="Trier">
+            <option value="licence">Meilleure licence</option>
+            <option value="pertinence">Pertinence</option>
+            <option value="bpm-asc">BPM croissant</option>
+            <option value="bpm-desc">BPM décroissant</option>
+          </select>
+          <button type="button" class="tool-pill" id="verifiedPill" aria-pressed="false" title="Cacher les prods dont la description n’a pas pu être lue">Vérifiées seulement</button>
+          <button type="button" class="tool-pill" id="bpmPill" aria-expanded="false">BPM</button>
         </div>
-        <div id="searchStatus" class="search-status" hidden></div>
-        <div id="setupCard" class="setup" hidden></div>
-        <div id="searchIntro" class="search-intro">
-          <b>Clique sur « Lancer la recherche ».</b>
-          <span>L’algo cherche les type beats sur YouTube, ouvre chaque vidéo, lit toute sa description et te range les prods avec leur lien : Free for profit, Up to, Free, Payant.</span>
+        <div class="bpm-pop" id="bpmPop" hidden>
+          <span>Garder entre</span>
+          <input type="number" id="bpmMin" min="50" max="220" inputmode="numeric" aria-label="BPM minimum">
+          <span>et</span>
+          <input type="number" id="bpmMax" min="50" max="220" inputmode="numeric" aria-label="BPM maximum">
+          <span>BPM</span>
+          <button type="button" class="link" id="bpmClear">Retirer</button>
         </div>
-        <div id="searchBoard"></div>
-        <details class="plan-box" id="planBox" open>
-          <summary>🧠 Ce que l’algo utilise pour chercher <span id="planSummary" class="small-note"></span></summary>
-          <div id="planNotes"></div>
-          <div class="plan-grid">
-            <div class="plan-card"><h4>Ambiances</h4><div id="pMoods" class="tags"></div><div id="pInstr" class="small-note"></div></div>
-            <div class="plan-card"><h4>Courants de rap</h4><div id="pGenres" class="tags"></div></div>
-            <div class="plan-card"><h4>Artistes US « type beat »</h4><div id="pArtists" class="tags"></div></div>
-            <div class="plan-card bpm-card"><h4>BPM conseillé</h4><div id="pBpm" class="bpm-big"></div><div id="pBpmWhy" class="small-note"></div></div>
-          </div>
-          <div class="queries-head"><h3 id="qTitle">Recherches</h3></div>
-          <ol id="queries" class="queries"></ol>
-        </details>
+      </div>
+      <p class="count" id="count"></p>
+      <div class="grid" id="grid"></div>
+      <div class="results-foot">
+        <button type="button" class="secondary" id="moreBtn"><svg aria-hidden="true"><use href="#i-plus"/></svg>Trouver plus de prods</button>
+        <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
   </section>
 
-  <!-- ======================= VÉRIFIER ======================= -->
-  <section id="view-verify" class="view" aria-labelledby="tab-verify">
-    <div class="layout verify-layout">
-      <div class="form-panel verify-form">
-        <div class="form-body">
-          <section class="step">
-            <h3><span class="num">1</span> Colle les infos de la vidéo</h3>
-            <label class="field" for="vUrl"><span>Lien YouTube <em>(facultatif)</em></span>
-              <input id="vUrl" type="url" placeholder="https://www.youtube.com/watch?v=…" inputmode="url">
-            </label>
-            <label class="field" for="vTitle"><span>Titre</span>
-              <input id="vTitle" type="text" placeholder="[FREE] Lil Uzi Vert Type Beat - “Neon” | Free For Profit">
-            </label>
-            <label class="field" for="vDesc"><span>Description complète</span>
-              <textarea id="vDesc" rows="9" placeholder="Colle ici toute la description (pense à cliquer sur « …plus » sur YouTube)"></textarea>
-            </label>
-            <p class="hint">Astuce : tu peux tout coller d’un coup dans « Titre » : la 1ʳᵉ ligne devient le titre, le reste la description.</p>
-          </section>
-          <section class="step">
-            <h3><span class="num">2</span> Ou essaie un exemple</h3>
-            <div class="tags" id="vExamples"></div>
-          </section>
-        </div>
-        <div class="cta two">
-          <button type="button" class="mini" id="vClear">Effacer</button>
-          <button type="button" class="primary" id="vAdd" disabled>➕ Ajouter à ma liste</button>
-        </div>
-      </div>
-
-      <div class="results-col">
-        <div id="vEmpty" class="verify-empty">
-          <div class="vu" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          <h2>Le titre ment souvent. La description, non.</h2>
-          <p>Beaucoup de vidéos disent « FREE FOR PROFIT » dans le titre et précisent plus bas qu’il faut acheter une licence pour Spotify. Colle le titre et la description : l’algo lit tout, ligne par ligne, et range la prod.</p>
-          <ul class="legend" id="legend"></ul>
-        </div>
-        <div id="vResult" hidden></div>
-        <div id="vClaude" class="claude-box" hidden></div>
+  <!-- ================= FAVORIS ================= -->
+  <section id="view-saved" class="view">
+    <div class="page-head">
+      <h2>Favoris</h2>
+      <div class="seg" role="tablist" aria-label="Type de favori">
+        <button type="button" class="seg-btn active" data-seg="prods">Prods <b id="nProds">0</b></button>
+        <button type="button" class="seg-btn" data-seg="searches">Recherches <b id="nSearches">0</b></button>
       </div>
     </div>
+    <div id="savedProds">
+      <div class="pills" id="savedPills" role="group" aria-label="Licences affichées"></div>
+      <div class="grid" id="savedGrid"></div>
+    </div>
+    <div id="savedSearches" class="rows" hidden></div>
   </section>
 
-  <!-- ======================= MA LISTE ======================= -->
-  <section id="view-list" class="view" aria-labelledby="tab-list">
-    <div class="list-wrap">
-      <div class="list-top">
-        <div>
-          <p class="eyebrow">Prods vérifiées</p>
-          <h2>Ma liste</h2>
-        </div>
-        <button type="button" class="primary small" id="listAdd">➕ Vérifier une prod</button>
-      </div>
-      <div id="examplesBanner" class="banner" hidden>
-        <span><b>Exemples.</b> Ta liste est vide : voici des prods fictives pour voir comment l’algo les range. Elles disparaissent dès que tu ajoutes ta première prod.</span>
-        <button type="button" class="mini" id="hideExamples">Masquer les exemples</button>
-      </div>
-      <div id="listBoard"></div>
+  <!-- ================= HISTORIQUE ================= -->
+  <section id="view-history" class="view">
+    <div class="page-head">
+      <h2>Historique</h2>
+      <button type="button" class="link danger" id="clearHistory">Tout effacer</button>
     </div>
-  </section>
-
-  <!-- ======================= HISTORIQUE ======================= -->
-  <section id="view-history" class="view" aria-labelledby="tab-history">
-    <div class="list-wrap narrow">
-      <div class="list-top">
-        <div>
-          <p class="eyebrow">Tes demandes</p>
-          <h2>Historique &amp; favoris</h2>
-        </div>
-        <div class="hist-tools">
-          <label class="row check" for="onlyFav"><input type="checkbox" id="onlyFav"> <span>⭐ Favoris seulement</span></label>
-          <button type="button" id="clearHistory" class="mini danger">Tout effacer</button>
-        </div>
-      </div>
-      <div id="historyList" class="hist-list"></div>
-    </div>
+    <div id="historyList" class="rows"></div>
   </section>
 </main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+  <div class="drawer-head">
+    <h2 id="drawerTitle"></h2>
+    <button type="button" class="icon-btn" id="drawerClose" aria-label="Fermer"><svg><use href="#i-x"/></svg></button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
 
 <div id="toast" class="toast" role="status" aria-live="polite"><span id="toastMsg"></span><button type="button" id="toastAction" hidden></button></div>
 

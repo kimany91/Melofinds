@@ -54,16 +54,16 @@ export const CATEGORY_ORDER = ['ffp', 'upto', 'fnp', 'paid', 'unknown'];
 // Briques de regex (sur texte normalisé : minuscules, sans accents, ASCII)
 
 const NUM = String.raw`(\d{1,3}(?:[.,\s]\d{3})+|\d+(?:[.,]\d+)?)\s*(k|m|mil+ions?|millions?|thousand|mille|000)?`;
-const UNIT = String.raw`(streams?|plays?|ecoutes?|listens?|views?|vues?|sales?|ventes?|units?|copies|downloads?|telechargements?)`;
+const UNIT = String.raw`(?:\(\s*[\d.,]+\s*[km]?\s*\)\s*)?(?:(?:monetized|monetised|paid|total|spotify|online|audio)\s*)?(streams?|plays?|ecoutes?|listens?|views?|vues?|sales?|ventes?|units?|copies|downloads?|telechargements?)`;
 const FFP = String.raw`(?:free|fr33|gratuit|gratos)\s*[-_]?\s*(?:for|4|fo|pour)?\s*[-_]?\s*(?:profit|commercial)`;
 
 const LIMIT_PATTERNS = [
   // up to 5k streams / jusqu'à 10 000 écoutes / max 50k plays / first 100k streams
-  new RegExp(String.raw`(?:up\s*-?\s*to|upto|until|till|max(?:imum)?|limit(?:ed)?(?:\s*(?:to|of|at|a|de))?|capped?\s*(?:at|to)?|first|jusqu\s*'?\s*(?:a|au)|<=?|maxi)\s*:?\s*${NUM}\s*${UNIT}`, 'g'),
+  new RegExp(String.raw`(?:up\s*-?\s*to|upto|until|till|max(?:imum)?(?:\s*(?:of|de))?|limit(?:ed)?(?:\s*(?:to|of|at|a|de))?|capped?\s*(?:at|to)?|first|jusqu\s*'?\s*(?:a|au)|<=?|maxi)\s*:?\s*${NUM}\s*${UNIT}`, 'g'),
   // 5k streams max / 10.000 streams limit
   new RegExp(String.raw`${NUM}\s*${UNIT}\s*(?:max(?:imum)?|limit|cap|maxi)`, 'g'),
   // after 5k streams you must buy / au-delà de 10k écoutes
-  new RegExp(String.raw`(?:after|over|above|beyond|exceed(?:ing)?|past|apres|au\s*-?\s*dela\s*de|plus\s*de|passe)\s*${NUM}\s*${UNIT}`, 'g'),
+  new RegExp(String.raw`(?:after|over|above|beyond|exceed(?:s|ing)?|surpass(?:es|ing)?|reach(?:es|ing)?|hits?|past|apres|au\s*-?\s*dela\s*de|plus\s*de|passe|depasse)\s*${NUM}\s*${UNIT}`, 'g'),
   // free for profit (5k streams) / ffp 10k streams
   new RegExp(String.raw`(?:${FFP}|ffp|f4p)[ \t]*[(\[:\-]?[ \t]*${NUM}[ \t]*${UNIT}`, 'g'),
 ];
@@ -87,12 +87,18 @@ const FFP_STRONG = [
   // Spotify ✅ / streaming: yes / ok pour spotify
   /(?:spotify|streaming|all\s*platforms|dsps?)\s*[:\-=]?\s*(?:✅|✔|☑|💯|yes\b|ok\b|allowed|oui\b|autorise)/g,
   /(?:ok|allowed|autorise|good)\s*(?:on|for|to\s*use\s*on|sur|pour)\s*spotify/g,
+  // « My beats can be used on all platforms including Spotify »
+  /(?:can|may)\s*be\s*used\s*(?:on|for|in)\s*(?:all\s*platforms|any\s*platforms?|spotify|streaming|commercial)/g,
+  /(?:use|used)\s*(?:it|them|this\s*beat)?\s*(?:for|in)\s*(?:whatever|any)\s*(?:purpose|project|thing)/g,
+  // licence YouTube « Creative Commons Attribution (réutilisation autorisée) »
+  /creative\s*commons\s*attribution/g,
 ];
 
 const FFP_WEAK = [
   /royalty\s*-?\s*free/g,
   /libres?\s*de\s*droits?/g,
   /100\s*%\s*(?:free|gratuit)(?!\s*(?:for\s*)?non)/g,
+  /\bfree\s*to\s*use\b|#\s*freetouse/g,
 ];
 
 const FNP = [
@@ -158,6 +164,8 @@ const CREDIT = [
   /(?:must|need\s*to|have\s*to|please|you\s*should|required\s*to)\s*(?:give\s*)?credit/g,
   /credit\s*(?:is\s*)?[("'\[]?\s*(?:required|needed|mandatory|me\b|the\s*producer|prod)/g,
   /\b(?:just|simply|only|juste)\s*(?:give\s*)?credit/g,
+  /(?:as\s*long\s*as|if|provided)\s*you\s*(?:give\s*(?:me\s*)?|include\s*)?credit/g,
+  /credit\s*must\s*be\s*given/g,
   /(?:put|add|include|write|mettre|mets)\s*["'(]?\s*(?:prod\.?|produced)\s*(?:by|par)/g,
   /(?:credit|credits|credite?r?)\s*(?:obligatoire|requis|svp|stp)/g,
   /(?:prod\.?|produced)\s*(?:by|par)\s*@?[\w.\- ]{2,30}\s*(?:in\s*(?:the\s*)?title|dans\s*le\s*titre)/g,

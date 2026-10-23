@@ -1,15 +1,25 @@
 (() => {
 'use strict';
-// Melofinds, version page Claude. Le moteur (buildPlan, analyzeVideo, filterResults…)
-// est chargé juste avant ce script ; ici, l'interface et la recherche automatique.
+// Melofinds, version page Claude. Le moteur (buildPlan, analyzeVideo…) est chargé
+// juste avant ce script. Ici : l'interface et la recherche YouTube via Parallel Search.
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const SVGNS = 'http://www.w3.org/2000/svg';
+function icon(name) {
+  const s = document.createElementNS(SVGNS, 'svg');
+  s.setAttribute('aria-hidden', 'true');
+  const u = document.createElementNS(SVGNS, 'use');
+  u.setAttribute('href', `#i-${name}`);
+  s.append(u);
+  return s;
+}
 const h = (tag, attrs = {}, ...kids) => {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (v == null || v === false) continue;
     if (k === 'class') el.className = v;
+    else if (k === 'style') el.setAttribute('style', v);
     else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
     else el.setAttribute(k, v === true ? '' : v);
   }
@@ -17,13 +27,8 @@ const h = (tag, attrs = {}, ...kids) => {
   return el;
 };
 
-// ---------------------------------------------------------------------------
-// Petits réglages du navigateur (onglet, formulaire en cours, filtres)
-
 const local = {
-  get(k, fallback) {
-    try { const v = localStorage.getItem(`mf.${k}`); return v == null ? fallback : JSON.parse(v); } catch { return fallback; }
-  },
+  get(k, fallback) { try { const v = localStorage.getItem(`mf.${k}`); return v == null ? fallback : JSON.parse(v); } catch { return fallback; } },
   set(k, v) { try { localStorage.setItem(`mf.${k}`, JSON.stringify(v)); } catch { /* indisponible */ } },
 };
 
@@ -34,29 +39,23 @@ function toast(msg, action) {
   const btn = $('#toastAction');
   btn.hidden = !action;
   btn.onclick = null;
-  if (action) {
-    btn.textContent = action.label;
-    btn.onclick = () => { t.classList.remove('show'); action.run(); };
-  }
+  if (action) { btn.textContent = action.label; btn.onclick = () => { t.classList.remove('show'); action.run(); }; }
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), action ? 5000 : 2000);
+  toastTimer = setTimeout(() => t.classList.remove('show'), action ? 5000 : 2200);
 }
 
 // ---------------------------------------------------------------------------
-// Données gardées : historique + ma liste (compte Claude si possible, sinon navigateur)
+// Données gardées dans le compte Claude (sinon dans ce navigateur)
 
 const state = { history: local.get('history', []), beats: local.get('beats', []) };
-const MAX = { history: 80, beats: 80 };
+const MAX = { history: 80, beats: 120 };
 const DESC_MAX = 2500;
 
 const persist = {
-  mode: 'local',
-  refs: {},
+  mode: 'local', refs: {}, timers: {},
   chain: { history: Promise.resolve(), beats: Promise.resolve() },
-  timers: {},
   async init() {
-    setSync();
     const c = window.claude;
     if (!c?.use) return;
     try {
@@ -72,23 +71,13 @@ const persist = {
           if (snap.metadata.hasPendingWrites) return;
           if (snap.exists) {
             const items = snap.data()?.items;
-            if (Array.isArray(items)) {
-              state[key] = JSON.parse(JSON.stringify(items));
-              local.set(key, state[key]);
-              renderFor(key);
-            }
-          } else if (first && state[key].length) {
-            this.save(key);
-          }
+            if (Array.isArray(items)) { state[key] = JSON.parse(JSON.stringify(items)); local.set(key, state[key]); refreshFor(key); }
+          } else if (first && state[key].length) this.save(key);
           first = false;
-        }, () => { this.mode = 'local'; setSync(); });
+        }, () => { this.mode = 'local'; });
       }
       this.mode = 'db';
-      setSync();
-    } catch {
-      this.mode = 'local';
-      setSync();
-    }
+    } catch { this.mode = 'local'; }
   },
   save(key) {
     state[key] = state[key].slice(0, MAX[key]);
@@ -98,26 +87,22 @@ const persist = {
     this.timers[key] = setTimeout(() => {
       const body = { items: state[key], updatedAt: new Date().toISOString() };
       this.chain[key] = this.chain[key].then(() => this.refs[key].set(body)).catch((e) => {
-        if (e?.code === 'quota_exceeded') toast('Ta liste est pleine : retire quelques prods.');
-        else if (['invalid_argument', 'revoked', 'not_granted'].includes(e?.code)) { this.mode = 'local'; setSync(); }
+        if (e?.code === 'quota_exceeded') toast('Tes favoris sont pleins : retires-en quelques-uns.');
+        else if (['invalid_argument', 'revoked', 'not_granted'].includes(e?.code)) this.mode = 'local';
       });
     }, 500);
   },
 };
-function setSync() {
-  $('#syncBadge').textContent = persist.mode === 'db' ? '☁️ Sauvé dans ton compte' : '💾 Sauvé dans ce navigateur';
-}
-function renderFor(key) {
-  if (key === 'history') { renderHistory(); syncFavButton(); }
-  else { listBoard.render(); searchBoard.render(); updateListCount(); }
+function refreshFor(key) {
+  if (key === 'history') { renderHistory(); renderSavedSearches(); }
+  else { renderSavedProds(); syncHearts(); }
+  updateDots();
 }
 
 // ---------------------------------------------------------------------------
-// Appareil : l'algo s'adapte (mise en page, nombre de recherches, nombre de vidéos)
+// Appareil : mise en page + volume de recherche adaptés
 
 function detectDevice() {
-  const forced = local.get('device', '');
-  if (forced === 'mobile' || forced === 'desktop') return forced;
   const ua = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   return ua || window.innerWidth < 760 ? 'mobile' : 'desktop';
 }
@@ -125,57 +110,45 @@ let device = detectDevice();
 function applyDevice() {
   document.body.classList.toggle('mobile', device === 'mobile');
   document.body.classList.toggle('desktop', device === 'desktop');
-  const forced = local.get('device', '');
-  $('#deviceBadge').textContent = `${device === 'mobile' ? '📱 Mobile' : '💻 PC'}${forced ? ' · forcé' : ''}`;
-  $('#depth option[value=""]').textContent = `Auto · ${DEPTHS[defaultDepth(device)].label.toLowerCase()} sur ${device === 'mobile' ? 'mobile' : 'PC'}`;
-  updatePlan();
 }
-$('#deviceBadge').addEventListener('click', () => {
-  local.set('device', local.get('device', '') ? '' : device === 'mobile' ? 'desktop' : 'mobile');
-  device = detectDevice();
-  applyDevice();
-  toast(device === 'mobile' ? 'Mode mobile : recherche plus légère' : 'Mode PC : recherche plus complète');
-});
 let resizeTimer;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => { const d = detectDevice(); if (d !== device) { device = d; applyDevice(); } }, 200);
 });
+const LIMITS = () => (device === 'mobile' ? { firstQueries: 3, moreQueries: 3, read: 36 } : { firstQueries: 5, moreQueries: 4, read: 60 });
 
 // ---------------------------------------------------------------------------
-// Onglets
+// Navigation
 
-const VIEWS = ['search', 'verify', 'list', 'history'];
-function showView(name, { scroll = true } = {}) {
+const VIEWS = ['search', 'saved', 'history'];
+function showView(name) {
   if (!VIEWS.includes(name)) name = 'search';
-  $$('.tab').forEach((t) => { const on = t.dataset.view === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
+  $$('.nav-item').forEach((t) => { const on = t.dataset.view === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
   local.set('view', name);
-  if (name === 'list') listBoard.render();
+  if (name === 'saved') { renderSavedProds(); renderSavedSearches(); }
   if (name === 'history') renderHistory();
-  if (scroll) window.scrollTo({ top: 0 });
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
-$$('.tab').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
+$$('.nav-item').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
+$('#brand').addEventListener('click', () => showView('search'));
 
 // ---------------------------------------------------------------------------
-// Utilitaires d'affichage
+// Outils d'affichage
 
-const GROUP_ICON = { ffp: '✅', upto: '⏳', fnp: '🎧', paid: '💸', unknown: '❓' };
-const KEYLINE_ICON = { licence: '📜', credit: '✍️', tempo: '🎚️', contact: '✉️' };
-const KW_RE = /(free\s*(?:for|4)\s*profit|non[\s-]*profit|spotify|apple\s*music|streaming|youtube\s*only|lease|licen[cs]e|licence|cr[eé]dit|untagged|up\s*to\s*[\d.,\s]+k?\s*(?:streams?|plays?)|[\d.,]+\s*k?\s*(?:streams?|plays?|écoutes)|❌|✅)/gi;
-const stripAccents = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
-const ytSearch = (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
-const YT_RE = /https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com\/(?:watch\?(?:[^\s)"'<>\]]*?&)?v=|shorts\/|live\/|embed\/)|youtu\.be\/)([\w-]{11})/g;
-function youtubeId(url) {
-  const m = String(url || '').match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/);
-  return m ? m[1] : null;
-}
+const CAT_ICON = { ffp: '✓', upto: '⏳', fnp: '♪', paid: '$', unknown: '?' };
+const SHORT = { ffp: 'Free for profit', upto: 'Up to', fnp: 'Free', paid: 'Payant', unknown: 'Inconnu' };
+const KW_RE = /(free\s*(?:for|4)\s*profit|non[\s-]*profit|spotify|apple\s*music|streaming(?:\s*services)?|youtube\s*only|lease|licen[cs]e|licence|cr[eé]dit|untagged|purchase|buy|[\d.,]+\s*k?\s*(?:\([^)]*\)\s*)?(?:monetized\s*)?(?:streams?|plays?|écoutes))/gi;
+const strip = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+const ytSearchUrl = (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
+const youtubeId = (url) => (String(url || '').match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/) || [])[1] || null;
 
 function highlight(text, terms = []) {
   const frag = document.createDocumentFragment();
   if (!text) return frag;
   const ranges = [];
-  const plain = stripAccents(text).toLowerCase();
+  const plain = strip(text).toLowerCase();
   for (const t of terms) {
     if (!t) continue;
     let i = plain.indexOf(t);
@@ -195,536 +168,207 @@ function highlight(text, terms = []) {
   return frag;
 }
 
-function verdictText(L) {
+function chipLabel(L) {
+  if (L.category === 'upto') return `Up to ${formatCount(L.limit)}`;
+  if (L.misleading) return 'Payant · titre trompeur';
+  return SHORT[L.category];
+}
+function verdictCopy(L, unread) {
+  let t; let s;
   switch (L.category) {
-    case 'ffp': return '✅ Spotify sans payer';
-    case 'upto': return `⏳ Gratuit jusqu’à ${formatCount(L.limit)} ${L.limitUnit || 'streams'}`;
-    case 'fnp': return L.misleading ? '⚠️ Payer pour Spotify' : '🎧 Gratuit hors Spotify';
-    case 'paid': return L.reasons[0]?.text.includes('SOLD') ? '⛔ Prod déjà vendue' : '💸 Licence payante';
-    default: return '❓ Licence à vérifier';
+    case 'ffp': t = 'Free for profit'; s = 'Tu peux sortir ton son sur Spotify sans payer.'; break;
+    case 'upto': t = `Gratuit jusqu’à ${formatCount(L.limit)} ${L.limitUnit || 'streams'}`; s = 'Au-delà, il faut acheter une licence.'; break;
+    case 'fnp': t = L.misleading ? 'Payer pour Spotify' : 'Free (non-profit)'; s = L.misleading ? 'Le titre dit « free for profit », mais la description demande une licence pour sortir le son.' : 'Gratuit pour YouTube / SoundCloud. Licence payante pour Spotify.'; break;
+    case 'paid': t = 'Payant'; s = 'Il faut acheter une licence, ou la prod est déjà vendue.'; break;
+    default: t = 'À vérifier'; s = 'La description ne dit rien de clair sur les droits.';
   }
+  if (unread) s = 'Description illisible : verdict d’après le titre seulement. Ouvre la vidéo pour vérifier.';
+  return { t, s };
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('Lien copié'); } catch { toast('Copie impossible ici : sélectionne le lien à la main.'); }
 }
 
-async function copyText(text, what = 'Copié') {
-  try { await navigator.clipboard.writeText(text); toast(what); } catch { toast('Copie impossible ici : sélectionne le texte à la main.'); }
+// Analyse (avec cache par prod)
+function analyzed(item, plan) {
+  const key = `${(item.description || '').length}|${item.title}|${plan ? 1 : 0}`;
+  if (item._r && item._key === key) return item._r;
+  const r = analyzeVideo({ id: item.id, title: item.title, description: item.description || '', foundBy: item.foundBy }, plan || null);
+  Object.defineProperty(item, '_r', { value: r, writable: true, enumerable: false, configurable: true });
+  Object.defineProperty(item, '_key', { value: key, writable: true, enumerable: false, configurable: true });
+  return r;
 }
-
-function analyze(beat, plan = null) {
-  return analyzeVideo({ id: beat.id, title: beat.title, description: beat.description, channel: beat.channel, views: beat.views, foundBy: beat.foundBy }, plan);
+function cardLine(item, r) {
+  if (item.status === 'unread') return { text: 'Description illisible : verdict d’après le titre.', warn: false };
+  if (r.license.misleading) return { text: '⚠ Titre trompeur : licence payante pour Spotify.', warn: true };
+  const lic = (r.keyLines || []).find((l) => l.type === 'licence');
+  if (lic) return { text: lic.text, warn: false };
+  return { text: r.license.reasons[0]?.text || '', warn: false };
 }
 
 // ---------------------------------------------------------------------------
-// Carte d'une prod
+// Carte prod (grille) + panneau de détails
 
-function renderCard(beat, r, { terms = [], open = false, big = false, example = false, actions = [] } = {}) {
-  const L = r.license;
-  const card = h('article', { class: `card cat-${L.category}${L.misleading ? ' misleading' : ''}${big ? ' big-card' : ''}` });
-  const style = r.styles?.[0]?.label || 'Type beat';
-  card.append(h('div', { class: 'cover' },
-    h('span', { class: 'ribbon' }, L.label),
-    example ? h('span', { class: 'example-tag' }, 'exemple') : null,
-    h('div', { class: 'cover-style' }, style, h('small', {}, r.key ? `🎹 ${r.key}` : (r.styles?.[1]?.label || ' '))),
-    r.bpm ? h('div', { class: 'cover-bpm' }, r.bpm, h('small', {}, 'BPM')) : h('div', { class: 'cover-bpm none' }, 'BPM ?')));
-
-  const body = h('div', { class: 'card-body' });
-  const dots = { haute: 3, moyenne: 2, faible: 1 }[L.confidence] || 1;
-  body.append(h('div', { class: 'verdict' }, verdictText(L),
-    h('span', { class: 'conf', title: `Confiance de l’algo : ${L.confidence}` }, L.confidence, h('span', { class: 'conf-dots' }, [1, 2, 3].map((i) => h('i', { class: i <= dots ? 'on' : null }))))));
-  body.append(h('h3', { class: 'title', title: beat.title },
-    beat.url ? h('a', { href: beat.url, target: '_blank', rel: 'noopener' }, beat.title || '(sans titre)') : (beat.title || '(sans titre)')));
-  const meta = [beat.channel, beat.addedAt ? `gardée le ${new Date(beat.addedAt).toLocaleDateString('fr-FR')}` : null].filter(Boolean).join(' · ');
-  if (meta) body.append(h('div', { class: 'meta' }, meta));
-  if (L.misleading) {
-    body.append(h('div', { class: 'alert' }, h('span', { 'aria-hidden': 'true' }, '⚠️'),
-      h('span', {}, h('b', {}, 'Titre trompeur. '), 'Le titre dit « free for profit », mais la description demande de payer pour sortir le son sur Spotify.')));
-  }
-  const badges = h('div', { class: 'badges' });
-  if (L.creditRequired) badges.append(h('span', { class: 'badge credit' }, '✍️ Crédit obligatoire'));
-  badges.append(h('span', { class: 'badge' }, `Spotify : ${L.spotify}`));
-  if (beat.partial) badges.append(h('span', { class: 'badge', title: 'La description complète n’a pas pu être lue : verdict sur le titre et un extrait.' }, 'extrait seulement'));
-  for (const s of (r.styles || []).slice(1)) badges.append(h('span', { class: 'badge' }, s.label));
-  body.append(badges);
-
-  const lines = r.keyLines || [];
-  if (lines.length) {
-    body.append(h('ul', { class: 'keyinfo' },
-      h('li', { class: 'keyinfo-title' }, '📋 Lu dans la description'),
-      lines.slice(0, big ? 8 : 4).map((l) => h('li', { class: l.type }, h('i', { 'aria-hidden': 'true' }, KEYLINE_ICON[l.type] || '•'), h('span', {}, highlight(l.text, terms))))));
+function isSaved(id) { return state.beats.some((b) => b.id === id); }
+function toggleSaved(item) {
+  if (isSaved(item.id)) {
+    state.beats = state.beats.filter((b) => b.id !== item.id);
+    toast('Retirée des favoris');
   } else {
-    body.append(h('div', { class: 'small-note' }, beat.description ? 'Aucune ligne sur les droits dans la description.' : 'Pas de description : l’algo n’a que le titre.'));
+    const { id, url, title, description, views, age, status } = item;
+    state.beats = [{ id, url, title, description, views, age, status, savedAt: new Date().toISOString() }, ...state.beats];
+    toast('Ajoutée aux favoris', { label: 'Voir', run: () => { showView('saved'); setSeg('prods'); } });
   }
-  card.append(body);
+  persist.save('beats');
+  syncHearts();
+  updateDots();
+  return isSaved(item.id);
+}
+function syncHearts() {
+  $$('.heart[data-id]').forEach((b) => { const on = isSaved(b.dataset.id); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+}
 
-  const details = h('div', { class: 'details', hidden: !open });
-  const fill = () => {
-    if (details.childNodes.length) return;
-    details.append(h('ul', { class: 'reasons' }, L.reasons.map((x) => h('li', {}, x.text, x.quote ? h('q', {}, highlight(x.quote, terms)) : null))));
-    if (beat.foundBy?.length) details.append(h('div', { class: 'small-note' }, `Trouvée via : ${beat.foundBy.map((q) => `« ${q} »`).join(', ')}`));
-    const pre = h('pre', {});
-    pre.append(highlight(beat.description || '(description vide)', terms));
-    details.append(h('details', { class: 'desc', open: terms.length ? true : null }, h('summary', {}, 'Description complète'), pre));
-  };
-  if (open) fill();
-  const whyBtn = h('button', { type: 'button', class: `act${open ? ' on' : ''}`, title: 'Pourquoi cette catégorie ?' }, 'ℹ️', h('span', {}, 'Pourquoi'));
-  whyBtn.addEventListener('click', () => { fill(); details.hidden = !details.hidden; whyBtn.classList.toggle('on', !details.hidden); });
-  card.append(h('div', { class: 'actions' },
-    beat.url ? h('a', { class: 'act yt-act', href: beat.url, target: '_blank', rel: 'noopener', title: 'Écouter sur YouTube' }, '▶', h('span', {}, 'YouTube')) : null,
-    whyBtn,
-    ...actions.map((a) => a()),
-    beat.url ? h('button', { type: 'button', class: 'act', title: 'Copier le lien', onclick: () => copyText(beat.url, 'Lien copié') }, '🔗', h('span', {}, 'Lien')) : null));
-  card.append(details);
+function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
+  const L = r.license;
+  const cat = L.category;
+  const card = h('article', { class: `card cat-${cat}${isNew ? ' new' : ''}${item.status === 'unread' ? ' unread' : ''}`, style: `--i:${index}` });
+  const style = r.styles?.[0]?.label || 'Type beat';
+  card.append(h('a', { class: 'cover', href: item.url || ytSearchUrl(item.title), target: '_blank', rel: 'noopener', 'aria-label': `Écouter « ${item.title} » sur YouTube` },
+    h('span', { class: 'lic-chip' }, chipLabel(L)),
+    item.status === 'unread' ? h('span', { class: 'unread-chip' }, 'non vérifiée') : null,
+    h('span', { class: 'play' }, icon('play')),
+    h('span', { class: 'cover-meta' }, style, r.key ? h('small', {}, r.key) : null),
+    r.bpm ? h('span', { class: 'cover-bpm' }, r.bpm, h('small', {}, 'BPM')) : h('span', { class: 'cover-bpm none' }, 'BPM ?')));
+  const heart = h('button', { type: 'button', class: `heart${isSaved(item.id) ? ' on' : ''}`, 'data-id': item.id, 'aria-label': 'Ajouter aux favoris', 'aria-pressed': String(isSaved(item.id)) }, icon('heart'));
+  heart.addEventListener('click', (e) => { e.stopPropagation(); toggleSaved(item); });
+  card.append(heart);
+  const line = cardLine(item, r);
+  const meta = [item.views ? `${item.views} vues` : null, item.age].filter(Boolean).join(' · ');
+  const main = h('div', { class: 'card-main', role: 'button', tabindex: '0', 'aria-label': `Détails de ${item.title}` },
+    h('h3', { class: 'title' }, item.title),
+    line.text ? h('p', { class: `line${line.warn ? ' warn' : ''}` }, line.text) : null,
+    h('div', { class: 'meta' }, h('span', {}, meta || ' '), h('span', { class: 'more' }, 'Détails →')));
+  const open = () => openBeat(item, plan);
+  main.addEventListener('click', open);
+  main.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  card.append(main);
   return card;
 }
 
-// ---------------------------------------------------------------------------
-// Tableau de prods (utilisé pour les résultats de recherche ET pour « Ma liste ») :
-// compteurs par licence cliquables, recherche dans les descriptions, tri, style, BPM.
+let lastFocus = null;
+function openDrawer(title, nodes) {
+  lastFocus = document.activeElement;
+  $('#drawerTitle').textContent = title;
+  $('#drawerBody').replaceChildren(...nodes.filter(Boolean));
+  $('#drawerBody').scrollTop = 0;
+  $('#drawer').classList.add('open');
+  $('#drawer').setAttribute('aria-hidden', 'false');
+  $('#scrim').classList.add('open');
+  setTimeout(() => $('#drawerClose').focus(), 60);
+}
+function closeDrawer() {
+  $('#drawer').classList.remove('open');
+  $('#drawer').setAttribute('aria-hidden', 'true');
+  $('#scrim').classList.remove('open');
+  lastFocus?.focus?.();
+}
+$('#drawerClose').addEventListener('click', closeDrawer);
+$('#scrim').addEventListener('click', closeDrawer);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#drawer').classList.contains('open')) closeDrawer(); });
 
-const QUICK_TERMS = ['spotify', 'crédit', 'untagged', 'wav', 'contact', '-lease'];
-
-function createBoard(root, prefix, cfg) {
-  const prefs = local.get(`${prefix}Prefs`, { off: cfg.defaultOff || [], onlyMisleading: false });
-  const savePrefs = () => local.set(`${prefix}Prefs`, prefs);
-  const id = (n) => `${prefix}-${n}`;
-  const head = h('div', { class: 'board-head' });
-  const stats = h('div', { class: 'stats' });
-  const search = h('input', { id: id('desc'), type: 'search', placeholder: 'Chercher dans les descriptions… (spotify, wav, -lease)', 'aria-label': 'Chercher dans les descriptions' });
-  const quick = h('div', { class: 'quick' });
-  const sort = h('select', { id: id('sort') },
-    h('option', { value: 'pertinence' }, 'Pertinence'), h('option', { value: 'bpm-asc' }, 'BPM ↑'), h('option', { value: 'bpm-desc' }, 'BPM ↓'),
-    h('option', { value: 'limite' }, 'Limite de streams'), h('option', { value: 'recent' }, cfg.recentLabel || 'Récentes'));
-  const styleSel = h('select', { id: id('style') }, h('option', { value: '' }, 'Tous'));
-  const bpmOn = h('input', { type: 'checkbox', id: id('bpm') });
-  const bpmMin = h('input', { type: 'number', id: id('bpmMin'), min: 50, max: 220, inputmode: 'numeric', placeholder: 'min', 'aria-label': 'BPM minimum' });
-  const bpmMax = h('input', { type: 'number', id: id('bpmMax'), min: 50, max: 220, inputmode: 'numeric', placeholder: 'max', 'aria-label': 'BPM maximum' });
-  const bpmReq = h('input', { type: 'checkbox', id: id('bpmReq') });
-  const noCredit = h('input', { type: 'checkbox', id: id('noCredit') });
-  const bpmBox = h('div', { class: 'bpm-range', hidden: true }, bpmMin, h('span', { class: 'dash' }, '→'), bpmMax,
-    h('label', { class: 'row check', for: id('bpmReq') }, bpmReq, h('span', {}, 'Cacher sans BPM')));
-  const count = h('p', { class: 'count' });
-  const results = h('div', {});
-  const controls = h('div', {},
-    stats,
-    h('div', { class: 'toolbar' },
-      h('div', { class: 'search-desc' }, h('span', { class: 'ico', 'aria-hidden': 'true' }, '🔎'), search),
-      quick,
-      h('div', { class: 'tools' },
-        h('label', { for: id('sort') }, h('span', {}, 'Tri'), sort),
-        h('label', { for: id('style') }, h('span', {}, 'Style'), styleSel))),
-    h('div', { class: 'bpm-bar' },
-      h('label', { class: 'switch-row', for: id('bpm') }, h('span', { class: 'switch' }, bpmOn, h('span', { class: 'slider' })), h('span', {}, 'Trier / filtrer par BPM')),
-      bpmBox,
-      h('label', { class: 'row check', for: id('noCredit') }, noCredit, h('span', {}, 'Cacher si crédit obligatoire'))),
-    count);
-  root.append(head, controls, results);
-
-  for (const term of QUICK_TERMS) {
-    quick.append(h('button', {
-      type: 'button', class: 'chip', 'data-term': term,
-      title: term.startsWith('-') ? `Cacher les prods dont la description contient « ${term.slice(1)} »` : `Prods dont la description contient « ${term} »`,
-      onclick: () => {
-        const words = search.value.split(/\s+/).filter(Boolean);
-        const i = words.indexOf(term);
-        if (i >= 0) words.splice(i, 1); else words.push(term);
-        search.value = words.join(' ');
-        render();
-      },
-    }, term.startsWith('-') ? `sans ${term.slice(1)}` : term));
-  }
-  let t;
-  search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(render, 120); });
-  [sort, styleSel, bpmReq, noCredit].forEach((el) => el.addEventListener('change', render));
-  [bpmMin, bpmMax].forEach((el) => el.addEventListener('input', render));
-  bpmOn.addEventListener('change', () => {
-    bpmBox.hidden = !bpmOn.checked;
-    if (bpmOn.checked) {
-      if (!bpmMin.value && !bpmMax.value && cfg.bpmRange?.()) { bpmMin.value = cfg.bpmRange().min; bpmMax.value = cfg.bpmRange().max; }
-      if (sort.value === 'pertinence') sort.value = 'bpm-asc';
-    } else if (sort.value.startsWith('bpm')) sort.value = 'pertinence';
-    render();
+function verdictBox(L, unread) {
+  const v = verdictCopy(L, unread);
+  return h('div', { class: `verdict cat-${L.category}` }, h('span', { class: 'verdict-ico', 'aria-hidden': 'true' }, CAT_ICON[L.category]), h('div', {}, h('b', {}, v.t), h('span', {}, v.s)));
+}
+function beatDetails(item, r, terms = []) {
+  const L = r.license;
+  const facts = [
+    r.bpm ? h('span', { class: 'fact mono' }, `${r.bpm} BPM`) : null,
+    r.key ? h('span', { class: 'fact mono' }, r.key) : null,
+    L.creditRequired ? h('span', { class: 'fact' }, 'Crédit obligatoire') : null,
+    ...(r.styles || []).map((s) => h('span', { class: 'fact' }, s.label)),
+  ].filter(Boolean);
+  return [
+    facts.length ? h('div', { class: 'd-sec' }, h('h4', {}, 'La prod'), h('div', { class: 'facts' }, facts)) : null,
+    h('div', { class: `d-sec cat-${L.category}` }, h('h4', {}, 'Pourquoi ce verdict'),
+      h('ul', { class: 'reasons' }, L.reasons.map((x) => h('li', {}, x.text, x.quote ? h('q', {}, highlight(x.quote, terms)) : null)))),
+    item.description ? h('div', { class: `d-sec cat-${L.category}` }, h('h4', {}, 'Description de la vidéo'), h('pre', { class: 'desc' }, highlight(item.description, terms))) : null,
+  ];
+}
+function openBeat(item, plan) {
+  const r = analyzed(item, plan);
+  const saveBtn = h('button', { type: 'button', class: `ghost${isSaved(item.id) ? ' on' : ''}` }, icon('heart'), isSaved(item.id) ? 'Dans tes favoris' : 'Ajouter aux favoris');
+  saveBtn.addEventListener('click', () => {
+    const on = toggleSaved(item);
+    saveBtn.classList.toggle('on', on);
+    saveBtn.replaceChildren(icon('heart'), on ? 'Dans tes favoris' : 'Ajouter aux favoris');
   });
-
-  function setOff(list) { prefs.off = [...list]; prefs.onlyMisleading = false; savePrefs(); }
-
-  function render() {
-    const src = cfg.source();
-    root.hidden = !src.items.length && !src.showEmpty;
-    head.replaceChildren(...(cfg.head ? cfg.head(src) : []));
-    controls.hidden = !src.items.length;
-    const plan = src.plan || null;
-    const rows = src.items.map((beat, i) => {
-      const r = analyze(beat, plan);
-      if (src.manual) r.isBeat = true;
-      return { ...r, _beat: beat, addedOrder: i };
-    }).filter((r) => r.isBeat);
-
-    const off = new Set(prefs.off);
-    const counts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0]));
-    rows.forEach((r) => counts[r.license.category]++);
-    const misleading = rows.filter((r) => r.license.misleading).length;
-    const tiles = CATEGORY_ORDER.map((c) => h('button', {
-      type: 'button', class: `stat cat-${c}${off.has(c) || prefs.onlyMisleading ? ' off' : ''}`,
-      'aria-pressed': String(!off.has(c)), title: off.has(c) ? 'Afficher' : 'Masquer',
-      onclick: () => { if (off.has(c)) off.delete(c); else off.add(c); setOff(off); render(); },
-    }, h('b', {}, counts[c]), h('span', {}, `${GROUP_ICON[c]} ${CATEGORIES[c].label}`)));
-    if (misleading) {
-      tiles.push(h('button', {
-        type: 'button', class: `stat cat-warn${prefs.onlyMisleading ? '' : ' off'}`,
-        title: 'Titre « free for profit » mais la description demande de payer pour Spotify',
-        onclick: () => { prefs.onlyMisleading = !prefs.onlyMisleading; savePrefs(); render(); },
-      }, h('b', {}, misleading), h('span', {}, '⚠️ Titres trompeurs')));
-    }
-    stats.replaceChildren(...tiles);
-
-    const prev = styleSel.value;
-    const styles = stylesIn(rows);
-    styleSel.replaceChildren(h('option', { value: '' }, 'Tous'), ...styles.map((s) => h('option', { value: s.id }, `${s.label} (${s.count})`)));
-    styleSel.value = styles.some((s) => s.id === prev) ? prev : '';
-
-    const text = search.value.trim();
-    const f = {
-      licenses: prefs.onlyMisleading ? CATEGORY_ORDER : CATEGORY_ORDER.filter((c) => !off.has(c)),
-      noCredit: noCredit.checked,
-      style: styleSel.value,
-      text,
-      bpm: { enabled: bpmOn.checked, min: Number(bpmMin.value) || null, max: Number(bpmMax.value) || null, requireBpm: bpmReq.checked },
-    };
-    let filtered = filterResults(rows, f);
-    if (prefs.onlyMisleading) filtered = filtered.filter((r) => r.license.misleading);
-    const sorted = sort.value === 'recent' ? [...filtered].sort((a, b) => a.addedOrder - b.addedOrder) : sortResults(filtered, sort.value);
-    const groups = groupByCategory(sorted);
-    const terms = text ? parseTextQuery(text).include : [];
-    const quickOn = new Set(text.split(/\s+/));
-    $$('.chip', quick).forEach((c) => c.classList.toggle('on', quickOn.has(c.dataset.term)));
-    const hiddenN = rows.length - filtered.length;
-    count.textContent = rows.length ? `${filtered.length} prod(s) affichée(s)${hiddenN ? ` · ${hiddenN} masquée(s) par tes filtres (clique sur une catégorie pour l’afficher)` : ''}` : '';
-
-    if (!rows.length) { results.replaceChildren(...(src.empty ? [src.empty()] : [])); return; }
-    if (!groups.length) {
-      results.replaceChildren(h('div', { class: 'nores' }, h('div', { style: 'font-size:34px' }, '🫥'), h('h3', {}, 'Aucune prod avec ces filtres'),
-        h('p', {}, text ? `Aucune description ne contient « ${text} ». ` : '', 'Clique sur une catégorie en haut pour l’afficher, ou élargis la plage BPM.')));
-      return;
-    }
-    results.replaceChildren(...groups.map((g) => h('section', { class: `group cat-${g.category}` },
-      h('div', { class: 'group-head' },
-        h('span', { class: 'gico', 'aria-hidden': 'true' }, GROUP_ICON[g.category]),
-        h('div', {}, h('h2', {}, CATEGORIES[g.category].label, h('small', {}, g.items.length)), h('p', {}, CATEGORIES[g.category].help))),
-      h('div', { class: 'grid' }, g.items.map((r) => renderCard(r._beat, r, { terms, example: src.example, actions: cfg.actions ? cfg.actions(r._beat, src) : [] }))))));
-  }
-  return { render, setOff };
+  const claude = sampleFn && item.description ? h('div', { class: 'claude-ask' }, 'Une tournure bizarre ? ', h('button', { type: 'button', class: 'link', onclick: (e) => askClaude(item, e.currentTarget.parentElement) }, 'Demander l’avis de Claude')) : null;
+  openDrawer('Détails de la prod', [
+    verdictBox(r.license, item.status === 'unread'),
+    h('div', {}, h('h3', { class: 'd-title' }, item.title), h('p', { class: 'd-meta' }, [item.views ? `${item.views} vues` : null, item.age].filter(Boolean).join(' · ') || 'YouTube')),
+    h('div', { class: 'd-actions' },
+      item.url ? h('a', { class: 'primary', href: item.url, target: '_blank', rel: 'noopener' }, icon('play'), 'Écouter sur YouTube') : null,
+      saveBtn,
+      item.url ? h('button', { type: 'button', class: 'ghost', onclick: () => copyText(item.url) }, 'Copier le lien') : null),
+    ...beatDetails(item, r, findTerms()),
+    claude,
+  ]);
 }
 
 // ---------------------------------------------------------------------------
-// RECHERCHE : formulaire + plan
-
-const SUGGESTIONS = [
-  ['Vibe', ['rapide', 'énergique', 'musicale', 'sombre', 'triste', 'agressif', 'chill', 'planant', 'bouncy', 'joyeux']],
-  ['Style', ['drill', 'rage', 'jerk', 'pluggnb', 'boom bap', 'detroit', 'phonk']],
-  ['Instru', ['piano', 'guitare', 'synthé', 'cloches', 'violon']],
-  ['Artiste', ['Lil Uzi', 'Pop Smoke', 'Travis Scott', 'Ken Carson', 'Gunna']],
-];
-const LICENSES = [
-  ['ffp', '✅', 'Free for profit', 'Spotify sans payer'],
-  ['upto', '⏳', 'Up to', 'Gratuit jusqu’à X streams'],
-  ['fnp', '🎧', 'Free', 'Non-profit, payer pour Spotify'],
-  ['paid', '💸', 'Payant', 'Lease / exclu'],
-];
-const promptEl = $('#prompt');
-
-for (const [label, words] of SUGGESTIONS) {
-  $('#suggestions').append(h('div', { class: 'sugg-row' }, h('b', {}, label), words.map((w) => h('button', {
-    type: 'button', class: 'chip', 'data-word': w, onclick: () => toggleWord(w),
-  }, w))));
-}
-for (const [lid, ico, label, sub] of LICENSES) {
-  $('#licenseGrid').append(h('label', { class: `lic cat-${lid}`, for: `lic-${lid}` },
-    h('input', { type: 'checkbox', name: 'lic', value: lid, id: `lic-${lid}` }),
-    h('span', { class: 'lic-ico', 'aria-hidden': 'true' }, ico),
-    h('span', {}, h('b', {}, label), h('small', {}, sub))));
-}
-
-function toggleWord(w) {
-  const parts = promptEl.value.split(',').map((p) => p.trim()).filter(Boolean);
-  const i = parts.findIndex((p) => p.toLowerCase() === w.toLowerCase());
-  if (i >= 0) parts.splice(i, 1); else parts.push(w);
-  promptEl.value = parts.join(', ');
-  updatePlan();
-}
-function syncChips() {
-  const txt = ` ${stripAccents(promptEl.value.toLowerCase())} `;
-  $$('#suggestions .chip').forEach((c) => {
-    const w = stripAccents(c.dataset.word.toLowerCase()).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    c.classList.toggle('on', new RegExp(`[^a-z]${w}[^a-z]`).test(txt));
-  });
-}
-
-function readForm() {
-  return {
-    prompt: promptEl.value.trim(),
-    manualQuery: $('#manualQuery').value.trim(),
-    licenses: $$('input[name=lic]:checked').map((i) => i.value),
-    depth: $('#depth').value,
-  };
-}
-function writeForm(f) {
-  promptEl.value = f.prompt || '';
-  $('#manualQuery').value = f.manualQuery || '';
-  const lic = new Set(f.licenses || []);
-  $$('input[name=lic]').forEach((i) => { i.checked = lic.has(i.value); });
-  $('#depth').value = f.depth || '';
-  updatePlan();
-}
-
-let currentPlan = null;
-function updatePlan() {
-  const f = readForm();
-  currentPlan = buildPlan(f.prompt, { licenses: f.licenses, device, depth: f.depth || undefined, manualQuery: f.manualQuery });
-  renderPlan(currentPlan, f);
-  syncChips();
-  syncFavButton();
-  local.set('form', f);
-}
-
-function renderPlan(plan, f) {
-  const hasInput = !!(f.prompt || f.manualQuery);
-  if (!lastSearch) $('#planTitle').textContent = hasInput ? (f.prompt || f.manualQuery) : 'Décris ta prod à gauche';
-  $('#planSummary').textContent = `· ${plan.genres.map((g) => g.label).join(', ')} · ${plan.bpmRange.min}–${plan.bpmRange.max} BPM`;
-  $('#planNotes').replaceChildren(...(hasInput ? plan.notes : []).map((n) => h('div', { class: 'note' }, '⚠️ ', n)));
-  $('#pMoods').replaceChildren(...(plan.moods.length
-    ? plan.moods.map((m) => h('span', { class: 'tag', title: `mots reconnus : ${m.matched.join(', ')}` }, m.label))
-    : [h('span', { class: 'tag plain' }, 'aucune reconnue')]));
-  $('#pInstr').textContent = plan.instruments.length ? `Instruments : ${plan.instruments.join(', ')}` : '';
-  $('#pGenres').replaceChildren(...plan.genres.map((g) => h('span', { class: 'tag genre', title: g.why.join(', ') }, g.label)));
-  $('#pArtists').replaceChildren(...plan.artists.map((a) => h('span', { class: 'tag artist', title: a.reason }, a.name)));
-  $('#pBpm').replaceChildren(`${plan.bpmRange.min}–${plan.bpmRange.max}`, h('small', {}, 'BPM'));
-  $('#pBpmWhy').textContent = plan.bpmRange.source;
-  $('#qTitle').textContent = `${plan.queries.length} recherches · profondeur ${plan.depth.label.toLowerCase()}${plan.device === 'mobile' ? ' (mobile)' : ''}`;
-  $('#queries').replaceChildren(...plan.queries.map((q) => h('li', { class: 'q' },
-    h('div', { class: 'q-main' }, h('div', { class: 'q-text' }, q.q), h('div', { class: 'q-why' }, q.why)),
-    h('div', { class: 'q-actions' },
-      h('a', { class: 'mini', href: ytSearch(q.q), target: '_blank', rel: 'noopener', title: 'Voir cette recherche sur YouTube' }, 'YouTube ↗')))));
-}
-
-let planTimer;
-const debouncedPlan = () => { clearTimeout(planTimer); planTimer = setTimeout(updatePlan, 150); };
-promptEl.addEventListener('input', debouncedPlan);
-$('#manualQuery').addEventListener('input', debouncedPlan);
-$('#depth').addEventListener('change', updatePlan);
-$('#licenseGrid').addEventListener('change', updatePlan);
-$('#clearPrompt').addEventListener('click', () => { promptEl.value = ''; updatePlan(); promptEl.focus(); });
-$('#formToggle').addEventListener('click', () => $('#searchForm').classList.remove('collapsed'));
-
-$('#searchForm').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const f = readForm();
-  if (!f.prompt && !f.manualQuery) { toast('Écris d’abord une description, ex. « rapide, énergique et musicale »'); promptEl.focus(); return; }
-  updatePlan();
-  runSearch(f, currentPlan);
-});
-document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && $('#view-search').classList.contains('active')) {
-    e.preventDefault();
-    $('#searchForm').requestSubmit();
-  }
-});
-
-// ---------------------------------------------------------------------------
-// RECHERCHE AUTOMATIQUE via le connecteur « Parallel Search »
-// (recherche web → liens YouTube → lecture de chaque page vidéo → description)
+// Parallel Search (connecteur) : page de résultats YouTube + pages vidéo
 
 const SERVER = 'Parallel Search';
-const MAX_VIDEOS = { rapide: 12, normal: 20, approfondie: 32 };
+const SID = local.get('sid', null) || (() => { const s = `melofinds-${Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('')}`; local.set('sid', s); return s; })();
 let mcpPromise = null;
 const getMcp = () => (mcpPromise ||= (window.claude?.use ? window.claude.use('mcp').catch(() => null) : Promise.resolve(null)));
-const schemas = {};
 
-async function describe(tool) {
-  if (schemas[tool]) return schemas[tool];
+async function pcall(tool, input) {
   const mcp = await getMcp();
-  try {
-    const d = await mcp.describeTool(SERVER, tool);
-    if (d?.inputSchema) schemas[tool] = d.inputSchema;
-  } catch { /* pas encore autorisé ou pas de schéma */ }
-  return schemas[tool] || null;
+  if (!mcp) throw { code: 'not_granted' };
+  const res = await mcp.callTool(SERVER, tool, { ...input, session_id: SID }, { cache: { staleTime: 6 * 3600e3, gcTime: 24 * 3600e3 } });
+  const p = res?.payload;
+  if (p && typeof p === 'object') return p;
+  try { return JSON.parse((res?.content || []).find((b) => b.type === 'text')?.text || '{}'); } catch { return {}; }
+}
+const resultText = (r) => [...(r.excerpts || []), r.full_content || ''].join('\n');
+const cleanTitle = cleanYtTitle;
+
+// Page de résultats YouTube → vidéos (parseResultsPage : moteur)
+async function listVideos(query) {
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAQ%253D%253D`;
+  const p = await pcall('web_fetch', { urls: [url], objective: 'Lister toutes les vidéos de la page de résultats : titre exact et lien de chacune.' });
+  return parseResultsPage((p.results || []).map(resultText).join('\n'));
+}
+// Recherche web : vidéos YouTube avec un extrait de description
+async function searchSnippets(queries, objective) {
+  const p = await pcall('web_search', { objective, search_queries: queries.slice(0, 5) });
+  return (p.results || []).map((r) => ({ id: youtubeId(r.url), title: cleanTitle(r.title), text: (r.excerpts || []).join('\n') })).filter((x) => x.id);
 }
 
-const propsOf = (schema) => schema?.properties || {};
-function searchInputs(schema, objective, queries) {
-  const p = propsOf(schema);
-  const keys = Object.keys(p);
-  if (!keys.length) {
-    const out = [];
-    for (let i = 0; i < queries.length; i += 5) out.push({ objective, search_queries: queries.slice(i, i + 5) });
-    return out;
-  }
-  const arrKey = keys.find((k) => /quer/i.test(k) && (p[k]?.type === 'array' || p[k]?.items));
-  const strKey = keys.find((k) => /^(query|q|search_query|search|keywords?)$/i.test(k));
-  const base = {};
-  for (const k of keys) {
-    if (/objective|goal|task|instruction|purpose/i.test(k)) base[k] = objective;
-    else if (/max_?results|num_?results|limit|count/i.test(k) && /integer|number/.test(p[k]?.type)) base[k] = Math.min(p[k]?.maximum ?? 20, 20);
-  }
-  if (arrKey) {
-    const size = Math.max(1, Math.min(p[arrKey]?.maxItems || 5, 5));
-    const out = [];
-    for (let i = 0; i < queries.length; i += size) out.push({ ...base, [arrKey]: queries.slice(i, i + size) });
-    return out;
-  }
-  if (strKey) return queries.map((q) => ({ ...base, [strKey]: q }));
-  return [{ ...base }];
-}
-function fetchInputs(schema, urls, objective) {
-  const p = propsOf(schema);
-  const keys = Object.keys(p);
-  if (!keys.length) {
-    const out = [];
-    for (let i = 0; i < urls.length; i += 10) out.push({ urls: urls.slice(i, i + 10), objective });
-    return out;
-  }
-  const arrKey = keys.find((k) => /urls/i.test(k));
-  const strKey = keys.find((k) => /^url$/i.test(k));
-  const base = {};
-  for (const k of keys) {
-    if (/objective|goal|task|instruction|purpose/i.test(k)) base[k] = objective;
-    else if (/full_?content|include_?content/i.test(k) && p[k]?.type === 'boolean') base[k] = true;
-  }
-  if (arrKey) {
-    const size = Math.max(1, Math.min(p[arrKey]?.maxItems || 10, 10));
-    const out = [];
-    for (let i = 0; i < urls.length; i += size) out.push({ ...base, [arrKey]: urls.slice(i, i + size) });
-    return out;
-  }
-  if (strKey) return urls.map((u) => ({ ...base, [strKey]: u }));
-  return [];
-}
+// Pages vidéo → description (cleanDescription / usefulDescription : moteur)
+const useful = usefulDescription;
 
-// Lit n'importe quelle forme de réponse et en sort {id → {title, text}}
-const TEXT_KEYS = ['excerpts', 'excerpt', 'snippet', 'snippets', 'content', 'full_content', 'fullContent', 'text', 'markdown', 'description', 'body', 'summary'];
-function textOf(o) {
-  const parts = [];
-  for (const k of TEXT_KEYS) {
-    const v = o?.[k];
-    if (typeof v === 'string') parts.push(v);
-    else if (Array.isArray(v)) parts.push(v.filter((x) => typeof x === 'string').join('\n'));
+async function readPages(ids, host) {
+  const urls = ids.map((id) => `https://${host}/watch?v=${id}`);
+  const p = await pcall('web_fetch', { urls, objective: 'Texte complet de la description de la vidéo écrit par le producteur : licence, free for profit, limite de streams, Spotify, achat, crédit, BPM, tonalité.' });
+  const out = new Map();
+  for (const r of p.results || []) {
+    const id = youtubeId(r.url);
+    if (id) out.set(id, { title: cleanTitle(r.title), text: resultText(r) });
   }
-  return parts.join('\n').trim();
-}
-function harvest(payload, out = new Map()) {
-  const add = (id, title, text) => {
-    if (!id) return;
-    const cur = out.get(id) || { title: '', text: '' };
-    if (title && !cur.title) cur.title = String(title).replace(/\s*[-–|]\s*YouTube\s*$/i, '').trim();
-    if (text && text.length > cur.text.length) cur.text = text;
-    out.set(id, cur);
-  };
-  const walk = (node, depth = 0) => {
-    if (depth > 12 || node == null) return;
-    if (typeof node === 'string') {
-      // texte libre / markdown : on récupère les liens YouTube et le texte autour
-      YT_RE.lastIndex = 0;
-      let m;
-      const hits = [];
-      while ((m = YT_RE.exec(node))) hits.push({ id: m[1], at: m.index });
-      hits.forEach((hit, i) => {
-        const end = hits[i + 1]?.at ?? Math.min(node.length, hit.at + 4000);
-        const chunk = node.slice(hit.at, end);
-        const before = node.slice(Math.max(0, hit.at - 200), hit.at);
-        const md = before.match(/\[([^\]]{3,200})\]\([^)]*$/) || before.match(/(?:^|\n)#+\s*(.+)\s*$/) || before.match(/(?:title|titre)\s*[:=]\s*"?([^"\n]{3,200})"?\s*$/i);
-        add(hit.id, md?.[1] || '', chunk);
-      });
-      return;
-    }
-    if (Array.isArray(node)) { node.forEach((n) => walk(n, depth + 1)); return; }
-    if (typeof node === 'object') {
-      const url = node.url || node.link || node.href || node.source || node.uri;
-      const id = typeof url === 'string' ? youtubeId(url) : null;
-      if (id) add(id, node.title || node.name || node.heading, textOf(node));
-      for (const [k, v] of Object.entries(node)) {
-        if (id && TEXT_KEYS.includes(k)) continue;
-        walk(v, depth + 1);
-      }
-    }
-  };
-  walk(payload);
   return out;
 }
-function payloadOf(res) {
-  if (!res) return null;
-  if (res.payload != null) return res.payload;
-  return (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-}
-// Garde la description, coupe les commentaires / vidéos suggérées de la page
-function cleanDescription(text, title) {
-  let t = String(text || '');
-  if (title) {
-    const i = t.indexOf(title);
-    if (i >= 0 && i < t.length / 2) t = t.slice(i + title.length);
-  }
-  const stop = t.search(/\n\s*(?:#{1,4}\s*)?(?:\d[\d,.\s]*\s*)?(comments?|commentaires|up next|related videos|vidéos suggérées|transcript|show less|afficher moins)\b/i);
-  if (stop > 80) t = t.slice(0, stop);
-  // lignes de la page YouTube (vues, date) qui ne viennent pas du producteur
-  t = t.replace(/^.*\b[\d.,]+\s*[kKmM]?\s*(?:views|vues)\b.*$/gm, '').replace(/^.*\b(?:subscribers|abonnés)\b.*$/gm, '');
-  return t.trim().slice(0, DESC_MAX);
-}
 
-async function callWithSchema(tool, buildInputs) {
-  const mcp = await getMcp();
-  let schema = await describe(tool);
-  const cacheOpt = { cache: { staleTime: 6 * 3600e3, gcTime: 24 * 3600e3 } };
-  const runAll = async (inputs) => {
-    const out = [];
-    for (const input of inputs) out.push(await mcp.callTool(SERVER, tool, input, cacheOpt));
-    return out;
-  };
-  try {
-    return await runAll(buildInputs(schema));
-  } catch (e) {
-    if (!schema && (e?.code === 'tool_error' || e?.code === 'bad_request')) {
-      schema = await describe(tool); // l'accès vient d'être donné : on lit le vrai schéma
-      if (schema) return runAll(buildInputs(schema));
-    }
-    throw e;
-  }
+async function pool(items, limit, fn) {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) { const k = i++; await fn(items[k], k); }
+  });
+  await Promise.all(workers);
 }
-
-let lastSearch = local.get('lastSearch', null);
-let searching = false;
-
-function setStatus(content, { error = false, progress = null } = {}) {
-  const box = $('#searchStatus');
-  if (!content) { box.hidden = true; return; }
-  box.hidden = false;
-  box.className = `search-status${error ? ' error' : ''}`;
-  box.replaceChildren(h('div', {}, content), progress != null ? h('div', { class: 'bar' }, h('i', { style: `width:${Math.round(progress * 100)}%` })) : null);
-}
-
-function showSetup(kind) {
-  const card = $('#setupCard');
-  if (!kind) { card.hidden = true; return; }
-  card.hidden = false;
-  const retry = h('button', { type: 'button', class: 'primary small', onclick: () => $('#searchForm').requestSubmit() }, '↻ Relancer la recherche');
-  if (kind === 'connect') {
-    card.replaceChildren(
-      h('h3', {}, 'Une étape avant que je trouve les vidéos pour toi'),
-      h('p', {}, 'Pour chercher sur YouTube et lire les descriptions, la page utilise « Parallel Search », un connecteur de recherche web gratuit, sans compte ni clé. À faire une seule fois :'),
-      h('ol', {},
-        h('li', {}, 'Ouvre claude.ai → ', h('b', {}, 'Paramètres → Connecteurs'), '.'),
-        h('li', {}, 'Clique sur ', h('b', {}, 'Parcourir les connecteurs'), ', cherche ', h('b', {}, 'Parallel Search'), ' et clique sur ', h('b', {}, 'Connecter'), '.'),
-        h('li', {}, 'Reviens ici et relance : la page te demandera une fois l’autorisation de l’utiliser.')),
-      h('div', { class: 'row-actions' }, retry, h('a', { class: 'mini', href: 'https://claude.ai/settings/connectors', target: '_blank', rel: 'noopener' }, 'Ouvrir les connecteurs ↗')));
-  } else if (kind === 'denied') {
-    card.replaceChildren(
-      h('h3', {}, 'L’accès à Parallel Search a été refusé pour cette page'),
-      h('p', {}, 'Sans lui, la page ne peut pas chercher sur YouTube. Autorise-le dans le menu Permissions de cette page, puis relance.'),
-      h('div', { class: 'row-actions' }, retry,
-        h('button', { type: 'button', class: 'mini', onclick: async () => { try { const p = await window.claude?.use?.('permissions'); await p?.manage?.(); } catch { toast('Ouvre le menu Permissions de la page (en haut).'); } } }, '🔐 Permissions')));
-  } else if (kind === 'reauth') {
-    card.replaceChildren(h('h3', {}, 'Reconnecte Parallel Search'), h('p', {}, 'Dans claude.ai → Paramètres → Connecteurs, reconnecte « Parallel Search », puis relance.'), h('div', { class: 'row-actions' }, retry));
-  } else if (kind === 'unavailable') {
-    card.replaceChildren(h('h3', {}, 'Recherche automatique indisponible ici'),
-      h('p', {}, 'Cette vue de la page ne peut pas utiliser les connecteurs. Ouvre la page sur claude.ai, ou utilise les liens « YouTube ↗ » de chaque recherche plus bas puis l’onglet Vérifier.'));
-  }
-}
+const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
 
 function errorKind(e) {
   switch (e?.code) {
@@ -736,445 +380,554 @@ function errorKind(e) {
   }
 }
 
-async function runSearch(f, plan) {
-  if (searching) return;
-  saveHistory(f, plan);
-  const mcp = await getMcp();
-  if (!mcp) { showSetup('unavailable'); return; }
-  searching = true;
-  $('#goBtn').disabled = true;
-  $('#goBtn').textContent = 'Recherche en cours…';
-  showSetup(null);
-  $('#searchIntro').hidden = true;
-  if (device === 'mobile') {
-    $('#searchForm').classList.add('collapsed');
-    $('#formToggleText').textContent = f.prompt || f.manualQuery;
+// ---------------------------------------------------------------------------
+// Recherche
+
+const SUGGESTIONS = ['rapide', 'énergique', 'mélodique', 'sombre', 'triste', 'chill', 'agressif', 'drill', 'rage', 'pluggnb', 'jerk', 'piano', 'guitare', 'Lil Uzi', 'Ken Carson', 'Pop Smoke'];
+const promptEl = $('#prompt');
+for (const w of SUGGESTIONS) $('#suggestions').append(h('button', { type: 'button', class: 'chip', 'data-word': w, onclick: () => toggleWord(w) }, w));
+function toggleWord(w) {
+  const parts = promptEl.value.split(',').map((p) => p.trim()).filter(Boolean);
+  const i = parts.findIndex((p) => p.toLowerCase() === w.toLowerCase());
+  if (i >= 0) parts.splice(i, 1); else parts.push(w);
+  promptEl.value = parts.join(', ');
+  syncChips();
+}
+function syncChips() {
+  const txt = ` ${strip(promptEl.value.toLowerCase())} `;
+  $$('#suggestions .chip').forEach((c) => {
+    const w = strip(c.dataset.word.toLowerCase()).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    c.classList.toggle('on', new RegExp(`[^a-z]${w}[^a-z]`).test(txt));
+  });
+}
+promptEl.addEventListener('input', syncChips);
+
+// Filtres de licence (servent aussi à choisir « free for profit » dans les recherches)
+const searchPrefs = local.get('searchPrefs', { licenses: ['ffp', 'upto'], sort: 'licence', bpm: null });
+let session = null; // { prompt, plan, done: [], items: Map, at }
+let searching = false;
+let rendered = new Set();
+
+function setStatus(text, progress, done = false) {
+  const box = $('#status');
+  if (text == null) { box.hidden = true; return; }
+  box.hidden = false;
+  box.classList.toggle('done', done);
+  $('#statusText').textContent = text;
+  $('#statusFill').style.width = `${Math.round(Math.max(0.04, progress) * 100)}%`;
+}
+function showNotice(kind, extra) {
+  const box = $('#notice');
+  if (!kind) { box.replaceChildren(); return; }
+  const retry = h('button', { type: 'button', class: 'primary', onclick: () => { showNotice(null); startSearch(); } }, 'Réessayer');
+  let n;
+  if (kind === 'connect') {
+    n = h('div', { class: 'notice' }, h('h3', {}, 'Branche Parallel Search pour lancer la recherche'),
+      h('p', {}, 'C’est le connecteur gratuit qui permet à Melofinds de lire YouTube. Sans compte ni clé, à faire une seule fois :'),
+      h('ol', {}, h('li', {}, 'claude.ai → Paramètres → Connecteurs'), h('li', {}, 'Parcourir les connecteurs → Parallel Search → Connecter'), h('li', {}, 'Reviens ici et clique sur Réessayer')),
+      h('div', { class: 'actions' }, retry, h('a', { class: 'ghost', href: 'https://claude.ai/settings/connectors', target: '_blank', rel: 'noopener' }, 'Ouvrir les connecteurs', icon('ext'))));
+  } else if (kind === 'denied') {
+    n = h('div', { class: 'notice' }, h('h3', {}, 'Autorise Parallel Search pour cette page'),
+      h('p', {}, 'L’accès a été refusé. Autorise-le dans le menu Permissions de la page, puis réessaie.'),
+      h('div', { class: 'actions' }, retry, h('button', { type: 'button', class: 'ghost', onclick: async () => { try { const p = await window.claude?.use?.('permissions'); await p?.manage?.(); } catch { toast('Ouvre le menu Permissions de la page.'); } } }, 'Permissions')));
+  } else if (kind === 'reauth') {
+    n = h('div', { class: 'notice' }, h('h3', {}, 'Reconnecte Parallel Search'), h('p', {}, 'claude.ai → Paramètres → Connecteurs → Parallel Search → Reconnecter, puis réessaie.'), h('div', { class: 'actions' }, retry));
+  } else if (kind === 'unavailable') {
+    n = h('div', { class: 'notice' }, h('h3', {}, 'Recherche indisponible dans cette vue'), h('p', {}, 'Ouvre Melofinds sur claude.ai pour lancer la recherche automatique.'));
+  } else {
+    n = h('div', { class: 'notice error' }, h('h3', {}, 'La recherche a coupé'), h('p', {}, extra || 'Parallel Search n’a pas répondu.'), h('div', { class: 'actions' }, retry));
   }
-  $('#planCol').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  const depthId = plan.depth.id;
-  const maxVideos = MAX_VIDEOS[depthId] || 20;
-  const queries = plan.queries.map((q) => q.q);
-  const objective = `Trouver des vidéos YouTube de prods rap (type beats) correspondant à : ${f.prompt || f.manualQuery}. Ne garder que des liens youtube.com/watch vers des instrumentales « type beat », idéalement free for profit.`;
+  box.replaceChildren(n);
+}
+
+function nextQueries(first) {
+  const lim = LIMITS();
+  const done = new Set(session.done);
+  if (first) return session.plan.queries.map((q) => q.q).slice(0, lim.firstQueries);
+  const deep = buildPlan(session.prompt, { licenses: searchPrefs.licenses, device, depth: 'approfondie' }).queries.map((q) => q.q);
+  const sfx = licenseSuffix(searchPrefs.licenses) ? ` ${licenseSuffix(searchPrefs.licenses)}` : '';
+  const variants = [];
+  for (const a of session.plan.artists) variants.push(`${a.name} type beat 2026${sfx}`, `${a.name} type beat hard${sfx}`, `${a.name} type beat melodic${sfx}`);
+  for (const g of session.plan.genres) variants.push(`${g.label.toLowerCase()} type beat 2026${sfx}`);
+  return [...deep, ...variants].filter((q) => !done.has(q)).slice(0, lim.moreQueries);
+}
+
+$('#searchForm').addEventListener('submit', (e) => { e.preventDefault(); startSearch(); });
+function startSearch() {
+  const prompt = promptEl.value.trim();
+  if (!prompt) { promptEl.focus(); toast('Décris la prod que tu cherches'); return; }
+  if (searching) return;
+  promptEl.blur();
+  const plan = buildPlan(prompt, { licenses: searchPrefs.licenses, device, depth: device === 'mobile' ? 'rapide' : 'normal' });
+  session = { prompt, plan, done: [], items: new Map(), at: new Date().toISOString() };
+  rendered = new Set();
+  $('#grid').replaceChildren();
+  runSearch(true);
+}
+$('#moreBtn').addEventListener('click', () => { if (session) runSearch(false); });
+
+async function runSearch(first) {
+  if (searching || !session) return;
+  const queries = nextQueries(first);
+  if (!queries.length) { toast('J’ai fait le tour de cette recherche. Essaie d’autres mots.'); return; }
+  searching = true;
+  showNotice(null);
+  $('#hero').classList.add('compact');
+  $('#results').hidden = false;
+  $('#goBtn').disabled = true;
+  $('#moreBtn').disabled = true;
+  session.done.push(...queries);
+  if (first) saveHistory();
+  const before = session.items.size;
+  let searchTask = null;
   try {
-    // 1) Recherche web → liens YouTube
-    setStatus(h('span', {}, h('span', { class: 'spinner' }), `Recherche des vidéos sur YouTube (${queries.length} recherches)…`), { progress: 0.1 });
-    const found = new Map();
-    const searchRes = await callWithSchema('web_search', (schema) => searchInputs(schema, objective, queries.map((q) => `${q} youtube`)));
-    searchRes.forEach((res) => {
-      for (const [vid, info] of harvest(payloadOf(res))) {
-        const cur = found.get(vid);
-        if (!cur) found.set(vid, { ...info, foundBy: [] });
-        else if (!cur.title && info.title) cur.title = info.title;
-      }
+    // 1) Trouver les vidéos : page de résultats YouTube de chaque recherche (+ recherche web)
+    setStatus(`Je cherche sur YouTube (${queries.length} recherche${queries.length > 1 ? 's' : ''})…`, 0.08);
+    if (first) showSkeletons(device === 'mobile' ? 4 : 8);
+    let failures = 0;
+    let firstErr = null;
+    const add = (v, q, snippet = '') => {
+      const cur = session.items.get(v.id);
+      if (cur) { if (!cur.foundBy.includes(q)) cur.foundBy.push(q); if (!cur.snippet && snippet) cur.snippet = snippet; return; }
+      session.items.set(v.id, { id: v.id, url: `https://www.youtube.com/watch?v=${v.id}`, title: v.title || 'Vidéo YouTube', views: v.views || null, age: v.age || null, foundBy: [q], status: 'pending', description: '', snippet });
+    };
+    const objective = `Vidéos YouTube de type beats (instrumentales rap) pour : ${session.prompt}. Avec les conditions de licence écrites dans la description.`;
+    searchTask = searchSnippets(queries, objective)
+      .then((list) => { list.forEach((v) => add(v, queries[0], v.text)); return null; })
+      .catch((e) => (errorKind(e) ? e : null));
+    let doneQ = 0;
+    await pool(queries, 3, async (q) => {
+      try { (await listVideos(q)).forEach((v) => add(v, q)); } catch (e) { if (errorKind(e)) throw e; failures++; firstErr ||= e; }
+      doneQ++;
+      setStatus(`Je cherche sur YouTube… ${session.items.size - before} vidéos trouvées`, 0.08 + 0.22 * (doneQ / queries.length));
     });
-    // relie chaque vidéo aux recherches qui contiennent un mot de son titre (pour « Trouvée via »)
-    for (const v of found.values()) {
-      const t = stripAccents((v.title || '').toLowerCase());
-      v.foundBy = queries.filter((q) => q.toLowerCase().split(/\s+/).filter((w) => w.length > 3 && !['type', 'beat', 'free', 'profit'].includes(w)).some((w) => t.includes(stripAccents(w))));
-    }
-    if (!found.size) {
-      setStatus(h('span', {}, '😕 Aucune vidéo YouTube trouvée pour ces recherches. Essaie d’autres mots (un artiste, un courant) ou la profondeur « approfondie ».'), { error: true });
+    const searchErr = await searchTask;
+    if (searchErr) throw searchErr;
+    const pending = [...session.items.values()].filter((i) => i.status === 'pending').slice(0, LIMITS().read);
+    if (!pending.length) {
+      if (failures === queries.length) { showNotice('error', `Parallel Search a renvoyé une erreur : ${String(firstErr?.message || firstErr?.code || '').slice(0, 160)}`); setStatus(null); }
+      else setStatus('Aucune nouvelle vidéo pour ces recherches. Essaie d’autres mots.', 1, true);
       return;
     }
-    const ids = [...found.keys()].slice(0, maxVideos);
 
-    // 2) Lecture de chaque page vidéo → description complète
-    const urls = ids.map((vid) => `https://www.youtube.com/watch?v=${vid}`);
-    let fetched = new Map();
-    setStatus(h('span', {}, h('span', { class: 'spinner' }), `${found.size} vidéos trouvées. Lecture des descriptions (${ids.length})…`), { progress: 0.45 });
-    try {
-      const fetchRes = await callWithSchema('web_fetch', (schema) => fetchInputs(schema, urls,
-        'Donner le titre exact de la vidéo et le texte COMPLET de sa description tel qu’écrit par le producteur (licence, free for profit, limites de streams, Spotify, crédit, BPM, tonalité, contact).'));
-      fetchRes.forEach((res) => { for (const [vid, info] of harvest(payloadOf(res))) fetched.set(vid, info); });
-    } catch (e) {
-      if (errorKind(e)) throw e;
-      fetched = new Map();
-    }
-
-    const items = ids.map((vid) => {
-      const s = found.get(vid);
-      const d = fetched.get(vid);
-      const title = (d?.title || s.title || '').trim();
-      const description = cleanDescription(d?.text || s.text || '', title);
-      return {
-        id: vid,
-        url: `https://www.youtube.com/watch?v=${vid}`,
-        title: title || `Vidéo YouTube ${vid}`,
-        description,
-        foundBy: s.foundBy,
-        partial: !d?.text,
-      };
+    // 2) Lire la description de chaque vidéo (page normale, puis version mobile, puis extrait de recherche)
+    let read = 0;
+    const total = pending.length;
+    const progress = () => setStatus(`${total} vidéos trouvées · je lis les descriptions (${read}/${total})`, 0.3 + 0.7 * (read / total));
+    progress();
+    const retry = [];
+    await pool(chunk(pending, 10), 3, async (batch) => {
+      let pages = new Map();
+      try { pages = await readPages(batch.map((i) => i.id), 'www.youtube.com'); } catch (e) { if (errorKind(e)) throw e; }
+      for (const item of batch) {
+        const page = pages.get(item.id);
+        if (page?.title && item.title === 'Vidéo YouTube') item.title = page.title;
+        const desc = cleanDescription(page?.text, item.title, DESC_MAX);
+        if (useful(desc)) { item.description = desc; item.status = 'done'; read++; } else retry.push(item);
+      }
+      progress();
+      renderResults();
     });
-    lastSearch = { at: new Date().toISOString(), title: f.prompt || f.manualQuery, form: f, items };
-    local.set('lastSearch', lastSearch);
-    searchBoard.setOff(CATEGORY_ORDER.filter((c) => !(f.licenses.length ? f.licenses : CATEGORY_ORDER).includes(c)));
-    const partial = items.filter((i) => i.partial).length;
-    setStatus(h('span', {}, `✔ ${items.length} prods analysées${partial ? ` (${partial} avec un extrait seulement)` : ''}. Les catégories que tu n’as pas cochées sont masquées : clique dessus pour les voir.`), { progress: 1 });
-    $('#planBox').open = false;
-    renderSearchHead();
-    searchBoard.render();
-    updateHistoryCount(f, items);
+    await pool(chunk(retry, 10), 3, async (batch) => {
+      let pages = new Map();
+      try { pages = await readPages(batch.map((i) => i.id), 'm.youtube.com'); } catch (e) { if (errorKind(e)) throw e; }
+      for (const item of batch) {
+        const desc = cleanDescription(pages.get(item.id)?.text, item.title);
+        const snip = cleanDescription(item.snippet, item.title);
+        if (useful(desc)) { item.description = desc; item.status = 'done'; }
+        else if (useful(snip)) { item.description = snip; item.status = 'done'; item.partial = true; }
+        else item.status = 'unread';
+        read++;
+      }
+      progress();
+      renderResults();
+    });
+    const all = [...session.items.values()].filter((i) => i.status !== 'pending');
+    const unread = all.filter((i) => i.status === 'unread').length;
+    setStatus(`${all.length} prods · ${all.length - unread} descriptions lues et vérifiées${unread ? ` · ${unread} illisibles` : ''}`, 1, true);
+    saveSession();
+    updateHistory();
   } catch (e) {
+    await searchTask?.catch?.(() => {});
     const kind = errorKind(e);
-    if (kind) { setStatus(null); showSetup(kind); }
-    else {
-      const msg = e?.code === 'server_unavailable' ? 'Parallel Search ne répond pas pour le moment.' : e?.code === 'tool_error' ? `Parallel Search a renvoyé une erreur : ${String(e.message || '').slice(0, 200)}` : `La recherche a échoué (${e?.code || 'erreur'}).`;
-      setStatus(h('div', {}, '😕 ', msg, h('div', { class: 'row-actions' },
-        h('button', { type: 'button', class: 'mini', onclick: () => $('#searchForm').requestSubmit() }, '↻ Réessayer'))), { error: true });
-    }
+    setStatus(null);
+    if (kind) showNotice(kind); else showNotice('error', `Erreur : ${String(e?.message || e?.code || e).slice(0, 160)}`);
   } finally {
     searching = false;
     $('#goBtn').disabled = false;
-    $('#goBtn').textContent = 'Lancer la recherche';
+    $('#moreBtn').disabled = false;
+    clearSkeletons();
+    renderResults();
   }
 }
 
-function renderSearchHead() {
-  if (!lastSearch) return;
-  $('#planTitle').textContent = lastSearch.title;
-  $('#searchIntro').hidden = true;
+function showSkeletons(n) {
+  clearSkeletons();
+  const grid = $('#grid');
+  for (let i = 0; i < n; i++) grid.append(h('div', { class: 'skel', 'aria-hidden': 'true' }));
+}
+function clearSkeletons() { $$('#grid .skel').forEach((s) => s.remove()); }
+
+// Filtres de la grille
+const LIC_ORDER = ['ffp', 'upto', 'fnp', 'paid', 'unknown'];
+function renderPills(box, counts, active, onToggle) {
+  const prev = Object.fromEntries($$('.pill', box).map((p) => [p.dataset.cat, p.querySelector('b')?.textContent]));
+  box.replaceChildren(...LIC_ORDER.map((c) => {
+    const b = h('b', {}, counts[c] || 0);
+    if (prev[c] != null && prev[c] !== String(counts[c] || 0)) b.classList.add('bump');
+    return h('button', { type: 'button', class: `pill cat-${c}${active.includes(c) ? ' on' : ''}`, 'data-cat': c, 'aria-pressed': String(active.includes(c)), onclick: () => onToggle(c) }, SHORT[c], b);
+  }));
+}
+function findTerms() { const t = $('#findInput').value.trim(); return t ? parseTextQuery(t).include : []; }
+function sortRows(rows, how) {
+  const rank = { ffp: 0, upto: 1, fnp: 2, paid: 3, unknown: 4 };
+  const unreadPenalty = (r) => (r._item.status === 'unread' ? 1 : 0);
+  if (how === 'licence') {
+    return [...rows].sort((a, b) => unreadPenalty(a) - unreadPenalty(b) || rank[a.license.category] - rank[b.license.category]
+      || (a.license.category === 'upto' ? (b.license.limit || 0) - (a.license.limit || 0) : 0) || b.score - a.score);
+  }
+  return sortResults(rows, how);
 }
 
-function isKept(id) { return state.beats.some((b) => b.id === id); }
-function keepBeat(beat) {
-  if (isKept(beat.id)) return;
-  state.beats = [{ id: beat.id, url: beat.url, title: beat.title, description: beat.description, channel: beat.channel, addedAt: new Date().toISOString() }, ...state.beats];
-  persist.save('beats');
-  updateListCount();
+function renderResults() {
+  if (!session) return;
+  const plan = session.plan;
+  const items = [...session.items.values()].filter((i) => i.status === 'done' || i.status === 'unread');
+  const rows = items.map((item) => ({ ...analyzed(item, plan), _item: item })).filter((r) => r.isBeat || r._item.status === 'unread');
+  $('#results').hidden = !rows.length && !searching;
+  const counts = Object.fromEntries(LIC_ORDER.map((c) => [c, 0]));
+  rows.forEach((r) => counts[r.license.category]++);
+  renderPills($('#licPills'), counts, searchPrefs.licenses, (c) => {
+    const set = new Set(searchPrefs.licenses);
+    if (set.has(c)) set.delete(c); else set.add(c);
+    searchPrefs.licenses = LIC_ORDER.filter((x) => set.has(x));
+    local.set('searchPrefs', searchPrefs);
+    renderResults();
+  });
+  const text = $('#findInput').value.trim();
+  const bpm = searchPrefs.bpm;
+  const filtered = filterResults(rows.map((r) => ({ ...r, isBeat: true })), {
+    licenses: searchPrefs.licenses.length ? searchPrefs.licenses : LIC_ORDER,
+    text,
+    bpm: bpm ? { enabled: true, min: bpm.min, max: bpm.max, requireBpm: false } : undefined,
+  });
+  const shown = searchPrefs.verifiedOnly ? filtered.filter((r) => r._item.status !== 'unread') : filtered;
+  const sorted = sortRows(shown, $('#sort').value);
+  const pendingN = [...session.items.values()].filter((i) => i.status === 'pending').length;
+  const hiddenN = rows.length - sorted.length;
+  $('#count').textContent = rows.length
+    ? `${sorted.length} prod${sorted.length > 1 ? 's' : ''} affichée${sorted.length > 1 ? 's' : ''}${hiddenN ? ` · ${hiddenN} masquée${hiddenN > 1 ? 's' : ''} par les filtres` : ''}${searching && pendingN ? ` · ${pendingN} en cours de lecture` : ''}`
+    : '';
+  const grid = $('#grid');
+  const skels = $$('.skel', grid);
+  let newIndex = 0;
+  const cards = sorted.map((r) => {
+    const isNew = !rendered.has(r._item.id);
+    const card = renderCard(r._item, r, { isNew, index: isNew ? Math.min(newIndex++, 12) : 0, plan });
+    rendered.add(r._item.id);
+    return card;
+  });
+  if (!cards.length && !skels.length && rows.length) {
+    grid.replaceChildren(h('div', { class: 'empty', style: 'grid-column: 1 / -1' }, h('h3', {}, 'Rien avec ces filtres'), h('p', {}, 'Active d’autres licences au-dessus, ou retire le filtre texte / BPM.')));
+    return;
+  }
+  grid.replaceChildren(...cards, ...skels);
 }
 
-const searchBoard = createBoard($('#searchBoard'), 'search', {
-  defaultOff: ['fnp', 'paid', 'unknown'],
-  recentLabel: 'Ordre trouvé',
-  bpmRange: () => currentPlan?.bpmRange,
-  source: () => (lastSearch ? { items: lastSearch.items, plan: currentPlan, showEmpty: true } : { items: [] }),
-  head: (src) => [h('h3', {}, `${src.items.length} prods trouvées`), h('span', { class: 'small-note' }, lastSearch ? `le ${new Date(lastSearch.at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })} · chaque description lue et vérifiée` : '')],
-  actions: (beat) => [() => {
-    const btn = h('button', { type: 'button', class: `act${isKept(beat.id) ? ' saved' : ''}`, title: 'Garder dans ma liste' }, isKept(beat.id) ? '✓' : '➕', h('span', {}, isKept(beat.id) ? 'Gardée' : 'Garder'));
-    btn.addEventListener('click', () => {
-      if (isKept(beat.id)) { showView('list'); return; }
-      keepBeat(beat);
-      btn.classList.add('saved');
-      btn.replaceChildren('✓', h('span', {}, 'Gardée'));
-      toast('Gardée dans ma liste', { label: 'Voir', run: () => showView('list') });
-    });
-    return btn;
-  }],
+function syncVerifiedPill() {
+  $('#verifiedPill').classList.toggle('on', !!searchPrefs.verifiedOnly);
+  $('#verifiedPill').setAttribute('aria-pressed', String(!!searchPrefs.verifiedOnly));
+}
+$('#verifiedPill').addEventListener('click', () => {
+  searchPrefs.verifiedOnly = !searchPrefs.verifiedOnly;
+  local.set('searchPrefs', searchPrefs); syncVerifiedPill(); renderResults();
+});
+$('#findInput').addEventListener('input', () => { clearTimeout(renderResults._t); renderResults._t = setTimeout(renderResults, 120); });
+$('#sort').value = searchPrefs.sort || 'licence';
+$('#sort').addEventListener('change', () => { searchPrefs.sort = $('#sort').value; local.set('searchPrefs', searchPrefs); renderResults(); });
+function syncBpmPill() {
+  const on = !!searchPrefs.bpm;
+  $('#bpmPill').classList.toggle('on', on);
+  $('#bpmPill').textContent = on ? `${searchPrefs.bpm.min || '…'}–${searchPrefs.bpm.max || '…'} BPM` : 'BPM';
+}
+$('#bpmPill').addEventListener('click', () => {
+  const pop = $('#bpmPop');
+  pop.hidden = !pop.hidden;
+  $('#bpmPill').setAttribute('aria-expanded', String(!pop.hidden));
+  if (!pop.hidden) {
+    const range = searchPrefs.bpm || session?.plan?.bpmRange || { min: 130, max: 160 };
+    $('#bpmMin').value = range.min || '';
+    $('#bpmMax').value = range.max || '';
+    searchPrefs.bpm = { min: Number($('#bpmMin').value) || null, max: Number($('#bpmMax').value) || null };
+    if (['licence', 'pertinence'].includes($('#sort').value)) $('#sort').value = 'bpm-asc';
+    searchPrefs.sort = $('#sort').value;
+    local.set('searchPrefs', searchPrefs); syncBpmPill(); renderResults();
+    $('#bpmMin').focus();
+  }
+});
+['#bpmMin', '#bpmMax'].forEach((s) => $(s).addEventListener('input', () => {
+  searchPrefs.bpm = { min: Number($('#bpmMin').value) || null, max: Number($('#bpmMax').value) || null };
+  local.set('searchPrefs', searchPrefs); syncBpmPill(); renderResults();
+}));
+$('#bpmClear').addEventListener('click', () => {
+  searchPrefs.bpm = null;
+  $('#bpmPop').hidden = true;
+  $('#bpmPill').setAttribute('aria-expanded', 'false');
+  if ($('#sort').value.startsWith('bpm')) $('#sort').value = 'licence';
+  searchPrefs.sort = $('#sort').value;
+  local.set('searchPrefs', searchPrefs); syncBpmPill(); renderResults();
 });
 
+// « Comment j'ai cherché »
+$('#howBtn').addEventListener('click', () => {
+  if (!session) return;
+  const p = session.plan;
+  const counts = (q) => [...session.items.values()].filter((i) => i.foundBy.includes(q)).length;
+  openDrawer('Comment j’ai cherché', [
+    h('p', { class: 'muted', style: 'margin:0' }, `Pour « ${session.prompt} », voici ce que l’algo a compris et les recherches lancées sur YouTube.`),
+    h('div', { class: 'plan-grid' },
+      h('div', { class: 'plan-card' }, h('h4', {}, 'Ambiances'), h('div', { class: 'tags' }, p.moods.length ? p.moods.map((m) => h('span', { class: 'tag' }, m.label)) : h('span', { class: 'muted' }, 'aucune reconnue'))),
+      h('div', { class: 'plan-card' }, h('h4', {}, 'Courants de rap'), h('div', { class: 'tags' }, p.genres.map((g) => h('span', { class: 'tag' }, g.label)))),
+      h('div', { class: 'plan-card' }, h('h4', {}, 'Artistes US'), h('div', { class: 'tags' }, p.artists.map((a) => h('span', { class: 'tag' }, a.name)))),
+      h('div', { class: 'plan-card' }, h('h4', {}, 'BPM conseillé'), h('div', { class: 'bpm-big' }, `${p.bpmRange.min}–${p.bpmRange.max}`, h('small', {}, 'BPM')))),
+    h('div', { class: 'd-sec' }, h('h4', {}, `Recherches YouTube (${session.done.length})`),
+      h('ul', { class: 'qlist' }, session.done.map((q) => h('li', {}, h('span', {}, q), h('em', {}, `${counts(q)} vidéos`),
+        h('a', { href: ytSearchUrl(q), target: '_blank', rel: 'noopener', 'aria-label': 'Ouvrir sur YouTube' }, icon('ext')))))),
+  ]);
+});
+
+function saveSession() {
+  if (!session) return;
+  const items = [...session.items.values()].filter((i) => i.status !== 'pending')
+    .map(({ id, url, title, views, age, foundBy, status, description, partial }) => ({ id, url, title, views, age, foundBy, status, description, partial }));
+  local.set('session', { prompt: session.prompt, done: session.done, at: session.at, items });
+}
+function restoreSession() {
+  const s = local.get('session', null);
+  if (!s?.items?.length) return;
+  promptEl.value = s.prompt;
+  syncChips();
+  session = { prompt: s.prompt, plan: buildPlan(s.prompt, { licenses: searchPrefs.licenses, device, depth: device === 'mobile' ? 'rapide' : 'normal' }), done: s.done || [], items: new Map(s.items.map((i) => [i.id, i])), at: s.at };
+  rendered = new Set(s.items.map((i) => i.id));
+  $('#hero').classList.add('compact');
+  $('#results').hidden = false;
+  const unread = s.items.filter((i) => i.status === 'unread').length;
+  setStatus(`${s.items.length} prods · ${s.items.length - unread} descriptions lues et vérifiées`, 1, true);
+  renderResults();
+}
+
 // ---------------------------------------------------------------------------
-// Historique & favoris
+// Historique & recherches favorites
 
-function formKey(f) { return JSON.stringify([f.prompt, f.manualQuery, [...(f.licenses || [])].sort(), f.depth || '']); }
-
-function saveHistory(f, plan) {
-  const key = formKey(f);
-  const old = state.history.find((e) => formKey(e.form) === key);
+function saveHistory() {
+  const key = session.prompt.toLowerCase();
+  const old = state.history.find((e) => e.prompt?.toLowerCase() === key);
   const entry = {
     id: old?.id || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-    date: new Date().toISOString(),
-    form: f,
-    device,
-    queries: plan.queries.map((q) => q.q),
-    genres: plan.genres.map((g) => g.label),
-    artists: plan.artists.map((a) => a.name),
-    moods: plan.moods.map((m) => m.label),
-    bpm: [plan.bpmRange.min, plan.bpmRange.max],
-    found: old?.found,
-    favorite: old?.favorite || false,
-    name: old?.name,
-    runs: (old?.runs || 0) + 1,
+    prompt: session.prompt, date: session.at, device,
+    queries: session.done.slice(), favorite: old?.favorite || false, name: old?.name,
+    genres: session.plan.genres.map((g) => g.label), artists: session.plan.artists.map((a) => a.name),
+    counts: old?.counts || null, runs: (old?.runs || 0) + 1,
   };
   state.history = [entry, ...state.history.filter((e) => e.id !== entry.id)];
   persist.save('history');
   renderHistory();
-  syncFavButton();
-  return entry;
 }
-function updateHistoryCount(f, items) {
-  const e = state.history.find((x) => formKey(x.form) === formKey(f));
+function updateHistory() {
+  const e = state.history.find((x) => x.prompt?.toLowerCase() === session.prompt.toLowerCase());
   if (!e) return;
-  const counts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0]));
-  items.forEach((b) => counts[analyze(b).license.category]++);
-  updateEntry(e.id, { found: counts });
+  const counts = Object.fromEntries(LIC_ORDER.map((c) => [c, 0]));
+  for (const item of session.items.values()) if (item.status !== 'pending') counts[analyzed(item, session.plan).license.category]++;
+  updateEntry(e.id, { counts, queries: session.done.slice() });
 }
 function updateEntry(id, patch) {
   state.history = state.history.map((e) => (e.id === id ? { ...e, ...patch } : e));
   persist.save('history');
-  renderHistory();
-  syncFavButton();
+  renderHistory(); renderSavedSearches(); updateDots();
 }
-function currentEntry() {
-  const key = formKey(readForm());
-  return state.history.find((e) => formKey(e.form) === key);
-}
-function syncFavButton() {
-  const f = readForm();
-  const btn = $('#favNow');
-  btn.hidden = !(f.prompt || f.manualQuery);
-  const e = currentEntry();
-  btn.textContent = e?.favorite ? '★ En favori' : '☆ Mettre en favori';
-  btn.classList.toggle('on', !!e?.favorite);
-}
-$('#favNow').addEventListener('click', () => {
-  let e = currentEntry();
-  if (!e) e = saveHistory(readForm(), currentPlan);
-  updateEntry(e.id, { favorite: !e.favorite });
-  toast(e.favorite ? 'Retirée des favoris' : 'Ajoutée aux favoris');
-});
+function relaunch(e) { promptEl.value = e.prompt; syncChips(); showView('search'); startSearch(); }
 
-const entryTitle = (e) => e.name || e.form.prompt || e.form.manualQuery || 'Recherche sans titre';
-const licenseSummary = (f) => (f.licenses || []).map((l) => CATEGORIES[l]?.label).join(' + ') || 'toutes licences';
-
-function renderEntry(e) {
-  const box = h('div', { class: `hist${e.favorite ? ' fav' : ''}` });
-  const actions = h('div', { class: 'hist-actions' });
-  const fillActions = () => {
-    actions.replaceChildren(
-      h('button', { type: 'button', class: 'primary small', onclick: () => { writeForm(e.form); showView('search'); runSearch(e.form, currentPlan); } }, '↻ Relancer'),
-      h('button', { type: 'button', class: 'mini', onclick: () => { writeForm(e.form); showView('search'); $('#searchForm').classList.remove('collapsed'); promptEl.focus(); } }, '✏️ Modifier'),
-      e.favorite ? h('button', { type: 'button', class: 'mini', onclick: rename }, '🏷️ Renommer') : null,
-      h('button', { type: 'button', class: 'mini danger', onclick: remove }, '🗑️ Supprimer'),
-    );
-  };
-  const rename = () => {
-    const input = h('input', { type: 'text', value: entryTitle(e), 'aria-label': 'Nom du favori', id: `rename-${e.id}` });
-    const ok = () => updateEntry(e.id, { name: input.value.trim() || undefined });
-    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') ok(); if (ev.key === 'Escape') fillActions(); });
-    actions.replaceChildren(input, h('button', { type: 'button', class: 'primary small', onclick: ok }, 'OK'), h('button', { type: 'button', class: 'mini', onclick: fillActions }, 'Annuler'));
-    input.focus();
-    input.select();
-  };
-  const remove = () => {
+function historyRow(e, i) {
+  if (!e.prompt) return null;
+  const total = e.counts ? Object.values(e.counts).reduce((a, b) => a + b, 0) : null;
+  const star = h('button', { type: 'button', class: `icon-btn star${e.favorite ? ' on' : ''}`, 'aria-label': e.favorite ? 'Retirer des favoris' : 'Mettre en favori', 'aria-pressed': String(!!e.favorite),
+    onclick: () => { updateEntry(e.id, { favorite: !e.favorite }); toast(e.favorite ? 'Retirée des favoris' : 'Recherche ajoutée aux favoris'); } }, icon('star'));
+  const del = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Supprimer', onclick: () => {
     const before = state.history;
     state.history = state.history.filter((x) => x.id !== e.id);
-    persist.save('history');
-    renderHistory();
-    toast('Recherche supprimée', { label: 'Annuler', run: () => { state.history = before; persist.save('history'); renderHistory(); } });
-  };
-  fillActions();
-  const found = e.found ? CATEGORY_ORDER.filter((c) => e.found[c]).map((c) => h('span', { class: `tag plain cat-${c}`, style: 'color: var(--c)' }, `${GROUP_ICON[c]} ${e.found[c]}`)) : [];
-  box.append(
-    h('div', { class: 'hist-top' },
-      h('button', { type: 'button', class: `star${e.favorite ? ' on' : ''}`, title: e.favorite ? 'Retirer des favoris' : 'Mettre en favori', 'aria-label': 'Favori', onclick: () => updateEntry(e.id, { favorite: !e.favorite }) }, '⭐'),
-      h('div', { class: 'hist-title' }, entryTitle(e)),
-      h('div', { class: 'hist-date' }, new Date(e.date).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }), e.device === 'mobile' ? ' · 📱' : ' · 💻')),
-    h('div', { class: 'tags' },
-      ...(e.moods || []).map((m) => h('span', { class: 'tag' }, m)),
-      ...(e.genres || []).map((g) => h('span', { class: 'tag genre' }, g)),
-      ...(e.artists || []).map((a) => h('span', { class: 'tag artist' }, a)),
-      h('span', { class: 'tag plain' }, `${e.bpm?.[0]}–${e.bpm?.[1]} BPM`),
-      h('span', { class: 'tag plain' }, licenseSummary(e.form)),
-      ...found,
-      e.runs > 1 ? h('span', { class: 'tag plain' }, `lancée ${e.runs}×`) : null),
-    h('div', { class: 'hist-queries' }, h('span', {}, 'Recherches utilisées :'), ...e.queries.map((q) => h('code', {}, q))),
-    actions,
-  );
-  return box;
+    persist.save('history'); renderHistory(); renderSavedSearches(); updateDots();
+    toast('Recherche supprimée', { label: 'Annuler', run: () => { state.history = before; persist.save('history'); renderHistory(); renderSavedSearches(); updateDots(); } });
+  } }, icon('trash'));
+  return h('div', { class: 'row-item', style: `--i:${Math.min(i, 12)}` },
+    h('div', { class: 'ri-main' },
+      h('div', { class: 'ri-title' }, e.name || e.prompt),
+      h('div', { class: 'ri-sub' },
+        h('span', {}, new Date(e.date).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })),
+        total != null ? h('span', {}, `${total} prods`) : null,
+        ...(e.counts ? ['ffp', 'upto'].filter((c) => e.counts[c]).map((c) => h('span', { class: `n cat-${c}` }, `${e.counts[c]} ${SHORT[c]}`)) : [])),
+      h('div', { class: 'ri-q', title: (e.queries || []).join(' · ') }, `Recherches : ${(e.queries || []).join(' · ')}`)),
+    h('div', { class: 'ri-actions' }, star, h('button', { type: 'button', class: 'primary', onclick: () => relaunch(e) }, 'Relancer'), del));
 }
-
 function renderHistory() {
-  const onlyFav = $('#onlyFav').checked;
-  const list = [...state.history].sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0)).filter((e) => !onlyFav || e.favorite);
-  $('#historyList').replaceChildren(...(list.length
-    ? list.map(renderEntry)
-    : [h('div', { class: 'empty-list' }, onlyFav
-      ? '⭐ Aucun favori pour l’instant. Clique sur l’étoile d’une recherche pour la garder.'
-      : '🕘 Pas encore de recherche. Lance une recherche : elle apparaîtra ici avec les requêtes utilisées.')]));
-  $('#clearHistory').hidden = !state.history.length;
+  const list = state.history.filter((e) => e.prompt);
+  $('#clearHistory').hidden = !list.length;
+  $('#historyList').replaceChildren(...(list.length ? list.map(historyRow)
+    : [h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, icon('clock')), h('h3', {}, 'Aucune recherche pour l’instant'), h('p', {}, 'Tes recherches apparaîtront ici, avec les requêtes utilisées sur YouTube.'), h('button', { type: 'button', class: 'primary', onclick: () => showView('search') }, 'Lancer une recherche'))]));
 }
-$('#onlyFav').addEventListener('change', renderHistory);
 let clearArmed = null;
 $('#clearHistory').addEventListener('click', () => {
   const btn = $('#clearHistory');
-  if (!clearArmed) {
-    btn.textContent = 'Confirmer : tout effacer (favoris gardés)';
-    clearArmed = setTimeout(() => { btn.textContent = 'Tout effacer'; clearArmed = null; }, 4000);
-    return;
-  }
-  clearTimeout(clearArmed);
-  clearArmed = null;
-  btn.textContent = 'Tout effacer';
+  if (!clearArmed) { btn.textContent = 'Confirmer (favoris gardés)'; clearArmed = setTimeout(() => { btn.textContent = 'Tout effacer'; clearArmed = null; }, 4000); return; }
+  clearTimeout(clearArmed); clearArmed = null; btn.textContent = 'Tout effacer';
   state.history = state.history.filter((e) => e.favorite);
-  persist.save('history');
-  renderHistory();
-  toast('Historique effacé, favoris gardés');
+  persist.save('history'); renderHistory(); renderSavedSearches(); updateDots();
+  toast('Historique effacé');
 });
 
 // ---------------------------------------------------------------------------
-// VÉRIFIER : colle titre + description → verdict immédiat
+// Favoris : prods + recherches
 
-const EXAMPLES = [
-  ['Titre trompeur', 'demo-baby1'],
-  ['Spotify ❌', 'demo-gunna1'],
-  ['Up to 5K streams', 'demo-uzi2'],
-  ['Vraiment free', 'demo-uzi3'],
-];
-for (const [label, vid] of EXAMPLES) {
-  $('#vExamples').append(h('button', {
-    type: 'button', class: 'chip', onclick: () => {
-      const v = DEMO_VIDEOS.find((d) => d.id === vid);
-      $('#vUrl').value = '';
-      $('#vTitle').value = v.title;
-      $('#vDesc').value = v.description;
-      updateVerify();
-    },
-  }, label));
+function setSeg(s) {
+  $$('.seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.seg === s));
+  $('#savedProds').hidden = s !== 'prods';
+  $('#savedSearches').hidden = s !== 'searches';
 }
-for (const c of ['ffp', 'upto', 'fnp', 'paid']) {
-  $('#legend').append(h('li', { class: `cat-${c}` }, h('b', {}, `${GROUP_ICON[c]} ${CATEGORIES[c].label}`), CATEGORIES[c].help));
+$$('.seg-btn').forEach((b) => b.addEventListener('click', () => setSeg(b.dataset.seg)));
+const savedPrefs = local.get('savedPrefs', { licenses: LIC_ORDER.slice() });
+function renderSavedProds() {
+  const rows = state.beats.map((b) => ({ ...analyzed(b, null), _item: b }));
+  const counts = Object.fromEntries(LIC_ORDER.map((c) => [c, 0]));
+  rows.forEach((r) => counts[r.license.category]++);
+  $('#savedPills').hidden = !rows.length;
+  renderPills($('#savedPills'), counts, savedPrefs.licenses, (c) => {
+    const set = new Set(savedPrefs.licenses);
+    if (set.has(c)) set.delete(c); else set.add(c);
+    savedPrefs.licenses = LIC_ORDER.filter((x) => set.has(x));
+    local.set('savedPrefs', savedPrefs);
+    renderSavedProds();
+  });
+  const shown = rows.filter((r) => savedPrefs.licenses.includes(r.license.category));
+  $('#savedGrid').replaceChildren(...(rows.length
+    ? shown.map((r, i) => renderCard(r._item, r, { isNew: true, index: Math.min(i, 10) }))
+    : [h('div', { class: 'empty', style: 'grid-column: 1 / -1' }, h('div', { class: 'empty-ico' }, icon('heart')), h('h3', {}, 'Aucune prod en favori'), h('p', {}, 'Clique sur le cœur d’une prod pour la retrouver ici.'), h('button', { type: 'button', class: 'primary', onclick: () => showView('search') }, 'Chercher des prods'))]));
+}
+function renderSavedSearches() {
+  const favs = state.history.filter((e) => e.favorite && e.prompt);
+  $('#savedSearches').replaceChildren(...(favs.length ? favs.map(historyRow)
+    : [h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, icon('star')), h('h3', {}, 'Aucune recherche favorite'), h('p', {}, 'Dans l’historique, clique sur l’étoile d’une recherche pour la relancer en un clic.'))]));
+}
+function updateDots() {
+  const favSearches = state.history.filter((e) => e.favorite && e.prompt).length;
+  const n = state.beats.length + favSearches;
+  $('#savedDot').hidden = !n;
+  $('#savedDot').textContent = n;
+  $('#nProds').textContent = state.beats.length;
+  $('#nSearches').textContent = favSearches;
 }
 
-function draftBeat() {
-  const url = $('#vUrl').value.trim();
-  const yid = youtubeId(url);
-  return {
-    id: yid || `b-${Date.now().toString(36)}`,
-    url: yid ? `https://www.youtube.com/watch?v=${yid}` : (/^https?:\/\//.test(url) ? url : ''),
-    title: $('#vTitle').value.trim(),
-    description: $('#vDesc').value.trim().slice(0, DESC_MAX),
+// ---------------------------------------------------------------------------
+// Vérifier une prod (lien YouTube, ou titre + description collés)
+
+const EXAMPLES = [['Titre trompeur', 'demo-baby1'], ['Up to 5K', 'demo-uzi2'], ['Vraiment free', 'demo-uzi3']];
+$('#openVerify').addEventListener('click', openVerify);
+function openVerify() {
+  const url = h('input', { id: 'vUrl', type: 'url', placeholder: 'https://www.youtube.com/watch?v=…', inputmode: 'url' });
+  const title = h('input', { id: 'vTitle', type: 'text', placeholder: 'Titre de la vidéo' });
+  const desc = h('textarea', { id: 'vDesc', placeholder: 'Colle ici la description complète' });
+  const result = h('div', { style: 'display:grid; gap:14px' });
+  const readBtn = h('button', { type: 'button', class: 'ghost', hidden: true }, 'Lire la description depuis YouTube');
+  const keep = h('button', { type: 'button', class: 'primary', disabled: true }, icon('heart'), 'Ajouter aux favoris');
+  const draft = () => {
+    const id = youtubeId(url.value);
+    return { id: id || `m-${strip(title.value).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)}`, url: id ? `https://www.youtube.com/watch?v=${id}` : '', title: title.value.trim(), description: desc.value.trim().slice(0, DESC_MAX), status: 'done' };
   };
+  const update = () => {
+    const b = draft();
+    readBtn.hidden = !youtubeId(url.value);
+    const has = !!(b.title || b.description);
+    keep.disabled = !has || isSaved(b.id);
+    if (!has) { result.replaceChildren(); return; }
+    const r = analyzed(b, null);
+    result.replaceChildren(verdictBox(r.license, false), ...beatDetails(b, r).filter(Boolean));
+  };
+  const readFromLink = async () => {
+    const id = youtubeId(url.value);
+    if (!id) return;
+    readBtn.disabled = true;
+    readBtn.replaceChildren(h('span', { class: 'spinner' }), 'Lecture…');
+    try {
+      let pages = await readPages([id], 'www.youtube.com');
+      let page = pages.get(id);
+      let d = cleanDescription(page?.text, page?.title);
+      if (!useful(d)) { pages = await readPages([id], 'm.youtube.com'); page = pages.get(id) || page; d = cleanDescription(page?.text, page?.title); }
+      if (page?.title) title.value = page.title;
+      if (useful(d)) desc.value = d; else toast('Description illisible : colle-la à la main.');
+      update();
+    } catch (e) {
+      toast(errorKind(e) === 'connect' ? 'Branche Parallel Search pour lire les liens (claude.ai → Connecteurs).' : 'Lecture impossible : colle la description à la main.');
+    } finally {
+      readBtn.disabled = false;
+      readBtn.replaceChildren('Lire la description depuis YouTube');
+    }
+  };
+  readBtn.addEventListener('click', readFromLink);
+  url.addEventListener('paste', () => setTimeout(() => { update(); if (youtubeId(url.value)) readFromLink(); }, 0));
+  [url, title, desc].forEach((el) => el.addEventListener('input', () => { clearTimeout(update._t); update._t = setTimeout(update, 120); }));
+  keep.addEventListener('click', () => { const b = draft(); if (!isSaved(b.id)) toggleSaved(b); update(); });
+  openDrawer('Vérifier une prod', [
+    h('p', { class: 'muted', style: 'margin:0' }, 'Colle le lien d’une vidéo : je lis sa description et je te dis si tu peux vraiment sortir ton son sur Spotify.'),
+    h('label', { class: 'field', for: 'vUrl' }, 'Lien YouTube', url),
+    readBtn,
+    h('label', { class: 'field', for: 'vTitle' }, 'Titre', title),
+    h('label', { class: 'field', for: 'vDesc' }, 'Description', desc),
+    h('div', { class: 'chips', style: 'justify-content:flex-start; margin:0' }, h('span', { class: 'hint', style: 'align-self:center' }, 'Exemples :'),
+      EXAMPLES.map(([label, vid]) => h('button', { type: 'button', class: 'chip', onclick: () => { const v = DEMO_VIDEOS.find((x) => x.id === vid); url.value = ''; title.value = v.title; desc.value = v.description; update(); } }, label))),
+    result,
+    keep,
+  ]);
+  setTimeout(() => url.focus(), 80);
 }
-let verifyTimer;
-let sampleFn = null;
-function updateVerify() {
-  const b = draftBeat();
-  local.set('draft', { url: $('#vUrl').value, title: $('#vTitle').value, desc: $('#vDesc').value });
-  const has = !!(b.title || b.description);
-  $('#vEmpty').hidden = has;
-  $('#vResult').hidden = !has;
-  $('#vAdd').disabled = !has;
-  $('#vClaude').hidden = true;
-  if (!has) return;
-  const r = analyze(b);
-  const already = state.beats.some((x) => x.id === b.id || (x.title === b.title && x.description === b.description));
-  $('#vAdd').textContent = already ? '✓ Déjà dans ma liste' : '➕ Ajouter à ma liste';
-  $('#vAdd').disabled = already;
-  $('#vResult').replaceChildren(renderCard(b, r, { open: true, big: true }));
-  if (sampleFn) {
-    $('#vResult').append(h('div', { class: 'hint' },
-      'Formulation inhabituelle ? ',
-      h('button', { type: 'button', class: 'mini', onclick: askClaude }, '🤖 Demander l’avis de Claude'),
-      ' (utilise ton forfait Claude)'));
-  }
-}
-$('#vTitle').addEventListener('paste', (e) => {
-  const text = e.clipboardData?.getData('text') || '';
-  if (!text.includes('\n')) return;
-  e.preventDefault();
-  const [first, ...rest] = text.split(/\r?\n/);
-  $('#vTitle').value = first.trim();
-  if (!$('#vDesc').value.trim()) $('#vDesc').value = rest.join('\n').trim();
-  updateVerify();
-});
-['#vUrl', '#vTitle', '#vDesc'].forEach((s) => $(s).addEventListener('input', () => { clearTimeout(verifyTimer); verifyTimer = setTimeout(updateVerify, 120); }));
-$('#vClear').addEventListener('click', () => { $('#vUrl').value = ''; $('#vTitle').value = ''; $('#vDesc').value = ''; updateVerify(); $('#vTitle').focus(); });
-$('#vAdd').addEventListener('click', () => {
-  const b = { ...draftBeat(), addedAt: new Date().toISOString() };
-  if (!b.title && !b.description) return;
-  state.beats = [b, ...state.beats.filter((x) => x.id !== b.id)];
-  persist.save('beats');
-  updateListCount();
-  updateVerify();
-  toast('Ajoutée à ma liste', { label: 'Voir', run: () => showView('list') });
-});
-$('#listAdd').addEventListener('click', () => { showView('verify'); $('#vTitle').focus(); });
 
-let claudeCtl = null;
-async function askClaude() {
-  const b = draftBeat();
-  const box = $('#vClaude');
-  box.hidden = false;
-  box.replaceChildren(h('span', { class: 'spinner' }), 'Claude lit la description…');
-  claudeCtl?.abort();
-  claudeCtl = new AbortController();
+// ---------------------------------------------------------------------------
+// Avis de Claude (facultatif, capacité « sample »)
+
+let sampleFn = null;
+async function askClaude(item, slot) {
+  slot.replaceChildren(h('span', { class: 'spinner' }), 'Claude lit la description…');
   const prompt = [
     'Tu aides un rappeur à savoir s’il peut sortir un son sur Spotify avec une prod (beat) trouvée sur YouTube.',
-    'Lis le titre et la description ci-dessous. La description fait foi sur le titre.',
-    'Catégories : "ffp" = free for profit sans limite (Spotify OK sans payer) ; "upto" = free for profit jusqu’à une limite de streams ; "fnp" = gratuit seulement pour usage non commercial, il faut payer pour Spotify ; "paid" = payant ou vendue ; "unknown" = rien de clair.',
-    'Réponds UNIQUEMENT avec un objet JSON : {"categorie": "ffp|upto|fnp|paid|unknown", "limite_streams": nombre ou null, "credit_obligatoire": true/false, "titre_trompeur": true/false, "explication": "2 phrases max en français simple", "citation": "la phrase exacte de la description qui décide, ou chaîne vide"}',
-    '',
-    `TITRE : ${b.title}`,
-    'DESCRIPTION :',
-    b.description.slice(0, 6000),
+    'Lis le titre et la description. La description fait foi sur le titre.',
+    'Catégories : "ffp" = free for profit sans limite ; "upto" = free for profit jusqu’à une limite de streams ; "fnp" = gratuit seulement non commercial, payer pour Spotify ; "paid" = payant ou vendue ; "unknown" = rien de clair.',
+    'Réponds UNIQUEMENT avec ce JSON : {"categorie": "ffp|upto|fnp|paid|unknown", "limite_streams": nombre ou null, "explication": "2 phrases max en français simple", "citation": "phrase exacte qui décide, ou vide"}',
+    '', `TITRE : ${item.title}`, 'DESCRIPTION :', String(item.description || '').slice(0, 6000),
   ].join('\n');
   try {
-    const ans = await sampleFn.json(prompt, { signal: claudeCtl.signal });
-    const cat = CATEGORIES[ans?.categorie] ? ans.categorie : 'unknown';
-    const algo = analyze(b).license.category;
-    box.replaceChildren(
-      h('h4', {}, '🤖 Avis de Claude'),
-      h('div', { class: `cat-${cat}` }, h('b', { style: 'color: var(--c)' }, `${GROUP_ICON[cat]} ${cat === 'upto' && ans.limite_streams ? `Up to ${formatCount(Number(ans.limite_streams))} streams` : CATEGORIES[cat].label}`),
-        ans.titre_trompeur ? ' · ⚠️ titre trompeur' : '', ans.credit_obligatoire ? ' · ✍️ crédit obligatoire' : ''),
-      h('p', { style: 'margin:6px 0 0' }, String(ans.explication || '')),
-      ans.citation ? h('q', {}, String(ans.citation)) : null,
-      h('p', { class: 'agree', style: 'margin:8px 0 0' }, cat === algo ? '✔ Même verdict que l’algo.' : `≠ L’algo dit « ${CATEGORIES[algo].label} ». Relis la description pour trancher.`),
-    );
+    const a = await sampleFn.json(prompt);
+    const cat = CATEGORIES[a?.categorie] ? a.categorie : 'unknown';
+    const algo = analyzed(item, null).license.category;
+    slot.replaceChildren(h('div', { class: `claude-box cat-${cat}` },
+      h('b', {}, `Claude : ${cat === 'upto' && a.limite_streams ? `Up to ${formatCount(Number(a.limite_streams))} streams` : CATEGORIES[cat].label}`),
+      h('div', {}, String(a.explication || '')), a.citation ? h('q', {}, String(a.citation)) : null,
+      h('div', { class: 'hint', style: 'margin-top:6px' }, cat === algo ? 'Même verdict que l’algo.' : `L’algo dit « ${CATEGORIES[algo].label} » : relis la description pour trancher.`)));
   } catch (e) {
-    if (e?.code === 'cancelled') return;
-    const msg = {
-      not_granted: 'Tu n’as pas autorisé cette page à utiliser Claude.',
-      sampling_disabled: 'Claude n’est pas disponible pour ce compte.',
-      rate_limited: 'Trop de demandes pour le moment : réessaie dans un moment.',
-      invalid_json: 'Réponse illisible : réessaie.',
-    }[e?.code] || 'Claude n’a pas pu répondre. Réessaie plus tard.';
-    box.replaceChildren(h('h4', {}, '🤖 Avis de Claude'), msg);
+    slot.replaceChildren(e?.code === 'not_granted' ? 'Tu n’as pas autorisé Claude pour cette page.' : e?.code === 'rate_limited' ? 'Trop de demandes : réessaie dans un moment.' : 'Claude n’a pas pu répondre.');
     if (['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed'].includes(e?.code)) sampleFn = null;
   }
 }
 
 // ---------------------------------------------------------------------------
-// MA LISTE
-
-$('#hideExamples').addEventListener('click', () => { local.set('examplesHidden', true); listBoard.render(); });
-function updateListCount() {
-  const dot = $('#listCount');
-  dot.hidden = !state.beats.length;
-  dot.textContent = state.beats.length;
-}
-function removeBeat(id) {
-  const before = state.beats;
-  state.beats = state.beats.filter((b) => b.id !== id);
-  persist.save('beats');
-  listBoard.render();
-  updateListCount();
-  toast('Prod retirée', { label: 'Annuler', run: () => { state.beats = before; persist.save('beats'); listBoard.render(); updateListCount(); } });
-}
-const listBoard = createBoard($('#listBoard'), 'list', {
-  defaultOff: ['paid', 'unknown'],
-  recentLabel: 'Ajout récent',
-  source: () => {
-    let src;
-    if (state.beats.length) src = { items: state.beats, manual: true };
-    else if (!local.get('examplesHidden', false)) src = { items: DEMO_VIDEOS.map((v) => ({ id: v.id, title: v.title, description: v.description, channel: v.channel.replace(' (démo)', '') })), example: true };
-    else src = { items: [] };
-    $('#examplesBanner').hidden = !src.example;
-    return {
-      ...src,
-      showEmpty: true,
-      empty: () => h('div', { class: 'nores' }, h('div', { style: 'font-size:34px' }, '🗂️'), h('h3', {}, 'Ta liste est vide'),
-        h('p', {}, 'Dans « Recherche », clique sur « ➕ Garder » sous une prod. Ou vérifie une prod à la main dans « Vérifier ».'),
-        h('button', { type: 'button', class: 'primary small', onclick: () => showView('search') }, '🔎 Lancer une recherche')),
-    };
-  },
-  actions: (beat, src) => (src.example ? [] : [() => h('button', { type: 'button', class: 'act', title: 'Retirer de ma liste', onclick: () => removeBeat(beat.id) }, '🗑️', h('span', {}, 'Retirer'))]),
-});
-
-// ---------------------------------------------------------------------------
 // Démarrage
 
-const DEFAULT_FORM = { prompt: 'rapide, énergique et musicale', manualQuery: '', licenses: ['ffp', 'upto'], depth: '' };
-writeForm(local.get('form', DEFAULT_FORM));
-const draft = local.get('draft', null);
-if (draft) { $('#vUrl').value = draft.url || ''; $('#vTitle').value = draft.title || ''; $('#vDesc').value = draft.desc || ''; }
 applyDevice();
-updateVerify();
+syncBpmPill();
+syncVerifiedPill();
+restoreSession();
 renderHistory();
-updateListCount();
-if (lastSearch) { renderSearchHead(); $('#planBox').open = false; }
-searchBoard.render();
-listBoard.render();
-showView(location.hash.slice(1) || local.get('view', 'search'), { scroll: false });
+renderSavedProds();
+renderSavedSearches();
+updateDots();
+setSeg('prods');
+showView(location.hash.slice(1) || local.get('view', 'search'));
 persist.init();
-window.claude?.use?.('sample').then((s) => { sampleFn = s || null; if (s) updateVerify(); }).catch(() => {});
+window.claude?.use?.('sample').then((s) => { sampleFn = s || null; }).catch(() => {});
 })();
