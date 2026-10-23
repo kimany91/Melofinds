@@ -37,6 +37,14 @@ class Names(unittest.TestCase):
         self.assertEqual(mpc.build_name("Luther Type Beat", "C maj", None), "Luther Type Beat [C maj]")
         self.assertEqual(mpc.build_name("Luther Type Beat"), "Luther Type Beat")
 
+    def test_etiquette_licence(self):
+        self.assertEqual(mpc.build_name("[FREE FOR PROFIT] Luther Type Beat - TREE", "F# min", 140, "ffp"), "Luther Type Beat - TREE [F# min, 140 BPM] [FFP]")
+        self.assertEqual(mpc.build_name("(FREE) Damso Type Beat", None, None, "fnp"), "Damso Type Beat [F]")
+        self.assertEqual(mpc.build_name("Luther Type Beat", None, 150, "upto", 5000), "Luther Type Beat [150 BPM] [FFP, UPTO 5000]")
+        self.assertEqual(mpc.build_name("Luther Type Beat", None, None, "upto", "pas un nombre"), "Luther Type Beat [FFP, UPTO]")
+        self.assertEqual(mpc.build_name("Luther Type Beat", None, None, "paid"), "Luther Type Beat")
+        self.assertEqual(mpc.build_name("Luther Type Beat", None, None, "../../evil"), "Luther Type Beat")
+
     def test_caracteres_dangereux(self):
         n = mpc.build_name('..\\..\\Windows\\system32/evil:*?"<>|.exe')
         for ch in '\\/:*?"<>|':

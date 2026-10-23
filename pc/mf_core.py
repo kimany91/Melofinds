@@ -31,7 +31,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -311,10 +311,30 @@ def valid_bpm(b):
     return n if 50 <= n <= 220 else None
 
 
-def build_name(title, key=None, bpm=None):
+def licence_tag(lic, limit=None):
+    """Licence lue par l'app → étiquette du nom de fichier :
+    free for profit [FFP] · free [F] · free for profit limité [FFP, UPTO 5000]."""
+    lic = str(lic or "")
+    if lic == "ffp":
+        return "FFP"
+    if lic == "fnp":
+        return "F"
+    if lic == "upto":
+        try:
+            n = int(limit)
+        except (TypeError, ValueError):
+            n = 0
+        return f"FFP, UPTO {n}" if 0 < n < 10**10 else "FFP, UPTO"
+    return None  # payant / inconnu : pas d'étiquette
+
+
+def build_name(title, key=None, bpm=None, lic=None, limit=None):
     tags = [x for x in (key, f"{bpm} BPM" if bpm else None) if x]
     base = clean_title(title)[:110].rstrip(" -,.")
     name = f"{base} [{', '.join(tags)}]" if tags else base
+    lt = licence_tag(lic, limit)
+    if lt:
+        name = f"{name} [{lt}]"
     if re.fullmatch(r"(?i)(con|prn|aux|nul|com\d|lpt\d)(\s.*)?", name):
         name = f"Prod {name}"
     return name.rstrip(" .") or "Prod"
@@ -567,7 +587,7 @@ def download(video_id, root, info):
     desc = meta.get("description") or ""
     key = valid_key(info.get("key")) or find_key(meta.get("title") or "", desc)
     bpm = valid_bpm(info.get("bpm")) or find_bpm(meta.get("title") or "", desc)
-    final = unique_path(root, build_name(meta.get("title") or info.get("t") or video_id, key, bpm))
+    final = unique_path(root, build_name(meta.get("title") or info.get("t") or video_id, key, bpm, info.get("lic"), info.get("limit")))
     if not inside(final, root) or final.suffix.lower() != ".wav":
         return False, "nom de fichier refusé"
 

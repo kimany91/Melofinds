@@ -86,6 +86,46 @@ def _icon(root):
         pass
 
 
+SITE_URL = "https://kimany91.github.io/Melofinds/"
+
+
+def _chrome_path():
+    """Chrome installé sur ce PC (dossiers habituels, puis le registre Windows)."""
+    cands = []
+    for env in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        base = os.environ.get(env)
+        if base:
+            cands.append(Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe")
+    for p in cands:
+        if p.exists():
+            return str(p)
+    if C.WINDOWS:
+        import winreg
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            try:
+                with winreg.OpenKey(hive, r"Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe") as k:
+                    v = winreg.QueryValueEx(k, None)[0]
+                    if v and Path(v).exists():
+                        return v
+            except OSError:
+                pass
+    import shutil
+    return shutil.which("google-chrome") or shutil.which("chrome")
+
+
+def open_site():
+    """Ouvre Melofinds Web dans Chrome (sinon le navigateur par défaut)."""
+    chrome = _chrome_path()
+    if chrome:
+        try:
+            subprocess.Popen([chrome, SITE_URL], close_fds=True)
+            return
+        except OSError:
+            pass
+    import webbrowser
+    webbrowser.open(SITE_URL)
+
+
 def _open_path(p):
     try:
         if C.WINDOWS:
@@ -115,6 +155,7 @@ def manager_window(selftest=False):
     head.pack(fill="x")
     ttk.Label(head, text="Melofinds PC", style="Title.TLabel").pack(side="left")
     ttk.Label(head, text=f"version {C.VERSION}", style="Muted.TLabel").pack(side="left", padx=10, pady=(6, 0))
+    ttk.Button(head, text="Ouvrir Melofinds Web", style="Accent.TButton", command=open_site).pack(side="right")
     tabs = ttk.Notebook(outer)
     tabs.pack(fill="both", expand=True, pady=(12, 0))
 

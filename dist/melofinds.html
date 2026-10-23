@@ -2970,6 +2970,7 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
   const L = r.license;
   const cat = L.category;
   const vid = ytIdOf(item);
+  if (vid) cardItems.set(vid, item);
   const card = h('article', { class: `card cat-${cat}${isNew ? ' new' : ''}${item.status === 'unread' ? ' unread' : ''}${vid && vid === player.vid ? ' playing' : ''}`, style: `--i:${index}`, 'data-vid': vid });
   const style = r.styles?.[0]?.label || 'Type beat';
   const coverAttrs = WEB
@@ -3081,6 +3082,8 @@ function prewarmPlayer() {
 function playItem(item) {
   const vid = ytIdOf(item);
   if (!vid) { toast('Pas de vidéo YouTube pour cette prod'); return; }
+  player.userPaused = false;
+  bgStart(item);
   if (player.item && player.vid === vid && player.frame && player.status !== 'blocked') { togglePlay(); return; }
   clearLater();
   Object.assign(player, { item, vid, status: 'loading', message: '', time: 0, dur: 0 });
@@ -3115,7 +3118,9 @@ function onPlayerReady() {
 function togglePlay() {
   if (!player.item) return;
   if (!player.frame || player.status === 'blocked') { const it = player.item; player.item = null; playItem(it); return; }
-  if (isPlaying()) { ytSend('pauseVideo'); player.state = 2; renderMini(); return; }
+  if (isPlaying()) { player.userPaused = true; bgPause(); ytSend('pauseVideo'); player.state = 2; renderMini(); return; }
+  player.userPaused = false;
+  bgStart(player.item);
   if (player.state === 0) ytSend('seekTo', [0, true]);
   ytSend('playVideo');
   if (player.status === 'tap') {
@@ -3133,10 +3138,109 @@ function playerBlocked(msg, killFrame = false) {
 
 function stopPlayer() {
   clearLater();
+  player.userPaused = true;
+  bgStop();
   ytSend('stopVideo');
   Object.assign(player, { item: null, vid: null, status: 'idle', time: 0, dur: 0 });
   renderMini();
 }
+
+// ---------------------------------------------------------------------------
+// Téléphone verrouillé / appli en arrière-plan (au mieux de ce que permet un
+// lecteur YouTube caché) : commandes sur l'écran verrouillé (titre, miniature,
+// lecture, pause, suivante, précédente), un son silencieux qui garde la page
+// active, relance si le système met la prod en pause, et prod suivante à la fin.
+
+const cardItems = new Map(); // vid → prod affichée (pour suivante / précédente)
+const bg = { audio: null, url: '', resumes: 0, lastResume: 0 };
+const isTouch = () => device === 'mobile' || (window.matchMedia && matchMedia('(pointer: coarse)').matches);
+function silentWavUrl() {
+  // 6 s de quasi-silence (8 kHz, 8 bits) : inaudible, mais compte comme un son en cours.
+  const n = 8000 * 6;
+  const v = new DataView(new ArrayBuffer(44 + n));
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true);
+  v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); str(36, 'data'); v.setUint32(40, n, true);
+  for (let i = 0; i < n; i++) v.setUint8(44 + i, 128 + (i & 1));
+  return URL.createObjectURL(new Blob([v.buffer], { type: 'audio/wav' }));
+}
+function bgStart(item) {
+  if (!WEB) return;
+  if (isTouch()) {
+    try {
+      if (!bg.audio) { bg.url = silentWavUrl(); bg.audio = new Audio(bg.url); bg.audio.loop = true; bg.audio.setAttribute('playsinline', ''); }
+      bg.audio.play().catch(() => {});
+    } catch { /* pas de son d'arrière-plan */ }
+  }
+  mediaSessionFor(item);
+}
+function bgPause() { try { bg.audio?.pause(); } catch { /* rien */ } msState(); }
+function bgStop() {
+  bgPause();
+  if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none'; } catch { /* rien */ } }
+}
+let msHandlersSet = false;
+function mediaSessionFor(item) {
+  if (!('mediaSession' in navigator) || !item) return;
+  const vid = ytIdOf(item);
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: displayTitle(item.title || 'Prod'), artist: 'Melofinds', album: 'Type beats',
+      artwork: vid ? [{ src: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' }] : [],
+    });
+  } catch { /* navigateur ancien */ }
+  if (msHandlersSet) return;
+  msHandlersSet = true;
+  const on = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch { /* action non gérée */ } };
+  on('play', () => { if (player.item && !isPlaying()) togglePlay(); });
+  on('pause', () => { if (player.item && isPlaying()) togglePlay(); });
+  on('stop', () => stopPlayer());
+  on('nexttrack', () => playNeighbour(1));
+  on('previoustrack', () => { if (playerNow() > 5) seekBeat(0); else playNeighbour(-1); });
+  on('seekto', (e) => { if (e?.seekTime != null && player.frame) seekBeat(e.seekTime); });
+  on('seekforward', () => seekBeat(playerNow() + 10));
+  on('seekbackward', () => seekBeat(Math.max(0, playerNow() - 10)));
+}
+function msState() {
+  if (!('mediaSession' in navigator)) return;
+  try {
+    navigator.mediaSession.playbackState = player.item ? (isPlaying() ? 'playing' : 'paused') : 'none';
+    if (player.dur > 0) navigator.mediaSession.setPositionState({ duration: player.dur, position: Math.min(player.dur, Math.max(0, playerNow())), playbackRate: 1 });
+  } catch { /* position non gérée */ }
+}
+function playNeighbour(dir) {
+  const view = $('.view.active') || document;
+  const vids = $$('.card[data-vid]', view).map((c) => c.dataset.vid);
+  const i = vids.indexOf(player.vid);
+  const next = i >= 0 ? cardItems.get(vids[i + dir]) : null;
+  if (!next) return false;
+  playItem(next);
+  return true;
+}
+function onStateChanged(was, st) {
+  msState();
+  if (!player.item || player.status === 'blocked' || rec.state !== 'idle' || take.id) return;
+  if (st === 0) { // fin de la prod : on enchaîne sur la suivante de la liste
+    if (!playNeighbour(1)) { bgPause(); }
+    return;
+  }
+  // Mise en pause par le téléphone (écran verrouillé), pas par toi : on relance.
+  if ((st === 2 || st === -1 || st === 5) && document.hidden && !player.userPaused) {
+    const now = Date.now();
+    if (bg.resumes < 30 && now - bg.lastResume > 1500) {
+      bg.resumes++;
+      bg.lastResume = now;
+      ytSend('playVideo');
+    }
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  bg.resumes = 0;
+  if (!document.hidden && player.item && !player.userPaused && !isPlaying() && player.status !== 'blocked' && rec.state === 'idle' && !take.id) {
+    ytSend('playVideo'); // de retour sur l'appli : on reprend si le téléphone avait coupé
+  }
+});
 
 window.addEventListener('message', (e) => {
   if (!player.frame || e.source !== player.frame.contentWindow) return;
@@ -3154,12 +3258,15 @@ window.addEventListener('message', (e) => {
   }
   if (d.event === 'onStateChange' && typeof d.info === 'number') player.state = d.info;
   if (d.event === 'onError') { if (player.item) playerBlocked(YT_ERRORS[d.info] || 'Lecture impossible ici. Ouvre la prod sur YouTube.'); return; }
+  if (player.state !== player.prevState) { const was = player.prevState; player.prevState = player.state; onStateChanged(was, player.state); }
   if (isPlaying() && player.status !== 'blocked') player.status = 'ready';
   if (player.item) renderMini();
 });
 
 let miniHideTimer = null;
+let msTick = 0;
 function renderMini() {
+  if (Date.now() - msTick > 1000) { msTick = Date.now(); msState(); }
   const mini = $('#mini');
   const on = Boolean(player.item);
   document.body.classList.toggle('has-mini', on);
@@ -4958,7 +5065,8 @@ async function sendToPc(item) {
   let r = null;
   try { r = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
   // Le PC nomme le fichier « Titre [Clé, BPM].wav » (sans « free ») ; il relit aussi la description.
-  const msg = { v: id, t: String(item.title || '').slice(0, 200), bpm: r?.bpm || null, key: r?.key || null, force: pc.queue[id]?.state === 'error' || undefined };
+  // Licence → étiquette du fichier sur le PC : [FFP], [F] ou [FFP, UPTO 5000]
+  const msg = { v: id, t: String(item.title || '').slice(0, 200), bpm: r?.bpm || null, key: r?.key || null, lic: r?.license?.category || null, limit: r?.license?.limit || null, force: pc.queue[id]?.state === 'error' || undefined };
   pc.queue[id] = { t: item.title || id, at: Date.now(), state: 'sending', msg };
   syncPcUi();
   try {

@@ -71,6 +71,14 @@ avec toujours un bouton « YouTube » pour ouvrir la vidéo.
   ton navigateur) pour lire toutes les descriptions et les likes. Quota : environ
   25 recherches par jour et par clé.
 
+## Écoute téléphone verrouillé (version web)
+
+Sur mobile, la prod continue autant que le permet le lecteur YouTube caché : commandes sur
+l'écran verrouillé (titre, miniature, lecture, pause, suivante, précédente), son silencieux
+qui garde la page active, relance si le téléphone met la prod en pause, et prod suivante
+de la liste à la fin. Android (Chrome) : en général oui. iPhone (Safari) : Apple coupe les
+vidéos des pages web quand l'écran se verrouille ; la lecture reprend au déverrouillage.
+
 ## Rec : rapper sur la prod (version web)
 
 Bouton **Rec** dans la barre de lecture (ou « Rec dessus » dans la fiche d'une prod) :
@@ -94,7 +102,8 @@ d'exe qui s'auto-extrait), avec un lanceur PyInstaller recompilé, sans UPX, ave
 informations de version ; il n'utilise ni script caché, ni PowerShell, ni `taskkill`. La
 construction analyse l'installateur avec Windows Defender avant de le publier.
 
-Le raccourci ouvre le **panneau de gestion** :
+Le raccourci ouvre le **panneau de gestion** (avec un bouton « Ouvrir Melofinds Web » qui
+ouvre le site dans Chrome) :
 - **Accueil** : « Mettre en ligne » / « Mettre hors ligne », démarrage automatique,
   dernières prods reçues ;
 - **Appareils** : téléphones appairés (nom, type, dernière activité), ajouter avec le
@@ -102,7 +111,9 @@ Le raccourci ouvre le **panneau de gestion** :
 - **Dossier & réglages** : dossier des prods, emplacement du programme, journal,
   mises à jour, désinstallation (les prods restent dans leur dossier).
 
-- Nom du fichier : `Titre [Clé, BPM].wav`, jamais « free », « free for profit », « FFP »…
+- Nom du fichier : `Titre [Clé, BPM] [Licence].wav`, avec la licence lue par l'app :
+  `[FFP]` (free for profit), `[F]` (free) ou `[FFP, UPTO 5000]` ; le titre YouTube est
+  nettoyé de ses « FREE », « free for profit », « FFP »…
 - Sécurité : envois signés (HMAC-SHA256, clé qui ne passe jamais par ntfy) ; un envoi ne
   contient qu'un identifiant de vidéo ; seul un vrai .wav entre dans l'unique dossier
   choisi sur le PC ; 15 min max par vidéo, 40 par heure, envois de plus de 48 h refusés.
