@@ -3164,37 +3164,19 @@ function stopPlayer() {
 
 // ---------------------------------------------------------------------------
 // Téléphone verrouillé / appli en arrière-plan (au mieux de ce que permet un
-// lecteur YouTube caché) : commandes sur l'écran verrouillé (titre, miniature,
-// lecture, pause, suivante, précédente), un son silencieux qui garde la page
-// active, relance si le système met la prod en pause, et prod suivante à la fin.
+// lecteur YouTube caché) : commandes sur l'écran verrouillé quand le téléphone les
+// propose, tentative de relance si le système coupe la prod, reprise au retour
+// sur l'appli, et prod suivante de la liste à la fin.
 
 const cardItems = new Map(); // vid → prod affichée (pour suivante / précédente)
-const bg = { audio: null, url: '', resumes: 0, lastResume: 0 };
-const isTouch = () => device === 'mobile' || (window.matchMedia && matchMedia('(pointer: coarse)').matches);
-function silentWavUrl() {
-  // 6 s de quasi-silence (8 kHz, 8 bits) : inaudible, mais compte comme un son en cours.
-  const n = 8000 * 6;
-  const v = new DataView(new ArrayBuffer(44 + n));
-  const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
-  str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE'); str(12, 'fmt ');
-  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true);
-  v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); str(36, 'data'); v.setUint32(40, n, true);
-  for (let i = 0; i < n; i++) v.setUint8(44 + i, 128 + (i & 1));
-  return URL.createObjectURL(new Blob([v.buffer], { type: 'audio/wav' }));
-}
+const bg = { resumes: 0, lastResume: 0 };
+// Pas de « son silencieux » pour garder la page active : il sifflait (note aiguë) et ne
+// suffit pas à empêcher le téléphone de couper le lecteur YouTube.
 function bgStart(item) {
-  if (!WEB) return;
-  if (isTouch()) {
-    try {
-      if (!bg.audio) { bg.url = silentWavUrl(); bg.audio = new Audio(bg.url); bg.audio.loop = true; bg.audio.setAttribute('playsinline', ''); }
-      bg.audio.play().catch(() => {});
-    } catch { /* pas de son d'arrière-plan */ }
-  }
-  mediaSessionFor(item);
+  if (WEB) mediaSessionFor(item);
 }
-function bgPause() { try { bg.audio?.pause(); } catch { /* rien */ } msState(); }
+function bgPause() { msState(); }
 function bgStop() {
-  bgPause();
   if ('mediaSession' in navigator) { try { navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none'; } catch { /* rien */ } }
 }
 let msHandlersSet = false;

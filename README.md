@@ -73,11 +73,10 @@ avec toujours un bouton « YouTube » pour ouvrir la vidéo.
 
 ## Écoute téléphone verrouillé (version web)
 
-Sur mobile, la prod continue autant que le permet le lecteur YouTube caché : commandes sur
-l'écran verrouillé (titre, miniature, lecture, pause, suivante, précédente), son silencieux
-qui garde la page active, relance si le téléphone met la prod en pause, et prod suivante
-de la liste à la fin. Android (Chrome) : en général oui. iPhone (Safari) : Apple coupe les
-vidéos des pages web quand l'écran se verrouille ; la lecture reprend au déverrouillage.
+Sur mobile : commandes sur l'écran verrouillé quand le téléphone les propose, tentative
+de relance si le téléphone coupe la prod, reprise au retour sur l'appli et prod suivante
+de la liste à la fin. Le lecteur YouTube intégré est souvent coupé par le téléphone quand
+l'écran se verrouille (YouTube réserve l'écoute en arrière-plan à son abonnement).
 
 ## Rec : rapper sur la prod (version web)
 
