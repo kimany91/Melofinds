@@ -4874,8 +4874,15 @@ function pcKey() {
   if (!/^[a-f0-9]{64}$/.test(k)) { k = randHex(32); local.set('pcKey', k); }
   return k;
 }
+// Nom court de cet appareil, affiché dans « Appareils » sur le PC (ex. « iPhone · Safari »)
+function deviceLabel() {
+  const ua = navigator.userAgent || '';
+  const dev = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'Appareil';
+  const br = /EdgA?\//.test(ua) ? 'Edge' : /SamsungBrowser/.test(ua) ? 'Samsung' : /OPR\//.test(ua) ? 'Opera' : /Firefox|FxiOS/.test(ua) ? 'Firefox' : /Chrome|CriOS/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : '';
+  return br ? `${dev} · ${br}` : dev;
+}
 async function signed(obj) {
-  const p = JSON.stringify({ mf: 2, ts: Date.now(), n: randHex(16), ...obj });
+  const p = JSON.stringify({ mf: 2, ts: Date.now(), n: randHex(16), dev: deviceLabel(), ...obj });
   const raw = new Uint8Array(pcKey().match(/../g).map((x) => parseInt(x, 16)));
   const key = await crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(p)));
@@ -4914,10 +4921,10 @@ function listenPc() {
       }
       return;
     }
-    if (m.pc === 'online' || m.pc === 'alive' || m.pong) {
+    if (m.pc === 'online' || m.pc === 'alive' || m.pc === 'offline' || m.pong) {
       const at = (d.time || 0) * 1000;
       if (at >= (pc.info?.at || 0)) {
-        pc.info = { ...(pc.info || {}), at, version: String(m.version || pc.info?.version || ''), dossier: String(m.dossier || pc.info?.dossier || '') };
+        pc.info = { ...(pc.info || {}), at, offline: m.pc === 'offline', version: String(m.version || pc.info?.version || ''), dossier: String(m.dossier || pc.info?.dossier || ''), name: String(m.name || pc.info?.name || '') };
         local.set('pcInfo', pc.info);
       }
       if (m.pong && pc.onPong) pc.onPong(m);
@@ -4971,7 +4978,7 @@ async function sendToPc(item) {
 // File d'attente : ntfy garde les envois ~12 h. Une prod pas encore reçue est
 // renvoyée avant d'expirer (et dès que le réseau revient) : elle arrive dès que
 // le PC se rallume, même des jours plus tard. Le PC ignore les doublons.
-const pcOn = () => !!pc.info && Date.now() - (pc.info.at || 0) < 40 * 60e3;
+const pcOn = () => !!pc.info && !pc.info.offline && Date.now() - (pc.info.at || 0) < 40 * 60e3;
 let resending = false;
 async function resendPending() {
   if (!WEB || !pc.info || resending || !navigator.onLine) return;
@@ -5019,8 +5026,8 @@ function pcStatusText() {
   const ago = Date.now() - (pc.info.at || 0);
   const when = ago < 90e3 ? 'à l’instant' : ago < 3600e3 ? `il y a ${Math.round(ago / 60e3)} min` : ago < 864e5 ? `il y a ${Math.round(ago / 3600e3)} h` : `il y a ${Math.round(ago / 864e5)} j`;
   const waiting = Object.values(pc.queue).filter((q) => q.state === 'sent' || q.state === 'unsent').length;
-  if (!pcOn()) return { ok: false, off: true, t: 'PC éteint ou hors ligne', s: `Dernier signe ${when}. ${waiting ? `${waiting} prod${waiting > 1 ? 's' : ''} en file d’attente : elle${waiting > 1 ? 's' : ''} arrivera${waiting > 1 ? 'nt' : ''} dès qu’il se rallume.` : 'Tes envois l’attendront et arriveront dès qu’il se rallume.'}` };
-  return { ok: true, t: `PC allumé${pc.info.version ? ` · version ${pc.info.version}` : ''}`, s: `Dernier signe ${when}${pc.info.dossier ? ` · dossier ${pc.info.dossier}` : ''}` };
+  if (!pcOn()) return { ok: false, off: true, t: pc.info.offline ? 'PC hors ligne' : 'PC éteint ou hors ligne', s: `Dernier signe ${when}. ${waiting ? `${waiting} prod${waiting > 1 ? 's' : ''} en file d’attente : elle${waiting > 1 ? 's' : ''} arrivera${waiting > 1 ? 'nt' : ''} dès qu’il se rallume.` : 'Tes envois l’attendront et arriveront dès qu’il se rallume.'}` };
+  return { ok: true, t: `PC en ligne${pc.info.version ? ` · version ${pc.info.version}` : ''}`, s: `${pc.info.name ? `Ce téléphone s’appelle « ${pc.info.name} » sur le PC · ` : ''}Dernier signe ${when}${pc.info.dossier ? ` · dossier ${pc.info.dossier}` : ''}` };
 }
 function renderPcStatus() {
   const st = pcStatusText();
@@ -5038,7 +5045,7 @@ function renderPcStatus() {
 function cmdBlock(text) {
   return h('div', { class: 'cmd' }, h('code', {}, text), h('button', { type: 'button', class: 'ghost', onclick: () => copyText(text) }, 'Copier'));
 }
-const PC_EXE_URL = 'https://github.com/kimany91/Melofinds/releases/latest/download/MelofindsPC.exe';
+const PC_EXE_URL = 'https://github.com/kimany91/Melofinds/releases/latest/download/MelofindsSetup.exe';
 function openPcSetup(pending) {
   listenPc();
   const pairing = `${pcCode()}.${pcKey()}`;
@@ -5063,13 +5070,14 @@ function openPcSetup(pending) {
   openDrawer('Télécharger sur mon PC', [
     h('p', { class: 'muted', style: 'margin:0' }, 'Touche ', icon('down'), ' sur une prod : elle arrive en .wav sur ton PC, même si tu es loin (5G ou Wi-Fi). Il faut juste que le PC soit allumé.'),
     h('div', { id: 'pcStatus' }),
-    h('div', { class: 'd-sec' }, h('h4', {}, '1. Télécharger le programme (sur le PC Windows)'),
-      h('a', { class: 'primary dl-exe', href: PC_EXE_URL, target: '_blank', rel: 'noopener' }, icon('down'), 'MelofindsPC.exe'),
-      h('p', { class: 'hint' }, 'Un seul fichier, rien d’autre à installer : il télécharge lui-même ses outils. Ouvre cette page sur ton PC (ou envoie-toi le lien).')),
-    h('div', { class: 'd-sec' }, h('h4', {}, '2. Double-cliquer dessus et coller ce code'),
+    h('div', { class: 'd-sec' }, h('h4', {}, '1. Installer Melofinds PC (sur le PC Windows)'),
+      h('a', { class: 'primary dl-exe', href: PC_EXE_URL, target: '_blank', rel: 'noopener' }, icon('down'), 'MelofindsSetup.exe'),
+      h('p', { class: 'hint' }, 'Ouvre ce lien sur ton PC (ou envoie-le-toi), lance le fichier : choisis où installer le programme et où arrivent les prods. Il installe tout seul ce qui manque et crée un raccourci « Melofinds PC » sur le bureau.'),
+      h('p', { class: 'hint' }, 'Si Windows affiche « Windows a protégé votre ordinateur » : « Informations complémentaires » → « Exécuter quand même » (le programme n’est pas signé par Microsoft, c’est normal).')),
+    h('div', { class: 'd-sec' }, h('h4', {}, '2. Ajouter ce téléphone'),
       cmdBlock(pairing),
-      h('p', { class: 'hint' }, 'Si Windows affiche « Windows a protégé votre ordinateur » : « Informations complémentaires » → « Exécuter quand même » (le programme n’est pas signé par Microsoft, c’est normal).'),
-      h('p', { class: 'hint' }, 'Choisis ton dossier (Musique\\Melofinds par défaut), clique sur « Installer » : il se lance ensuite tout seul à chaque démarrage, en arrière-plan.')),
+      h('p', { class: 'hint' }, 'Colle ce code dans l’installateur, ou plus tard : raccourci « Melofinds PC » → onglet « Appareils » → « Ajouter un appareil ». Chaque téléphone a son propre code.'),
+      h('p', { class: 'hint' }, 'Dans le panneau Melofinds PC : « Mettre en ligne » / « Mettre hors ligne », démarrage automatique avec l’ordinateur, appareils connectés, dossier des prods.')),
     h('div', { class: 'd-sec' }, h('h4', {}, '3. Vérifier'), h('div', { class: 'actions' }, test, upd)),
     h('div', { class: 'd-sec' }, h('h4', {}, 'Envois récents'), h('div', { id: 'pcList', class: 'pc-list' })),
     h('div', { class: 'd-sec' }, h('h4', {}, 'Sécurité'),

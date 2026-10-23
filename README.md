@@ -81,17 +81,21 @@ navigateur (onglet **Recs**) et se téléchargent. Conseil : mets des écouteurs
 
 ## Télécharger les prods sur ton PC (même loin de chez toi)
 
-Un seul programme Windows : **MelofindsPC.exe**
-(https://github.com/kimany91/Melofinds/releases/latest/download/MelofindsPC.exe).
-Double-clic, colle le code d'appairage affiché dans Melofinds Web (bouton « Mon PC »),
-choisis ton dossier, « Installer ». Il télécharge lui-même ses outils (yt-dlp, ffmpeg,
-Deno), se lance à chaque démarrage en arrière-plan et reçoit les prods envoyées depuis
-le téléphone (bouton ⬇) via ntfy.sh.
+Installateur Windows : **MelofindsSetup.exe**
+(https://github.com/kimany91/Melofinds/releases/latest/download/MelofindsSetup.exe).
+Il demande où mettre les fichiers du programme et où arrivent les prods, installe ce
+qui manque (yt-dlp, ffmpeg, Deno), crée un raccourci « Melofinds PC » sur le bureau et
+dans le menu Démarrer, l'inscrit dans « Applications installées » et peut le lancer au
+démarrage de l'ordinateur.
 
-- PC éteint : les prods restent en file d'attente et arrivent dès qu'il se rallume.
-  Le PC rattrape tout ce qui a été envoyé pendant ~12 h (durée de conservation de ntfy) ;
-  au-delà, l'app renvoie elle-même les prods pas encore reçues (et dès que le réseau
-  revient). Le PC signale « allumé » toutes les 30 min, l'app affiche s'il est éteint.
+Le raccourci ouvre le **panneau de gestion** :
+- **Accueil** : « Mettre en ligne » / « Mettre hors ligne », démarrage automatique,
+  dernières prods reçues ;
+- **Appareils** : téléphones appairés (nom, type, dernière activité), ajouter avec le
+  code d'appairage, renommer, retirer ;
+- **Dossier & réglages** : dossier des prods, emplacement du programme, journal,
+  mises à jour, désinstallation (les prods restent dans leur dossier).
+
 - Nom du fichier : `Titre [Clé, BPM].wav`, jamais « free », « free for profit », « FFP »…
 - Sécurité : envois signés (HMAC-SHA256, clé qui ne passe jamais par ntfy) ; un envoi ne
   contient qu'un identifiant de vidéo ; seul un vrai .wav entre dans l'unique dossier
@@ -103,7 +107,8 @@ le téléphone (bouton ⬇) via ntfy.sh.
   avec PyInstaller, fait un auto-test (outils + fenêtre) et publie la version
   `pc-v<VERSION>`. Pour publier une mise à jour : changer `VERSION` dans
   `pc/melofinds_pc.py` et pousser.
-- Code : `pc/melofinds_pc.py` · tests : `npm run test:pc`.
+- Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
+  `mf_install.py`, `mf_gui.py`) · tests : `npm run test:pc`.
 
 ## Lancer l'app complète (recherche YouTube automatique)
 

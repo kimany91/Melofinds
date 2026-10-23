@@ -35,9 +35,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyinstaller==6.11.1
-          pyinstaller --onefile --noconsole --name MelofindsPC pc/melofinds_pc.py
+          pyinstaller --onefile --noconsole --name MelofindsPC --paths pc --hidden-import mf_gui pc/melofinds_pc.py
+          Copy-Item dist\MelofindsPC.exe dist\MelofindsSetup.exe
 
-      - name: Auto-test (outils + fenêtre + vrai téléchargement en WAV)
+      - name: Auto-test (outils, fenêtres, installation + désinstallation, téléchargement)
         shell: pwsh
         env:
           MELOFINDS_TEST_VIDEO: jNQXAC9IVRw
@@ -59,7 +60,7 @@ jobs:
           Get-Content version.json
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag dist\MelofindsPC.exe version.json --clobber
+            gh release upload $tag dist\MelofindsPC.exe dist\MelofindsSetup.exe version.json --clobber
           } else {
-            gh release create $tag dist\MelofindsPC.exe version.json --title "Melofinds PC $ver" --target "${{ github.sha }}" --latest --notes "Programme Windows de Melofinds : reçoit les prods envoyées depuis Melofinds Web et les enregistre en .wav. Télécharge MelofindsPC.exe, double-clique, colle ton code d'appairage."
+            gh release create $tag dist\MelofindsPC.exe dist\MelofindsSetup.exe version.json --title "Melofinds PC $ver" --target "${{ github.sha }}" --latest --notes "Programme Windows de Melofinds : reçoit les prods envoyées depuis Melofinds Web et les enregistre en .wav. Télécharge MelofindsSetup.exe et lance-le : il demande où s'installer, installe ses outils, crée un raccourci sur le bureau. Le panneau Melofinds PC gère la mise en ligne, le démarrage automatique, les appareils et le dossier des prods."
           }

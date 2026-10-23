@@ -4,7 +4,8 @@ from pathlib import Path
 import os, sys
 os.environ.setdefault("MELOFINDS_HOME", tempfile.mkdtemp(prefix="mf-test-"))
 sys.path.insert(0, str(Path(__file__).parent))
-import melofinds_pc as mpc
+import mf_core as mpc
+import mf_install as inst
 KEY = "ab" * 32
 
 
@@ -133,6 +134,67 @@ class MiseAJour(unittest.TestCase):
     def test_sans_empreinte_refuse(self):
         with self.assertRaises(ValueError):
             self.manifest(sha256="pas-une-empreinte")
+
+
+class Appareils(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp(prefix="mf-cfg-"))
+        mpc.P.set(self.d)
+
+    def test_migration_2x(self):
+        code, key = "melofinds-" + "1a" * 16, "2b" * 32
+        (self.d / "config.json").write_text(json.dumps({"code": code, "cle": key, "dossier": "/x", "since": "m9", "done": ["abcdefghijk"], "history": [{"t": "a"}]}))
+        cfg = mpc.load_config()
+        self.assertEqual(len(cfg["devices"]), 1)
+        self.assertEqual(cfg["devices"][0]["code"], code)
+        self.assertNotIn("cle", cfg)
+        st = mpc.load_state()
+        self.assertEqual(st["since"][code], "m9")
+        self.assertEqual(st["done"], ["abcdefghijk"])
+
+    def test_plusieurs_appareils(self):
+        cfg = mpc.load_config()
+        a = inst.add_device(cfg, "melofinds-" + "1a" * 16 + "." + "2b" * 32, "iPhone")
+        b = inst.add_device(cfg, "melofinds-" + "3c" * 16 + "." + "4d" * 32, "")
+        self.assertEqual([d["name"] for d in cfg["devices"]], ["iPhone", "Appareil 2"])
+        inst.add_device(cfg, "melofinds-" + "1a" * 16 + "." + "5e" * 32, "")  # même téléphone, nouvelle clé
+        self.assertEqual(len(cfg["devices"]), 2)
+        self.assertEqual(cfg["devices"][0]["cle"], "5e" * 32)
+        with self.assertRaises(ValueError):
+            inst.add_device(cfg, "n'importe quoi", "")
+        mpc.save_config(cfg)
+        self.assertEqual(len(mpc.load_config()["devices"]), 2)
+        self.assertNotEqual(a["id"], b["id"])
+
+    def test_appareil_invalide_ignore(self):
+        (self.d / "config.json").write_text(json.dumps({"devices": [{"code": "x", "cle": "y"}, {"code": "melofinds-" + "1a" * 16, "cle": "2b" * 32, "id": "d1"}]}))
+        self.assertEqual(len(mpc.load_config()["devices"]), 1)
+
+
+class Installation2(unittest.TestCase):
+    def test_dossier_deja_utilise(self):
+        d = Path(tempfile.mkdtemp(prefix="mf-inst-"))
+        (d / "mes-sons.mp3").write_text("x")
+        self.assertEqual(inst.pick_install_dir(d), d / "Melofinds")  # jamais mélangé à tes fichiers
+        empty = Path(tempfile.mkdtemp(prefix="mf-inst-"))
+        self.assertEqual(inst.pick_install_dir(empty), empty)
+        with self.assertRaises(ValueError):
+            inst.pick_install_dir("relatif/dossier")
+
+    def test_desinstallation_ne_touche_que_ses_fichiers(self):
+        d = Path(tempfile.mkdtemp(prefix="mf-rm-"))
+        for n in ("config.json", "state.json", mpc.MARKER, "melofinds.log"):
+            (d / n).write_text("x")
+        (d / "tools").mkdir()
+        (d / "tools" / "yt-dlp.exe").write_text("x")
+        (d / "ma-prod.wav").write_text("x")
+        inst.remove_own_files(d)
+        self.assertEqual(sorted(p.name for p in d.iterdir()), ["ma-prod.wav"])
+
+    def test_raccourci_guillemets(self):
+        s = inst.shortcut_script("[Environment]::GetFolderPath('Desktop')", r"C:\Users\O'Neil\Melofinds\MelofindsPC.exe", r"C:\Users\O'Neil\Melofinds", "Gérer")
+        self.assertIn("'C:\\Users\\O''Neil\\Melofinds\\MelofindsPC.exe'", s)
+        self.assertNotIn("O'Neil", s)
 
 
 if __name__ == "__main__":
