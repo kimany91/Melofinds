@@ -515,7 +515,55 @@ let lastFocus = null;
 // ce navigateur (IndexedDB) et se téléchargent.
 
 const rec = { state: 'idle', stream: null, ctx: null, analyser: null, recorder: null, chunks: [], mime: '', offset: 0, startAt: 0, beat: null, raf: 0, tick: 0, autoStop: 0 };
-const take = { id: null, audio: null, url: '', offset: 0, sync: 0, beatId: null };
+const take = { id: null, audio: null, url: '', offset: 0, sync: 0, beatId: null, gainNode: null };
+
+// --- Volume de la voix : gain par prise (jusqu'à 400 %), réglage auto (voix le plus
+// fort possible sans saturer), export .wav avec le volume appliqué.
+const MAX_GAIN = 4;
+let audioCtxRef = null;
+const audioCtx = () => (audioCtxRef ||= new (window.AudioContext || window.webkitAudioContext)());
+async function decodeTake(r) {
+  const buf = await r.blob.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    const p = audioCtx().decodeAudioData(buf, resolve, reject);
+    if (p?.then) p.then(resolve, reject);
+  });
+}
+function peakOf(ab) {
+  let peak = 0;
+  for (let c = 0; c < ab.numberOfChannels; c++) {
+    const d = ab.getChannelData(c);
+    for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; }
+  }
+  return peak;
+}
+const autoGainFor = (peak) => (peak > 0.002 ? Math.min(MAX_GAIN, Math.max(1, 0.89 / peak)) : 1); // ≈ -1 dB
+async function measureTake(r) {
+  try { const peak = peakOf(await decodeTake(r)); return { peak, autoGain: autoGainFor(peak) }; } catch { return { peak: null, autoGain: 1 }; }
+}
+const beatVol = () => Math.max(0, Math.min(100, Number(local.get('recBeatVol', 100)) || 0));
+function wavFrom(ab, gain) {
+  const ch = ab.numberOfChannels;
+  const len = ab.length;
+  const peak = peakOf(ab);
+  const g = peak * gain > 0.99 ? 0.99 / peak : gain; // jamais de saturation
+  const data = new DataView(new ArrayBuffer(44 + len * ch * 2));
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) data.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, 'RIFF'); data.setUint32(4, 36 + len * ch * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  data.setUint32(16, 16, true); data.setUint16(20, 1, true); data.setUint16(22, ch, true);
+  data.setUint32(24, ab.sampleRate, true); data.setUint32(28, ab.sampleRate * ch * 2, true);
+  data.setUint16(32, ch * 2, true); data.setUint16(34, 16, true); str(36, 'data'); data.setUint32(40, len * ch * 2, true);
+  const chans = Array.from({ length: ch }, (_, c) => ab.getChannelData(c));
+  let o = 44;
+  for (let i = 0; i < len; i++) {
+    for (let c = 0; c < ch; c++) {
+      const v = Math.max(-1, Math.min(1, chans[c][i] * g));
+      data.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+      o += 2;
+    }
+  }
+  return new Blob([data], { type: 'audio/wav' });
+}
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(cond, ms = 8000) {
   const end = Date.now() + ms;
@@ -639,6 +687,7 @@ async function startRec(item, { fromStart, countdown }, ui) {
     ui.count(0);
   }
   if (rec.state !== 'arming' && rec.state !== 'count') return;
+  ytSend('setVolume', [beatVol()]);
   ytSend('playVideo');
   const started = await waitFor(() => isPlaying(), 8000);
   if (rec.state !== 'arming' && rec.state !== 'count') return;
@@ -683,6 +732,7 @@ async function stopRec(ui) {
   try { rec.recorder.stop(); } catch { /* déjà arrêté */ }
   await Promise.race([done, wait(3000)]);
   ytSend('pauseVideo');
+  ytSend('setVolume', [100]);
   player.state = 2;
   releaseMic();
   const blob = new Blob(rec.chunks, { type: rec.recorder?.mimeType || rec.mime || 'audio/webm' });
@@ -693,6 +743,10 @@ async function stopRec(ui) {
   const all = await recStore.all();
   const n = all.filter((r) => r.beatId === rec.beat.id).length + 1;
   const r = { id: `rec-${Date.now().toString(36)}`, at: Date.now(), beatId: rec.beat.id, beatTitle: rec.beat.title, beatUrl: rec.beat.url, offset: rec.offset, duration, mime: blob.type, blob, name: `Prise ${n}` };
+  const m = await measureTake(r);
+  r.peak = m.peak;
+  r.autoGain = m.autoGain;
+  r.gain = m.autoGain; // voix montée automatiquement, sans saturer
   await recStore.put(r);
   toast(`${r.name} enregistrée`);
   ui?.update();
@@ -706,8 +760,10 @@ function stopTake() {
   clearInterval(take.sync);
   take.audio.pause();
   URL.revokeObjectURL(take.url);
-  Object.assign(take, { id: null, audio: null, url: '', sync: 0, beatId: null });
+  try { take.gainNode?.disconnect(); } catch { /* déjà débranché */ }
+  Object.assign(take, { id: null, audio: null, url: '', sync: 0, beatId: null, gainNode: null });
   if (isPlaying()) { ytSend('pauseVideo'); player.state = 2; }
+  ytSend('setVolume', [100]);
   renderMini();
   $$('.take-play').forEach((b) => { b.classList.remove('on'); b.replaceChildren(icon('play')); });
 }
@@ -725,6 +781,14 @@ async function playTake(r, btn) {
   seekBeat(r.offset);
   take.url = URL.createObjectURL(r.blob);
   take.audio = new Audio(take.url);
+  try {
+    const ctx = audioCtx();
+    await ctx.resume();
+    take.gainNode = ctx.createGain();
+    take.gainNode.gain.value = r.gain ?? 1;
+    ctx.createMediaElementSource(take.audio).connect(take.gainNode).connect(ctx.destination);
+  } catch { take.gainNode = null; take.audio.volume = 1; } // sans Web Audio : volume normal
+  ytSend('setVolume', [beatVol()]);
   take.offset = r.offset;
   take.beatId = r.beatId;
   take.audio.addEventListener('ended', () => { if (take.id === r.id) stopTake(); });
@@ -746,9 +810,12 @@ async function playTake(r, btn) {
   }, 250);
 }
 
-function downloadTake(r) {
-  const url = URL.createObjectURL(r.blob);
-  const a = h('a', { href: url, download: `${displayTitle(r.beatTitle || 'Prod').slice(0, 60)} - ${r.name}.${recExt(r.mime)}` });
+async function downloadTake(r) {
+  let blob = r.blob;
+  let ext = recExt(r.mime);
+  try { blob = wavFrom(await decodeTake(r), r.gain ?? 1); ext = 'wav'; } catch { toast('Export WAV impossible ici : fichier d’origine téléchargé'); }
+  const url = URL.createObjectURL(blob);
+  const a = h('a', { href: url, download: `${displayTitle(r.beatTitle || 'Prod').slice(0, 60)} - ${r.name}.${ext}` });
   document.body.append(a);
   a.click();
   a.remove();
@@ -768,12 +835,35 @@ function takeRow(r, refresh, { showBeat = false } = {}) {
     toast(`${r.name} supprimée`);
     refresh();
   });
-  return h('div', { class: 'take-row' }, play,
-    h('div', { class: 'take-main' },
-      h('b', {}, r.name, showBeat ? h('span', { class: 'take-beat' }, ` · ${displayTitle(r.beatTitle || '')}`) : null),
-      h('span', {}, `${fmtDur(r.duration)} · ${new Date(r.at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}`)),
-    h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Télécharger la prise', onclick: () => downloadTake(r) }, icon('down')),
-    del);
+  // Volume de la voix
+  const pct = (g) => `${Math.round(g * 100)} %`;
+  const vol = h('input', { type: 'range', min: '0', max: String(MAX_GAIN), step: '0.05', 'aria-label': `Volume de la voix (${r.name})` });
+  vol.value = String(r.gain ?? 1);
+  const volTxt = h('span', { class: 'take-vol-val mono' }, pct(r.gain ?? 1));
+  let saveT = null;
+  const setGain = (g) => {
+    r.gain = Math.max(0, Math.min(MAX_GAIN, g));
+    vol.value = String(r.gain);
+    volTxt.textContent = pct(r.gain);
+    if (take.id === r.id && take.gainNode) take.gainNode.gain.value = r.gain;
+    clearTimeout(saveT);
+    saveT = setTimeout(() => recStore.put(r), 400);
+  };
+  vol.addEventListener('input', () => setGain(Number(vol.value)));
+  const auto = h('button', { type: 'button', class: 'ghost take-auto', title: 'Voix le plus fort possible sans saturer' }, 'Auto');
+  auto.addEventListener('click', async () => {
+    if (r.autoGain == null) { const m = await measureTake(r); r.peak = m.peak; r.autoGain = m.autoGain; }
+    setGain(r.autoGain);
+    toast(`Voix réglée à ${pct(r.autoGain)}`);
+  });
+  return h('div', { class: 'take-row' },
+    h('div', { class: 'take-top' }, play,
+      h('div', { class: 'take-main' },
+        h('b', {}, r.name, showBeat ? h('span', { class: 'take-beat' }, ` · ${displayTitle(r.beatTitle || '')}`) : null),
+        h('span', {}, `${fmtDur(r.duration)} · ${new Date(r.at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}`)),
+      h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Télécharger la prise (.wav, avec le volume réglé)', title: 'Télécharger en .wav (avec le volume réglé)', onclick: () => downloadTake(r) }, icon('down')),
+      del),
+    h('div', { class: 'take-vol' }, h('span', {}, icon('mic'), 'Voix'), vol, volTxt, auto));
 }
 
 // --- Panneau Rec
@@ -832,6 +922,13 @@ function openStudio(item) {
   openDrawer('Rec sur la prod', [
     h('div', { class: 'rec-beat' }, h('b', {}, displayTitle(item.title || '')), h('span', {}, [r0?.bpm ? `${r0.bpm} BPM` : null, r0?.key].filter(Boolean).join(' · ') || 'Prod YouTube')),
     h('div', { class: 'rec-stage' }, counter, big, timer, meter, status),
+    (() => {
+      const bv = h('input', { type: 'range', id: 'recBeatVol', min: '0', max: '100', step: '1', 'aria-label': 'Volume de la prod' });
+      bv.value = String(beatVol());
+      const bvTxt = h('span', { class: 'mono' }, `${beatVol()} %`);
+      bv.addEventListener('input', () => { local.set('recBeatVol', Number(bv.value)); bvTxt.textContent = `${bv.value} %`; if (take.id || rec.state === 'rec') ytSend('setVolume', [Number(bv.value)]); });
+      return h('div', { class: 'take-vol beat-vol' }, h('span', {}, icon('play'), 'Prod'), bv, bvTxt);
+    })(),
     h('div', { class: 'rec-opts' },
       h('label', { for: 'recFromStart' }, fromStart, 'Repartir du début de la prod'),
       h('label', { for: 'recCountdown' }, countdown, 'Décompte 3 s')),
