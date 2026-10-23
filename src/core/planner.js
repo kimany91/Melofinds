@@ -2,7 +2,7 @@
 // en un plan de recherche lisible : ambiances reconnues → courants de rap →
 // artistes US → requêtes « type beat » envoyées à YouTube.
 
-import { normalize, hasWord } from './text.js';
+import { normalize, hasWord, escapeRe } from './text.js';
 import { MOODS, INSTRUMENTS, GENRES, GENRE_BY_ID } from './genres.js';
 import { findArtists } from './artistmatch.js';
 
@@ -65,8 +65,31 @@ function detectInstruments(n) {
   return NORM_INSTR.filter((i) => i.nwords.some((w) => hasWord(n, w))).map((i) => i.id);
 }
 
+// Noms de courants écrits dans un texte. Le nom le plus long l'emporte sur un
+// nom plus court qu'il contient : « trap metal » → Trap metal (pas Trap),
+// « uk drill » → UK drill (pas NY drill), « glitch hop » → Glitch hop.
+const ALIAS_INDEX = GENRES.flatMap((g) => [...new Set(g.aliases.map(normalize))].map((a) => ({
+  id: g.id, len: a.length, re: new RegExp(`(^|[^a-z0-9])${escapeRe(a)}(?=$|[^a-z0-9])`, 'g'),
+})));
+
+function aliasHits(n, minLen = 0) {
+  const hits = [];
+  for (const { id, len, re } of ALIAS_INDEX) {
+    if (len <= minLen) continue;
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(n))) {
+      const s = m.index + m[1].length;
+      hits.push({ id, s, e: s + len });
+      re.lastIndex = s + 1;
+    }
+  }
+  return hits.filter((h) => !hits.some((o) => o.id !== h.id && o.s <= h.s && o.e >= h.e && o.e - o.s > h.e - h.s));
+}
+
 function detectGenres(n) {
-  return GENRES.filter((g) => g.aliases.some((a) => hasWord(n, normalize(a)))).map((g) => g.id);
+  const ids = new Set(aliasHits(n).map((h) => h.id));
+  return GENRES.filter((g) => ids.has(g.id)).map((g) => g.id);
 }
 
 const US_GENRES = new Map(ARTISTS.map((a) => [a.name, a.genres]));
@@ -109,7 +132,8 @@ export function buildPlan(prompt = '', opts = {}) {
     for (const m of moods) {
       const w = g.moods[m.id] || 0;
       if (w) {
-        score += w;
+        // Courant de niche : ses ambiances comptent moins (il sort surtout quand on le cite)
+        score += w > 0 ? w * g.pop : w;
         if (w > 0) why.push(m.label.toLowerCase());
       }
     }
@@ -125,7 +149,7 @@ export function buildPlan(prompt = '', opts = {}) {
       if (explicitBpm >= lo - 3 && explicitBpm <= hi + 3) score += 2;
       else score -= 2;
     }
-    return { id: g.id, label: g.label, score, why, bpm: g.bpm };
+    return { id: g.id, label: g.label, score: Math.round(score * 10) / 10, why, bpm: g.bpm };
   }).sort((a, b) => b.score - a.score);
 
   let selected;
@@ -278,10 +302,11 @@ const GENRE_MATCHERS = GENRES.map((g) => ({
 export function classifyStyles(title = '', description = '') {
   const t = normalize(title);
   const d = normalize(description).slice(0, 600);
+  const inTitle = new Set(aliasHits(t, 2).map((h) => h.id));
   const out = [];
   for (const g of GENRE_MATCHERS) {
     let s = 0;
-    if (g.aliases.some((a) => a.length > 2 && hasWord(t, a))) s += 3;
+    if (inTitle.has(g.id)) s += 3;
     if (g.artists.some((a) => a.length > 2 && hasWord(t, a))) s += 2;
     if (g.aliases.some((a) => a.length > 3 && hasWord(d, `#${a.replace(/\s+/g, '')}`))) s += 1;
     if (s) out.push({ id: g.id, label: g.label, s });

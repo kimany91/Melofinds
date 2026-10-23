@@ -11,6 +11,14 @@ si tu peux vraiment sortir ton son sur Spotify sans payer.
    → artistes US « type beat » (Lil Uzi Vert, Nettspend, Playboi Carti…) → plage
    de BPM conseillée → requêtes YouTube. Tout est affiché dans
    « 🧠 Ce que l'algo a utilisé ».
+   La base couvre plus de 60 courants : les grands (trap, drill, plugg, rage,
+   boom bap…) et les plus pointus (bedroom, lo-fi sombre / TeamSESH, G59,
+   horrorcore, rare phonk, Memphis 90s, trap metal, rap rock, punk rap,
+   industrial, trip hop, glitch hop, hip house, grime, Lex Luger, Toronto / OVO,
+   chiptune, country trap…). Les courants pointus ne sortent que si on les
+   nomme, si on cite un de leurs artistes (FR ou US), ou si l'ambiance colle
+   vraiment (« intime, fait maison, mélancolique » → bedroom). Le nom le plus
+   précis gagne : « trap metal » ne lance pas de la trap classique.
 2. **Cherche sur YouTube** et récupère la **description complète** de chaque vidéo.
 3. **Vérifie la licence dans la description** (la description fait foi, pas le titre) :
    | Catégorie | Ça veut dire |

@@ -1789,7 +1789,7 @@ function nextQueries(first) {
   const sfx = licenseSuffix(searchPrefs.licenses) ? ` ${licenseSuffix(searchPrefs.licenses)}` : '';
   const variants = [];
   for (const a of session.plan.artists) variants.push(`${a.name} type beat 2026${sfx}`, `${a.name} type beat hard${sfx}`, `${a.name} type beat melodic${sfx}`);
-  for (const g of session.plan.genres) variants.push(`${g.label.toLowerCase()} type beat 2026${sfx}`);
+  for (const g of session.plan.genres) variants.push(`${GENRE_BY_ID[g.id]?.query || g.label.toLowerCase()} type beat 2026${sfx}`);
   return [...deep, ...variants].filter((q) => !done.has(q)).slice(0, lim.moreQueries);
 }
 

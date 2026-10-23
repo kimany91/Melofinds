@@ -13,13 +13,31 @@ export const artistKey = (s) => normalize(s).replace(/\$/g, 's').replace(/[^a-z0
 const COMMON = ['type', 'beat', 'beats', 'prod', 'prods', 'instru', 'instrumental', 'free', 'profit', 'style', 'comme', 'genre',
   'avec', 'sans', 'une', 'des', 'les', 'pour', 'dans', 'plus', 'tres', 'son', 'sons', 'rap', 'trap', 'musique', 'music', 'vibe',
   'facon', 'mode', 'ambiance', 'truc', 'quelque', 'chose', 'veux', 'cherche', 'voudrais', 'faut', 'bien', 'mais', 'aussi',
-  'love', 'hard', 'dark', 'sad', 'fast', 'slow', 'piano', 'guitar', 'guitare', 'drill', 'rage', 'plugg', 'jerk', 'cloud'];
+  'love', 'hard', 'dark', 'sad', 'fast', 'slow', 'piano', 'guitar', 'guitare', 'drill', 'rage', 'plugg', 'jerk', 'cloud',
+  'plume', 'moral', 'morale', 'weekend', 'week', 'technique', 'techniques', 'smokey', 'filthy', 'magique', 'virale', 'viral'];
 const STOP = new Set([
   ...COMMON,
   ...Object.values(MOODS).flatMap((m) => m.words.map(artistKey)),
   ...Object.values(INSTRUMENTS).flat().map(artistKey),
   ...GENRES.flatMap((g) => g.aliases.map(artistKey)),
 ]);
+
+// Noms de courants en plusieurs mots (« lex luger », « trap metal », « boom bap »…) :
+// leurs mots ne sont jamais pris pour un rappeur (« luger » n'est pas « Luther »).
+const GENRE_PHRASES = [...new Set(GENRES.flatMap((g) => g.aliases)
+  .map((a) => normalize(a).replace(/\$/g, 's').split(/[^a-z0-9]+/).filter(Boolean))
+  .filter((t) => t.length > 1)
+  .map((t) => t.join(' ')))].map((p) => p.split(' '));
+
+function genreTokens(tokens) {
+  const used = new Set();
+  for (const ph of GENRE_PHRASES) {
+    for (let i = 0; i + ph.length <= tokens.length; i++) {
+      if (ph.every((w, k) => tokens[i + k] === w)) for (let k = 0; k < ph.length; k++) used.add(i + k);
+    }
+  }
+  return used;
+}
 
 // Index : clé → artiste
 const ENTRIES = [];
@@ -81,7 +99,7 @@ export function findArtists(text) {
     }
   }
   cands.sort((a, b) => b.score - a.score);
-  const used = new Set();
+  const used = genreTokens(tokens);
   const out = [];
   for (const c of cands) {
     const span = Array.from({ length: c.n }, (_, k) => c.i + k);
