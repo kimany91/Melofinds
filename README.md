@@ -71,6 +71,14 @@ avec toujours un bouton « YouTube » pour ouvrir la vidéo.
   ton navigateur) pour lire toutes les descriptions et les likes. Quota : environ
   25 recherches par jour et par clé.
 
+## Télécharger les prods sur ton PC (même loin de chez toi)
+
+Dans Melofinds Web, le bouton ⬇ d'une prod l'envoie à ton PC via ntfy.sh (messages
+gratuits, sans compte). Le programme `pc/melofinds-pc.py` tourne sur le PC, récupère
+les envois toutes les 15 s et télécharge l'audio avec yt-dlp, rangé par licence
+(Free for profit, Up to…), avec une fiche .txt (lien, licence, BPM, description).
+Tout est expliqué dans l'app : bouton « Mon PC ».
+
 ## Lancer l'app complète (recherche YouTube automatique)
 
 Il faut [Node.js](https://nodejs.org) 18 ou plus. Aucune dépendance à installer.

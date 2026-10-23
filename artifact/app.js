@@ -273,7 +273,9 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
       h('span', { class: 'meta-txt' }, meta || ' '),
       ratio != null ? h('span', { class: `ratio${tier}`, title: `${item.likeCount.toLocaleString('fr-FR')} likes pour ${(item.viewCount ?? parseCount(item.views)).toLocaleString('fr-FR')} vues` }, icon('heart'), `${fmtPct(ratio)} likes`) : null,
       h('span', { class: 'more' }, 'Détails →')));
-  card.append(h('a', { class: 'yt-link', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Ouvrir « ${item.title} » sur YouTube` }, 'YouTube', icon('ext')));
+  card.append(h('div', { class: 'card-links' },
+    WEB && vid ? pcButton(item) : null,
+    h('a', { class: 'yt-link', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Ouvrir « ${item.title} » sur YouTube` }, 'YouTube', icon('ext'))));
   const open = () => openBeat(item, plan);
   main.addEventListener('click', open);
   main.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
@@ -555,6 +557,7 @@ function openBeat(item, plan) {
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'primary', onclick: () => playItem(item) }, icon('play'), 'Écouter') : null,
       !WEB ? h('a', { class: 'primary', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, icon('play'), 'Écouter sur YouTube') : null,
       saveBtn,
+      WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc(item) }, icon('down'), 'Sur mon PC') : null,
       item.url ? h('button', { type: 'button', class: 'ghost', onclick: () => copyText(item.url) }, 'Copier le lien') : null),
     WEB ? h('a', { class: 'link d-yt', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube', icon('ext')) : null,
     ...beatDetails(item, r, findTerms()),
@@ -1660,12 +1663,202 @@ async function askClaude(item, slot) {
 // ---------------------------------------------------------------------------
 // Démarrage
 
+// ---------------------------------------------------------------------------
+// Télécharger sur mon PC (version web) : l'app envoie la prod via ntfy.sh
+// (messages gratuits, sans compte) ; le programme melofinds-pc.py, sur le PC,
+// la récupère et la télécharge avec yt-dlp. Marche en 5G comme en Wi-Fi.
+// Le PC répond sur le sujet <code>-ok : en ligne, prod téléchargée, erreur.
+
+const NTFY = 'https://ntfy.sh';
+function pcCode() {
+  let c = String(local.get('pcCode', '') || '');
+  if (!/^melofinds-[a-f0-9]{32}$/.test(c)) {
+    c = `melofinds-${Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('')}`;
+    local.set('pcCode', c);
+  }
+  return c;
+}
+const pc = { queue: local.get('pcQueue', {}) || {}, info: local.get('pcInfo', null), es: null, onPong: null };
+function savePc() {
+  const ids = Object.keys(pc.queue).sort((a, b) => (pc.queue[b].at || 0) - (pc.queue[a].at || 0)).slice(0, 150);
+  pc.queue = Object.fromEntries(ids.map((id) => [id, pc.queue[id]]));
+  local.set('pcQueue', pc.queue);
+}
+async function ntfyPublish(payload) {
+  // Corps en texte brut, sans en-tête spécial : pas de requête préalable CORS.
+  const res = await fetch(`${NTFY}/${pcCode()}`, { method: 'POST', body: JSON.stringify(payload) });
+  if (!res.ok) throw new Error(`ntfy ${res.status}`);
+}
+
+function listenPc() {
+  if (!WEB || pc.es || typeof EventSource === 'undefined') return;
+  const since = Math.floor((Date.now() - 12 * 3600e3) / 1000);
+  const es = new EventSource(`${NTFY}/${pcCode()}-ok/sse?since=${since}`);
+  pc.es = es;
+  es.onmessage = (e) => {
+    let d;
+    try { d = JSON.parse(e.data); } catch { return; }
+    if (d?.event && d.event !== 'message') return;
+    let m;
+    try { m = JSON.parse(d.message || '{}'); } catch { return; }
+    if (!m || typeof m !== 'object') return;
+    const fresh = (d.time || 0) * 1000 > Date.now() - 90e3;
+    if (m.pc === 'online' || m.pong) {
+      pc.info = { at: (d.time || 0) * 1000, dossier: String(m.dossier || '') };
+      local.set('pcInfo', pc.info);
+      if (m.pong && pc.onPong) pc.onPong(m);
+      syncPcUi();
+      return;
+    }
+    const id = String(m.v || '');
+    if (!/^[\w-]{11}$/.test(id)) return;
+    const cur = pc.queue[id] || { t: id, at: (d.time || 0) * 1000 };
+    if (cur.state === 'done' && !m.ok) return;
+    const was = cur.state;
+    pc.queue[id] = { ...cur, state: m.ok ? 'done' : 'error', file: m.file ? String(m.file) : cur.file, err: m.err ? String(m.err) : null };
+    pc.info = { ...(pc.info || {}), at: Math.max(pc.info?.at || 0, (d.time || 0) * 1000) };
+    local.set('pcInfo', pc.info);
+    savePc();
+    syncPcUi();
+    if (fresh && was !== pc.queue[id].state) {
+      toast(m.ok ? `Sur ton PC : ${displayTitle(cur.t)}` : `Le PC n’a pas pu télécharger : ${String(m.err || '').slice(0, 80)}`);
+    }
+  };
+  es.onerror = () => { /* EventSource se reconnecte tout seul */ };
+}
+
+async function sendToPc(item) {
+  if (!WEB) return;
+  const id = ytIdOf(item);
+  if (!id) { toast('Pas de vidéo YouTube pour cette prod'); return; }
+  if (!pc.info) { openPcSetup(item); return; }
+  let r = null;
+  try { r = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
+  const msg = { mf: 1, v: id, t: String(item.title || '').slice(0, 200), cat: r?.license?.category || 'unknown', licence: r ? chipLabel(r.license) : '', bpm: r?.bpm || null, key: r?.key || null, force: pc.queue[id]?.state === 'error' || undefined };
+  pc.queue[id] = { t: item.title || id, at: Date.now(), state: 'sending' };
+  syncPcUi();
+  try {
+    await ntfyPublish(msg);
+    pc.queue[id].state = 'sent';
+    toast('Envoyée à ton PC');
+  } catch {
+    pc.queue[id].state = 'error';
+    pc.queue[id].err = 'envoi impossible (connexion ?)';
+    toast('Envoi impossible : vérifie ta connexion');
+  }
+  savePc();
+  syncPcUi();
+  listenPc();
+}
+
+const PC_LABEL = { sending: 'Envoi…', sent: 'Envoyée au PC (en attente)', done: 'Sur ton PC', error: 'Erreur' };
+function pcButton(item) {
+  const id = ytIdOf(item);
+  const st = pc.queue[id]?.state || '';
+  return h('button', { type: 'button', class: `pc-btn${st ? ` ${st}` : ''}`, 'data-pc': id, 'aria-label': st ? PC_LABEL[st] : 'Télécharger sur mon PC', title: st ? PC_LABEL[st] : 'Télécharger sur mon PC',
+    onclick: (e) => { e.stopPropagation(); sendToPc(item); } }, icon(st === 'done' ? 'check' : 'down'));
+}
+function syncPcUi() {
+  $$('.pc-btn[data-pc]').forEach((b) => {
+    const st = pc.queue[b.dataset.pc]?.state || '';
+    b.className = `pc-btn${st ? ` ${st}` : ''}`;
+    const label = st ? PC_LABEL[st] : 'Télécharger sur mon PC';
+    b.setAttribute('aria-label', label);
+    b.title = label;
+    b.replaceChildren(icon(st === 'done' ? 'check' : 'down'));
+  });
+  const dot = $('#pcDot');
+  if (dot) dot.hidden = !pc.info;
+  if ($('#pcStatus')) renderPcStatus();
+}
+
+function pcStatusText() {
+  if (!pc.info) return { ok: false, t: 'PC pas encore connecté', s: 'Fais les 3 étapes ci-dessous, puis « Tester ».' };
+  const ago = Date.now() - (pc.info.at || 0);
+  const when = ago < 90e3 ? 'à l’instant' : ago < 3600e3 ? `il y a ${Math.round(ago / 60e3)} min` : ago < 864e5 ? `il y a ${Math.round(ago / 3600e3)} h` : `il y a ${Math.round(ago / 864e5)} j`;
+  return { ok: true, t: 'PC connecté', s: `Dernier signe ${when}${pc.info.dossier ? ` · dossier ${pc.info.dossier}` : ''}` };
+}
+function renderPcStatus() {
+  const st = pcStatusText();
+  $('#pcStatus').replaceChildren(h('div', { class: `pc-status${st.ok ? ' ok' : ''}` }, h('span', { class: 'pc-led', 'aria-hidden': 'true' }), h('div', {}, h('b', {}, st.t), h('span', {}, st.s))));
+  const list = Object.entries(pc.queue).sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 30);
+  const box = $('#pcList');
+  if (!box) return;
+  box.replaceChildren(...(list.length ? list.map(([id, q]) => h('div', { class: `pc-row ${q.state}` },
+    h('span', { class: 'pc-ico' }, icon(q.state === 'done' ? 'check' : q.state === 'error' ? 'x' : 'clock')),
+    h('div', { class: 'pc-row-main' }, h('b', {}, displayTitle(q.t || id)), h('span', {}, q.state === 'done' ? (q.file || 'Téléchargée') : q.state === 'error' ? (q.err || 'Erreur') : 'En attente du PC')),
+    q.state !== 'done' ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc({ id, url: `https://www.youtube.com/watch?v=${id}`, title: q.t }) }, 'Renvoyer') : null))
+    : [h('p', { class: 'muted' }, 'Aucune prod envoyée pour l’instant. Touche ', icon('down'), ' sur une prod.')]));
+}
+
+function cmdBlock(text) {
+  return h('div', { class: 'cmd' }, h('code', {}, text), h('button', { type: 'button', class: 'ghost', onclick: () => copyText(text) }, 'Copier'));
+}
+function openPcSetup(pending) {
+  listenPc();
+  const code = pcCode();
+  const run = `python "$env:USERPROFILE\\Downloads\\melofinds-pc.py" --code ${code} --demarrage`;
+  const test = h('button', { type: 'button', class: 'primary' }, 'Tester la connexion');
+  test.addEventListener('click', async () => {
+    test.disabled = true;
+    test.textContent = 'J’attends ton PC… (jusqu’à 30 s)';
+    const ping = Date.now();
+    const timer = setTimeout(() => { pc.onPong = null; test.disabled = false; test.textContent = 'Tester la connexion'; toast('Pas de réponse : le programme tourne-t-il sur ton PC ?'); }, 35e3);
+    pc.onPong = () => {
+      clearTimeout(timer); pc.onPong = null; test.disabled = false; test.textContent = 'Tester la connexion'; toast('PC connecté !');
+      if (pending) { const p = pending; pending = null; sendToPc(p); }
+    };
+    try { await ntfyPublish({ mf: 1, ping }); } catch { clearTimeout(timer); pc.onPong = null; test.disabled = false; test.textContent = 'Tester la connexion'; toast('Envoi impossible : vérifie ta connexion'); }
+  });
+  openDrawer('Télécharger sur mon PC', [
+    h('p', { class: 'muted', style: 'margin:0' }, 'Touche ', icon('down'), ' sur une prod : elle se télécharge toute seule sur ton PC, rangée par licence, même si tu es loin (5G ou Wi-Fi). Il faut juste que le PC soit allumé.'),
+    h('div', { id: 'pcStatus' }),
+    h('div', { class: 'd-sec' }, h('h4', {}, '1. Installer les outils (une fois, sur le PC Windows)'),
+      h('p', { class: 'hint' }, 'Ouvre « Terminal » (clic droit sur le menu Démarrer) et colle :'),
+      cmdBlock('winget install --id Python.Python.3.12 -e; winget install --id DenoLand.Deno -e; winget install --id Gyan.FFmpeg -e'),
+      h('p', { class: 'hint' }, 'Ferme le Terminal, rouvre-le, puis :'),
+      cmdBlock('python -m pip install -U "yt-dlp[default]"')),
+    h('div', { class: 'd-sec' }, h('h4', {}, '2. Télécharger le programme'),
+      h('a', { class: 'ghost', href: 'melofinds-pc.py', download: 'melofinds-pc.py' }, icon('down'), 'melofinds-pc.py'),
+      h('p', { class: 'hint' }, 'Ouvre ce lien sur ton PC (envoie-toi la page). Le fichier arrive dans « Téléchargements ».')),
+    h('div', { class: 'd-sec' }, h('h4', {}, '3. Le lancer avec ton code'),
+      cmdBlock(run),
+      h('p', { class: 'hint' }, '« --demarrage » le relance tout seul à chaque allumage du PC. Les sons arrivent dans Musique\\Melofinds, en WAV. Pour changer : ajoute --dossier "D:\\Prods" ou --format mp3.')),
+    h('div', { class: 'actions' }, test),
+    h('div', { class: 'd-sec' }, h('h4', {}, 'Envois récents'), h('div', { id: 'pcList', class: 'pc-list' })),
+    h('p', { class: 'hint' }, 'Ton code est secret : quiconque l’a peut envoyer des prods à ton PC. ',
+      h('button', { type: 'button', class: 'link', onclick: () => { local.set('pcCode', ''); pc.info = null; local.set('pcInfo', null); pc.es?.close(); pc.es = null; openPcSetup(); toast('Nouveau code : relance le programme avec la nouvelle commande'); } }, 'Changer de code')),
+    h('p', { class: 'hint' }, 'L’audio YouTube contient souvent le tag du beatmaker ; la version sans tag s’obtient via le lien de sa description. Si le PC est éteint plus de 12 h, renvoie la prod.'),
+  ]);
+  renderPcStatus();
+}
+
+// Bouton « remonter aux filtres » quand la barre de filtres est sortie de l'écran
+(() => {
+  const btn = $('#toTop');
+  btn.addEventListener('click', () => $('#results').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  let ticking = false;
+  window.addEventListener('scroll', () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      ticking = false;
+      const bar = $('#rbar');
+      const out = !$('#results').hidden && $('#view-search').classList.contains('active') && bar.getBoundingClientRect().bottom < 0;
+      btn.classList.toggle('show', out);
+    });
+  }, { passive: true });
+})();
+
 function setupTarget() {
   document.body.classList.add(WEB ? 'web' : 'claude-page');
   if (WEB) {
     const keyBtn = h('button', { type: 'button', class: 'link', id: 'keyBtn', onclick: openKeySettings }, ytKey() ? 'Clé YouTube' : 'Descriptions complètes (clé YouTube, facultatif)');
     $('.results-foot').append(keyBtn);
     if (!ytKey()) pipedInstances();
+    const pcBtn = h('button', { type: 'button', class: 'verify-btn pc-head', id: 'pcHead', title: 'Télécharger les prods sur mon PC', onclick: () => openPcSetup() }, icon('down'), h('span', {}, 'Mon PC'), h('em', { class: 'dot', id: 'pcDot', hidden: !pc.info }, '✓'));
+    $('#openVerify').before(pcBtn);
+    if (pc.info || Object.values(pc.queue).some((q) => q.state === 'sent')) listenPc();
     $('.hero-sub').textContent = 'Décris la vibe ou cite un rappeur (Luther, Damso, Bu$hi…). Je trouve les type beats sur YouTube, je lis chaque description pour vérifier la licence, et tu écoutes direct ici.';
   } else {
     $('#hero').append(h('p', { class: 'web-tip' }, icon('play'), 'Pour écouter les prods sans quitter l’app, ouvre ',
