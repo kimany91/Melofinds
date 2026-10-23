@@ -52,7 +52,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $ver = (Select-String -Path pc/melofinds_pc.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
+          $ver = (Select-String -Path pc/mf_core.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
           $tag = "pc-v$ver"
           $sha = (Get-FileHash dist\MelofindsPC.exe -Algorithm SHA256).Hash.ToLower()
           $url = "https://github.com/${{ github.repository }}/releases/download/$tag/MelofindsPC.exe"

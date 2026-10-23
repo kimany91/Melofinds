@@ -106,7 +106,7 @@ Le raccourci ouvre le **panneau de gestion** :
 - Construction : `.github/workflows/pc-build.yml` (Windows) teste, construit le .exe
   avec PyInstaller, fait un auto-test (outils + fenêtre) et publie la version
   `pc-v<VERSION>`. Pour publier une mise à jour : changer `VERSION` dans
-  `pc/melofinds_pc.py` et pousser.
+  `pc/mf_core.py` et pousser.
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`) · tests : `npm run test:pc`.
 
