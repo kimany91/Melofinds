@@ -73,19 +73,25 @@ avec toujours un bouton « YouTube » pour ouvrir la vidéo.
 
 ## Télécharger les prods sur ton PC (même loin de chez toi)
 
-Dans Melofinds Web, le bouton ⬇ d'une prod l'envoie à ton PC via ntfy.sh (messages
-gratuits, sans compte). Le programme `pc/melofinds-pc.py` tourne sur le PC, récupère
-les envois toutes les 15 s et télécharge l'audio avec yt-dlp.
-Tout est expliqué dans l'app : bouton « Mon PC ».
+Un seul programme Windows : **MelofindsPC.exe**
+(https://github.com/kimany91/Melofinds/releases/latest/download/MelofindsPC.exe).
+Double-clic, colle le code d'appairage affiché dans Melofinds Web (bouton « Mon PC »),
+choisis ton dossier, « Installer ». Il télécharge lui-même ses outils (yt-dlp, ffmpeg,
+Deno), se lance à chaque démarrage en arrière-plan et reçoit les prods envoyées depuis
+le téléphone (bouton ⬇) via ntfy.sh.
 
-- Nom du fichier : `Titre [Clé, BPM].wav` (clé et BPM s'ils sont indiqués), jamais
-  « free », « free for profit », « FFP »…
-- Sécurité : envois signés (HMAC-SHA256, clé secrète qui ne passe jamais par ntfy) ;
-  un envoi ne contient qu'un identifiant de vidéo ; téléchargement et conversion dans
-  un dossier temporaire, puis seul un vrai .wav (en-tête RIFF/WAVE vérifié) entre dans
-  l'unique dossier choisi sur le PC ; 15 min max par vidéo, 40 par heure, envois de
-  plus de 48 h ou rejoués refusés.
-- Tests : `npm run test:pc`.
+- Nom du fichier : `Titre [Clé, BPM].wav`, jamais « free », « free for profit », « FFP »…
+- Sécurité : envois signés (HMAC-SHA256, clé qui ne passe jamais par ntfy) ; un envoi ne
+  contient qu'un identifiant de vidéo ; seul un vrai .wav entre dans l'unique dossier
+  choisi sur le PC ; 15 min max par vidéo, 40 par heure, envois de plus de 48 h refusés.
+- Mises à jour : bouton « Mettre à jour le PC » dans l'app (et vérification quotidienne).
+  Le programme n'accepte que les versions publiées sur ce dépôt
+  (`releases/latest/download/version.json`, empreinte SHA-256 vérifiée).
+- Construction : `.github/workflows/pc-build.yml` (Windows) teste, construit le .exe
+  avec PyInstaller, fait un auto-test (outils + fenêtre) et publie la version
+  `pc-v<VERSION>`. Pour publier une mise à jour : changer `VERSION` dans
+  `pc/melofinds_pc.py` et pousser.
+- Code : `pc/melofinds_pc.py` · tests : `npm run test:pc`.
 
 ## Lancer l'app complète (recherche YouTube automatique)
 

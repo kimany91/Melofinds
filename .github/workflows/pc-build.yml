@@ -1,0 +1,63 @@
+# Construit MelofindsPC.exe sur Windows à chaque changement du programme PC,
+# le teste, puis le publie comme version GitHub (avec version.json + SHA-256).
+# Le programme installé se met à jour uniquement depuis ces versions.
+name: Melofinds PC (.exe)
+
+on:
+  push:
+    paths:
+      - 'pc/**'
+      - '.github/workflows/pc-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pc-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Tests
+        run: python -m unittest pc/test_melofinds_pc.py -v
+
+      - name: Construire MelofindsPC.exe
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller==6.11.1
+          pyinstaller --onefile --noconsole --name MelofindsPC pc/melofinds_pc.py
+
+      - name: Auto-test (outils + fenêtre)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\MelofindsPC.exe -ArgumentList '--selftest', "$PWD\selftest.json" -Wait -PassThru
+          if (Test-Path selftest.json) { Get-Content selftest.json } else { Write-Host "selftest.json absent" }
+          if ($p.ExitCode -ne 0) { Write-Error "Auto-test raté (code $($p.ExitCode))"; exit 1 }
+
+      - name: Publier la version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = (Select-String -Path pc/melofinds_pc.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
+          $tag = "pc-v$ver"
+          $sha = (Get-FileHash dist\MelofindsPC.exe -Algorithm SHA256).Hash.ToLower()
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/MelofindsPC.exe"
+          @{ version = $ver; sha256 = $sha; url = $url } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM version.json
+          Get-Content version.json
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag dist\MelofindsPC.exe version.json --clobber
+          } else {
+            gh release create $tag dist\MelofindsPC.exe version.json --title "Melofinds PC $ver" --target "${{ github.sha }}" --latest --notes "Programme Windows de Melofinds : reçoit les prods envoyées depuis Melofinds Web et les enregistre en .wav. Télécharge MelofindsPC.exe, double-clique, colle ton code d'appairage."
+          }

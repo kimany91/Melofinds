@@ -613,3 +613,5 @@ body.mobile .pc-head ~ #openVerify { margin-left: 0; }
 .pc-row.done .pc-ico { color: var(--ffp); }
 .pc-row.error .pc-ico { color: var(--paid); }
 .muted svg, .hint svg { width: 14px; height: 14px; vertical-align: -2px; }
+.dl-exe { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
+.dl-exe svg { width: 16px; height: 16px; }

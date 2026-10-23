@@ -1,9 +1,10 @@
 import hashlib, hmac, importlib.util, json, tempfile, time, unittest
 from pathlib import Path
 
-spec = importlib.util.spec_from_file_location("mpc", Path(__file__).with_name("melofinds-pc.py"))
-mpc = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mpc)
+import os, sys
+os.environ.setdefault("MELOFINDS_HOME", tempfile.mkdtemp(prefix="mf-test-"))
+sys.path.insert(0, str(Path(__file__).parent))
+import melofinds_pc as mpc
 KEY = "ab" * 32
 
 
@@ -91,6 +92,47 @@ class Fichiers(unittest.TestCase):
             self.assertTrue(mpc.inside(Path(d) / "x.wav", d))
             self.assertFalse(mpc.inside(Path(d) / ".." / "x.wav", d))
             self.assertEqual(mpc.unique_path(d, "a").name, "a (2).wav")
+
+
+class Installation(unittest.TestCase):
+    def test_code_appairage(self):
+        tok = "melofinds-" + "0a" * 16 + "." + "5b" * 32
+        self.assertEqual(mpc.parse_pairing(tok), ("melofinds-" + "0a" * 16, "5b" * 32))
+        self.assertEqual(mpc.parse_pairing("  " + tok.upper() + "\n"), ("melofinds-" + "0a" * 16, "5b" * 32))
+        self.assertIsNone(mpc.parse_pairing("melofinds-123.abc"))
+        self.assertIsNone(mpc.parse_pairing(tok + "; del C:"))
+
+    def test_versions(self):
+        self.assertGreater(mpc.version_tuple("2.0.10"), mpc.version_tuple("2.0.9"))
+        self.assertEqual(mpc.version_tuple("v2.1.0"), (2, 1, 0))
+
+
+class MiseAJour(unittest.TestCase):
+    def manifest(self, **kw):
+        m = {"version": "9.9.9", "url": f"{mpc.RELEASES}/download/pc-v9.9.9/MelofindsPC.exe", "sha256": "ab" * 32}
+        m.update(kw)
+        old = mpc.http_get
+        mpc.http_get = lambda url, timeout=40: json.dumps(m).encode()
+        try:
+            return mpc.check_update()
+        finally:
+            mpc.http_get = old
+
+    def test_version_officielle_acceptee(self):
+        self.assertEqual(self.manifest()[0], "9.9.9")
+
+    def test_deja_a_jour(self):
+        self.assertIsNone(self.manifest(version=mpc.VERSION))
+
+    def test_autre_site_refuse(self):
+        with self.assertRaises(ValueError):
+            self.manifest(url="https://evil.example/MelofindsPC.exe")
+        with self.assertRaises(ValueError):
+            self.manifest(url="https://github.com/pirate/Melofinds/releases/download/x/MelofindsPC.exe")
+
+    def test_sans_empreinte_refuse(self):
+        with self.assertRaises(ValueError):
+            self.manifest(sha256="pas-une-empreinte")
 
 
 if __name__ == "__main__":

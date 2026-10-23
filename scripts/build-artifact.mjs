@@ -71,5 +71,4 @@ mkdirSync(join(ROOT, 'docs'), { recursive: true });
 writeFileSync(join(ROOT, 'docs/index.html'), web);
 writeFileSync(join(ROOT, 'docs/.nojekyll'), '');
 copyFileSync(join(ROOT, 'public/icon.svg'), join(ROOT, 'docs/icon.svg'));
-copyFileSync(join(ROOT, 'pc/melofinds-pc.py'), join(ROOT, 'docs/melofinds-pc.py'));
 console.log(`docs/index.html (${(web.length / 1024).toFixed(0)} Ko)`);

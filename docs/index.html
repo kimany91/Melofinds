@@ -636,6 +636,8 @@ body.mobile .pc-head ~ #openVerify { margin-left: 0; }
 .pc-row.done .pc-ico { color: var(--ffp); }
 .pc-row.error .pc-ico { color: var(--paid); }
 .muted svg, .hint svg { width: 14px; height: 14px; vertical-align: -2px; }
+.dl-exe { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
+.dl-exe svg { width: 16px; height: 16px; }
 
 </style>
 
@@ -4326,7 +4328,7 @@ async function askClaude(item, slot) {
 
 // ---------------------------------------------------------------------------
 // Télécharger sur mon PC (version web) : l'app envoie la prod via ntfy.sh
-// (messages gratuits, sans compte) ; le programme melofinds-pc.py, sur le PC,
+// (messages gratuits, sans compte) ; le programme MelofindsPC.exe, sur le PC,
 // la récupère et la télécharge avec yt-dlp. Marche en 5G comme en Wi-Fi.
 // Le PC répond sur le sujet <code>-ok : en ligne, prod téléchargée, erreur.
 
@@ -4379,8 +4381,16 @@ function listenPc() {
     try { m = JSON.parse(d.message || '{}'); } catch { return; }
     if (!m || typeof m !== 'object') return;
     const fresh = (d.time || 0) * 1000 > Date.now() - 90e3;
+    if (m.update) {
+      if (fresh) {
+        if (m.update === 'none') toast(`Ton PC est déjà à jour (version ${String(m.version || '')})`);
+        else if (m.update === 'start') toast(`Ton PC installe la version ${String(m.version || '')}…`);
+        else toast(`Mise à jour impossible : ${String(m.err || '').slice(0, 80)}`);
+      }
+      return;
+    }
     if (m.pc === 'online' || m.pong) {
-      pc.info = { at: (d.time || 0) * 1000, dossier: String(m.dossier || '') };
+      pc.info = { at: (d.time || 0) * 1000, dossier: String(m.dossier || ''), version: String(m.version || '') };
       local.set('pcInfo', pc.info);
       if (m.pong && pc.onPong) pc.onPong(m);
       syncPcUi();
@@ -4450,10 +4460,10 @@ function syncPcUi() {
 }
 
 function pcStatusText() {
-  if (!pc.info) return { ok: false, t: 'PC pas encore connecté', s: 'Fais les 3 étapes ci-dessous, puis « Tester ».' };
+  if (!pc.info) return { ok: false, t: 'PC pas encore connecté', s: 'Fais les 3 étapes ci-dessous.' };
   const ago = Date.now() - (pc.info.at || 0);
   const when = ago < 90e3 ? 'à l’instant' : ago < 3600e3 ? `il y a ${Math.round(ago / 60e3)} min` : ago < 864e5 ? `il y a ${Math.round(ago / 3600e3)} h` : `il y a ${Math.round(ago / 864e5)} j`;
-  return { ok: true, t: 'PC connecté', s: `Dernier signe ${when}${pc.info.dossier ? ` · dossier ${pc.info.dossier}` : ''}` };
+  return { ok: true, t: `PC connecté${pc.info.version ? ` · version ${pc.info.version}` : ''}`, s: `Dernier signe ${when}${pc.info.dossier ? ` · dossier ${pc.info.dossier}` : ''}` };
 }
 function renderPcStatus() {
   const st = pcStatusText();
@@ -4471,45 +4481,49 @@ function renderPcStatus() {
 function cmdBlock(text) {
   return h('div', { class: 'cmd' }, h('code', {}, text), h('button', { type: 'button', class: 'ghost', onclick: () => copyText(text) }, 'Copier'));
 }
+const PC_EXE_URL = 'https://github.com/kimany91/Melofinds/releases/latest/download/MelofindsPC.exe';
 function openPcSetup(pending) {
   listenPc();
-  const code = pcCode();
-  const run = `python "$env:USERPROFILE\\Downloads\\melofinds-pc.py" --code ${code} --cle ${pcKey()} --demarrage`;
+  const pairing = `${pcCode()}.${pcKey()}`;
+  const resetBtn = (b, label) => { b.disabled = false; b.textContent = label; };
   const test = h('button', { type: 'button', class: 'primary' }, 'Tester la connexion');
   test.addEventListener('click', async () => {
     test.disabled = true;
     test.textContent = 'J’attends ton PC… (jusqu’à 30 s)';
-    const timer = setTimeout(() => { pc.onPong = null; test.disabled = false; test.textContent = 'Tester la connexion'; toast('Pas de réponse : le programme tourne-t-il sur ton PC ?'); }, 35e3);
+    const timer = setTimeout(() => { pc.onPong = null; resetBtn(test, 'Tester la connexion'); toast('Pas de réponse : MelofindsPC est-il installé et le PC allumé ?'); }, 35e3);
     pc.onPong = () => {
-      clearTimeout(timer); pc.onPong = null; test.disabled = false; test.textContent = 'Tester la connexion'; toast('PC connecté !');
+      clearTimeout(timer); pc.onPong = null; resetBtn(test, 'Tester la connexion'); toast('PC connecté !');
       if (pending) { const p = pending; pending = null; sendToPc(p); }
     };
-    try { await ntfyPublish({ ping: 1 }); } catch { clearTimeout(timer); pc.onPong = null; test.disabled = false; test.textContent = 'Tester la connexion'; toast('Envoi impossible : vérifie ta connexion'); }
+    try { await ntfyPublish({ ping: 1 }); } catch { clearTimeout(timer); pc.onPong = null; resetBtn(test, 'Tester la connexion'); toast('Envoi impossible : vérifie ta connexion'); }
+  });
+  const upd = h('button', { type: 'button', class: 'ghost' }, 'Mettre à jour le PC');
+  upd.addEventListener('click', async () => {
+    upd.disabled = true;
+    try { await ntfyPublish({ update: 1 }); toast('Demande envoyée : le PC vérifie s’il y a une nouvelle version'); } catch { toast('Envoi impossible : vérifie ta connexion'); }
+    setTimeout(() => { upd.disabled = false; }, 4000);
   });
   openDrawer('Télécharger sur mon PC', [
-    h('p', { class: 'muted', style: 'margin:0' }, 'Touche ', icon('down'), ' sur une prod : elle se télécharge toute seule sur ton PC, rangée par licence, même si tu es loin (5G ou Wi-Fi). Il faut juste que le PC soit allumé.'),
+    h('p', { class: 'muted', style: 'margin:0' }, 'Touche ', icon('down'), ' sur une prod : elle arrive en .wav sur ton PC, même si tu es loin (5G ou Wi-Fi). Il faut juste que le PC soit allumé.'),
     h('div', { id: 'pcStatus' }),
-    h('div', { class: 'd-sec' }, h('h4', {}, '1. Installer les outils (une fois, sur le PC Windows)'),
-      h('p', { class: 'hint' }, 'Ouvre « Terminal » (clic droit sur le menu Démarrer) et colle :'),
-      cmdBlock('winget install --id Python.Python.3.12 -e; winget install --id DenoLand.Deno -e; winget install --id Gyan.FFmpeg -e'),
-      h('p', { class: 'hint' }, 'Ferme le Terminal, rouvre-le, puis :'),
-      cmdBlock('python -m pip install -U "yt-dlp[default]"')),
-    h('div', { class: 'd-sec' }, h('h4', {}, '2. Télécharger le programme'),
-      h('a', { class: 'ghost', href: 'melofinds-pc.py', download: 'melofinds-pc.py' }, icon('down'), 'melofinds-pc.py'),
-      h('p', { class: 'hint' }, 'Ouvre ce lien sur ton PC (envoie-toi la page). Le fichier arrive dans « Téléchargements ».')),
-    h('div', { class: 'd-sec' }, h('h4', {}, '3. Le lancer avec ton code'),
-      cmdBlock(run),
-      h('p', { class: 'hint' }, '« --demarrage » le relance tout seul à chaque allumage du PC. Les prods arrivent en .wav uniquement, dans un seul dossier : Musique\\Melofinds (pour en choisir un autre, ajoute --dossier "D:\\Prods"). Nom du fichier : « Titre [Clé, BPM].wav », sans « free ».')),
-    h('div', { class: 'actions' }, test),
+    h('div', { class: 'd-sec' }, h('h4', {}, '1. Télécharger le programme (sur le PC Windows)'),
+      h('a', { class: 'primary dl-exe', href: PC_EXE_URL, target: '_blank', rel: 'noopener' }, icon('down'), 'MelofindsPC.exe'),
+      h('p', { class: 'hint' }, 'Un seul fichier, rien d’autre à installer : il télécharge lui-même ses outils. Ouvre cette page sur ton PC (ou envoie-toi le lien).')),
+    h('div', { class: 'd-sec' }, h('h4', {}, '2. Double-cliquer dessus et coller ce code'),
+      cmdBlock(pairing),
+      h('p', { class: 'hint' }, 'Si Windows affiche « Windows a protégé votre ordinateur » : « Informations complémentaires » → « Exécuter quand même » (le programme n’est pas signé par Microsoft, c’est normal).'),
+      h('p', { class: 'hint' }, 'Choisis ton dossier (Musique\\Melofinds par défaut), clique sur « Installer » : il se lance ensuite tout seul à chaque démarrage, en arrière-plan.')),
+    h('div', { class: 'd-sec' }, h('h4', {}, '3. Vérifier'), h('div', { class: 'actions' }, test, upd)),
     h('div', { class: 'd-sec' }, h('h4', {}, 'Envois récents'), h('div', { id: 'pcList', class: 'pc-list' })),
     h('div', { class: 'd-sec' }, h('h4', {}, 'Sécurité'),
       h('ul', { class: 'reasons' },
-        h('li', {}, 'Chaque envoi est signé avec ta clé secrète, qui ne quitte jamais ce téléphone et ton PC. Sans elle, le PC ignore l’envoi.'),
-        h('li', {}, 'Un envoi contient seulement l’identifiant de la vidéo : jamais de lien, de chemin ou de commande.'),
-        h('li', {}, 'Le PC n’écrit que des .wav vérifiés, dans le seul dossier choisi sur le PC (impossible à changer à distance).'),
+        h('li', {}, 'Chaque envoi est signé avec ta clé secrète (dans le code ci-dessus), qui ne passe jamais par Internet. Sans elle, le PC ignore l’envoi.'),
+        h('li', {}, 'Un envoi contient seulement l’identifiant de la vidéo : jamais de lien, de fichier ou de commande.'),
+        h('li', {}, 'Le PC n’écrit que des .wav vérifiés, dans le seul dossier choisi sur le PC (impossible à changer à distance). Nom : « Titre [Clé, BPM].wav », sans « free ».'),
+        h('li', {}, 'Mises à jour : uniquement les versions officielles publiées sur ton GitHub, avec empreinte vérifiée. Il vérifie aussi tout seul une fois par jour.'),
         h('li', {}, 'Limites : vidéos de 15 min max, 40 téléchargements par heure, envois de plus de 48 h refusés.'))),
-    h('p', { class: 'hint' }, 'Ne partage pas la commande de l’étape 3 : elle contient ta clé. ',
-      h('button', { type: 'button', class: 'link', onclick: () => { local.set('pcCode', ''); local.set('pcKey', ''); pc.info = null; local.set('pcInfo', null); pc.es?.close(); pc.es = null; openPcSetup(); toast('Nouvelle clé : relance le programme avec la nouvelle commande'); } }, 'Changer de code et de clé')),
+    h('p', { class: 'hint' }, 'Ne partage pas ce code. ',
+      h('button', { type: 'button', class: 'link', onclick: () => { local.set('pcCode', ''); local.set('pcKey', ''); pc.info = null; local.set('pcInfo', null); pc.es?.close(); pc.es = null; openPcSetup(); toast('Nouveau code : sur le PC, ouvre MelofindsPC → « Changer le code / dossier »'); } }, 'Changer de code')),
     h('p', { class: 'hint' }, 'L’audio YouTube contient souvent le tag du beatmaker ; la version sans tag s’obtient via le lien de sa description. Si le PC est éteint plus de 12 h, renvoie la prod.'),
   ]);
   renderPcStatus();
