@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
+  <title>Melofinds</title>
+  <meta name="description" content="Trouve des prods YouTube free for profit : l'algo lit toute la description et classe les licences.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icon.svg" alt="" width="28" height="28">
+      <span>Melofinds</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="search" role="tab">🔎 <span>Recherche</span></button>
+      <button class="tab" data-view="history" role="tab">🕘 <span>Historique</span></button>
+      <button class="tab" data-view="favorites" role="tab">⭐ <span>Favoris</span></button>
+    </nav>
+    <div class="top-actions">
+      <button id="deviceBadge" class="chip ghost" title="L'algo s'adapte à ton appareil. Clique pour forcer l'autre mode.">💻 Mode PC</button>
+      <button id="settingsBtn" class="icon-btn" title="Réglages" aria-label="Réglages">⚙️</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ================= RECHERCHE ================= -->
+    <section id="view-search" class="view active">
+      <div class="layout">
+        <form id="searchForm" class="panel form-panel" autocomplete="off">
+          <button type="button" id="formToggle" class="form-toggle">✏️ Modifier la recherche</button>
+          <div class="form-body">
+            <label class="field">
+              <span class="field-label">Décris ta prod</span>
+              <textarea id="prompt" rows="3" placeholder="ex. rapide, énergique et musicale… ou : sombre, drill, piano, 145 bpm"></textarea>
+            </label>
+            <div class="suggestions" id="suggestions"></div>
+
+            <label class="field">
+              <span class="field-label">Recherche directe <em>(optionnel)</em></span>
+              <input id="manualQuery" type="text" placeholder="ex. Lil Uzi Vert type beat">
+            </label>
+
+            <fieldset class="field">
+              <legend class="field-label">Licences à garder</legend>
+              <div class="license-boxes">
+                <label class="lic lic-ffp"><input type="checkbox" name="lic" value="ffp" checked><span><b>Free for profit</b><small>Spotify OK sans payer</small></span></label>
+                <label class="lic lic-upto"><input type="checkbox" name="lic" value="upto" checked><span><b>Up to</b><small>Gratuit jusqu’à X streams</small></span></label>
+                <label class="lic lic-fnp"><input type="checkbox" name="lic" value="fnp"><span><b>Free</b><small>Non-profit : payer pour Spotify</small></span></label>
+                <label class="lic lic-paid"><input type="checkbox" name="lic" value="paid"><span><b>Payant</b><small>Lease / exclu</small></span></label>
+                <label class="lic lic-unknown"><input type="checkbox" name="lic" value="unknown"><span><b>Inconnu</b><small>Rien de clair</small></span></label>
+              </div>
+              <label class="inline" id="uptoMinRow">
+                <span>« Up to » au moins</span>
+                <select id="uptoMin">
+                  <option value="0">toutes limites</option>
+                  <option value="1000">1 000 streams</option>
+                  <option value="5000">5 000 streams</option>
+                  <option value="10000">10 000 streams</option>
+                  <option value="50000">50 000 streams</option>
+                  <option value="100000">100 000 streams</option>
+                </select>
+              </label>
+              <label class="inline"><input type="checkbox" id="noCredit"> <span>Écarter les prods avec crédit obligatoire</span></label>
+            </fieldset>
+
+            <fieldset class="field">
+              <legend class="field-label">
+                <label class="switch"><input type="checkbox" id="bpmEnabled"><span class="slider"></span></label>
+                Trier / filtrer par BPM
+              </legend>
+              <div id="bpmBox" class="bpm-box" hidden>
+                <div class="bpm-range">
+                  <label>min <input type="number" id="bpmMin" min="50" max="220" inputmode="numeric"></label>
+                  <label>max <input type="number" id="bpmMax" min="50" max="220" inputmode="numeric"></label>
+                  <button type="button" id="bpmFromPlan" class="chip ghost small" title="Utiliser la plage conseillée par l'algo">↺ conseillé</button>
+                </div>
+                <label class="inline"><input type="checkbox" id="bpmRequire"> <span>Exclure les vidéos sans BPM indiqué</span></label>
+              </div>
+            </fieldset>
+
+            <label class="field inline">
+              <span class="field-label">Profondeur</span>
+              <select id="depth">
+                <option value="">Auto</option>
+                <option value="rapide">Rapide (3 requêtes)</option>
+                <option value="normal">Normale (5 requêtes)</option>
+                <option value="approfondie">Approfondie (8 requêtes)</option>
+              </select>
+            </label>
+
+            <details class="preview" id="preview" open>
+              <summary>🧠 Ce que l’algo va chercher</summary>
+              <div id="previewBody" class="plan"></div>
+            </details>
+
+            <button type="submit" class="primary" id="goBtn">Chercher les prods</button>
+          </div>
+        </form>
+
+        <div class="results-col">
+          <div id="status" class="status" hidden></div>
+          <div id="resultsHead" class="panel results-head" hidden>
+            <div class="summary" id="summary"></div>
+            <details class="plan-used" id="planUsed">
+              <summary>🧠 Ce que l’algo a utilisé pour chercher</summary>
+              <div id="planUsedBody" class="plan"></div>
+            </details>
+            <div class="toolbar">
+              <label>Tri
+                <select id="sort">
+                  <option value="pertinence">Pertinence</option>
+                  <option value="bpm-asc">BPM ↑</option>
+                  <option value="bpm-desc">BPM ↓</option>
+                  <option value="limite">Limite de streams</option>
+                  <option value="vues">Vues</option>
+                  <option value="recent">Plus récentes</option>
+                </select>
+              </label>
+              <label>Style
+                <select id="styleFilter"><option value="">Tous</option></select>
+              </label>
+              <span id="count" class="count"></span>
+            </div>
+          </div>
+          <div id="results"></div>
+          <div id="empty" class="empty">
+            <div class="empty-art">🎛️</div>
+            <h2>Décris la prod que tu veux</h2>
+            <p>L’algo transforme ta description en courants de rap et en artistes US « type beat », lance les recherches YouTube, lit <b>toute la description</b> de chaque vidéo et range les prods : <b>Free for profit</b>, <b>Up to</b> (gratuit jusqu’à X streams), <b>Free</b> (non-profit) ou <b>Payant</b>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= HISTORIQUE ================= -->
+    <section id="view-history" class="view">
+      <div class="panel list-panel">
+        <div class="list-head">
+          <h2>Historique de tes demandes</h2>
+          <button id="clearHistory" class="chip ghost small danger">Tout effacer</button>
+        </div>
+        <div id="historyList" class="hist-list"></div>
+      </div>
+    </section>
+
+    <!-- ================= FAVORIS ================= -->
+    <section id="view-favorites" class="view">
+      <div class="panel list-panel">
+        <div class="list-head"><h2>Recherches favorites</h2></div>
+        <div id="favoritesList" class="hist-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="settings">
+    <form method="dialog" class="settings-form">
+      <h2>Réglages</h2>
+      <label class="field">
+        <span class="field-label">Source des vidéos</span>
+        <select id="sourcePref">
+          <option value="">Auto (clé API si dispo, sinon sans clé)</option>
+          <option value="scrape">Sans clé (lecture des pages YouTube)</option>
+          <option value="demo">Démo (prods fictives, pour tester)</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">Ta clé YouTube Data API <em>(optionnel)</em></span>
+        <input id="apiKey" type="password" placeholder="AIza…" autocomplete="off">
+        <small>Gardée seulement dans ce navigateur. Plus fiable que la recherche sans clé (quota gratuit ≈ 100 requêtes/jour).</small>
+      </label>
+      <p id="serverInfo" class="muted"></p>
+      <div class="dialog-actions">
+        <button value="cancel" class="chip ghost">Fermer</button>
+        <button value="save" id="saveSettings" class="primary small">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="cardTpl">
+    <article class="card">
+      <div class="thumb">
+        <img loading="lazy" alt="">
+        <span class="duration"></span>
+        <span class="play">▶</span>
+      </div>
+      <div class="card-body">
+        <h3 class="title"></h3>
+        <div class="meta"></div>
+        <div class="badges"></div>
+        <details class="why">
+          <summary>Pourquoi cette catégorie ?</summary>
+          <ul class="reasons"></ul>
+          <div class="found"></div>
+          <details class="desc">
+            <summary>Description complète</summary>
+            <pre></pre>
+          </details>
+        </details>
+      </div>
+    </article>
+  </template>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
