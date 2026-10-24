@@ -13,6 +13,7 @@ import urllib.error
 from pathlib import Path
 
 import mf_core as C
+import mf_flmake as FM
 from mf_core import P, log
 
 
@@ -94,6 +95,7 @@ def worker(once=False):
 
             seen = set(st["seen"])
             done = set(st["done"])
+            fl_last = None
             for d in devices:
                 code, key = d["code"], d["cle"]
                 since = st["since"].get(code) or "12h"
@@ -144,16 +146,24 @@ def worker(once=False):
                         continue
                     recent.append(time.time())
                     log(f"Téléchargement ({d.get('name', '?')}) : {msg.get('t') or vid}")
-                    ok, detail = C.download(vid, root, msg)
+                    got = {}
+                    ok, detail = C.download(vid, root, msg, got)
                     log(f"  {'OK' if ok else 'Erreur'} : {detail}")
+                    flp = None
                     if ok:
                         done.add(vid)
+                        # FLmake : projet FL prêt (BPM, instru, preset de voix) ; FL s'ouvre après le lot
+                        out, flp = FM.maybe_make(got.get("path"), got.get("key"), got.get("bpm"), got.get("title"), cfg)
+                        if out:
+                            fl_last = (out, got.get("key"), got.get("bpm"))
                     st["history"].insert(0, {"t": C.clean_title(msg.get("t") or vid), "ok": ok, "detail": detail,
-                                             "at": int(time.time()), "device": d.get("name", "")})
+                                             "at": int(time.time()), "device": d.get("name", ""), **({"flp": flp} if flp else {})})
                     st["history"] = st["history"][:50]
                     C.reply(code, {"v": vid, "ok": ok, "file" if ok else "err": detail})
                     if P.stop.exists():
                         break
+            if fl_last:
+                FM.open_last(*fl_last, cfg)
             st["seen"] = list(seen)[-3000:]
             st["done"] = list(done)[-3000:]
             known = {d["code"] for d in devices}

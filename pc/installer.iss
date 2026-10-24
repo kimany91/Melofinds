@@ -87,6 +87,9 @@ Type: files; Name: "{app}\worker.pid"
 Type: files; Name: "{app}\stop"
 Type: filesandordirs; Name: "{app}\tools"
 Type: filesandordirs; Name: "{app}\updates"
+Type: filesandordirs; Name: "{app}\flmake"
+; Script FL de FLmake (clé de Graillon), installé depuis le panneau
+Type: filesandordirs; Name: "{userdocs}\Image-Line\FL Studio\Settings\Hardware\Melofinds FLmake"
 Type: dirifempty; Name: "{app}"
 
 [Code]

@@ -31,7 +31,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -562,7 +562,7 @@ def last_line(b):
     return (lines[-1] if lines else "erreur inconnue")[:200]
 
 
-def download(video_id, root, info):
+def download(video_id, root, info, out=None):
     ytdlp = tool_path("yt-dlp.exe")
     ffmpeg = tool_path("ffmpeg.exe")
     if not ytdlp:
@@ -612,6 +612,8 @@ def download(video_id, root, info):
     if not is_wav(final):
         final.unlink(missing_ok=True)
         return False, "fichier non WAV supprimé"
+    if out is not None:  # pour FLmake
+        out.update(path=str(final), key=key, bpm=bpm, title=clean_title(meta.get("title") or info.get("t") or video_id))
     return True, final.name
 
 

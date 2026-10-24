@@ -141,6 +141,27 @@ ouvre le site dans Chrome) :
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
+## FLmake : un projet FL Studio prêt pour chaque prod (Melofinds PC)
+
+Onglet **FLmake** du panneau Melofinds PC. Une fois activé, pour chaque prod reçue :
+
+1. Melofinds PC copie **ton preset de voix** : un projet modèle FL que tu fais une
+   fois (insert 2 : ton preset de voix avec Graillon et ton micro en entrée ; piste 1 :
+   n'importe quel son envoyé vers l'insert 1).
+2. Il met le **BPM** de la prod, remplace le son de la piste 1 par **l'instru**
+   (clip à la bonne longueur) et **enregistre le projet au nom de la prod** dans le
+   dossier choisi (`Titre [C# min, 150 BPM] [FFP].flp`).
+3. Il **ouvre FL Studio** sur le projet (une seule fois si plusieurs prods arrivent
+   d'un coup). Le script **Melofinds FLmake** règle alors **Graillon sur la clé de la
+   prod** et sauvegarde.
+
+Le projet est modifié directement dans le fichier `.flp` (`pc/mf_flmake.py`) : seuls
+le tempo, le chemin de l'instru, la longueur de son clip et le titre changent, le reste
+du modèle est recopié octet pour octet. Le script FL a besoin d'un port MIDI
+(FL Studio ne lance ses scripts que sur un port MIDI) : loopMIDI (gratuit) + « Controller
+type : Melofinds FLmake » dans les réglages MIDI de FL, une seule fois. Sans lui, tout le
+reste marche ; seule la clé de Graillon est à régler à la main (elle est dans le nom).
+
 ## Lancer l'app complète (recherche YouTube automatique)
 
 Il faut [Node.js](https://nodejs.org) 18 ou plus. Aucune dépendance à installer.

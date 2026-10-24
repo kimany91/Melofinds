@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 import mf_core as C
+import mf_flmake as FM
 import mf_install as I
 from mf_core import P
 
@@ -145,8 +146,8 @@ def manager_window(selftest=False):
 
     root = tk.Tk()
     root.title("Melofinds PC")
-    root.geometry("760x560")
-    root.minsize(640, 500)
+    root.geometry("800x680")
+    root.minsize(680, 560)
     _style(root)
     _icon(root)
     outer = ttk.Frame(root, padding=(20, 16))
@@ -281,6 +282,182 @@ def manager_window(selftest=False):
     ttk.Button(dev_btns, text="Renommer", command=rename_dev).pack(side="left", padx=8)
     ttk.Button(dev_btns, text="Retirer", style="Danger.TButton", command=remove_dev).pack(side="left")
 
+    # --- FLmake (défilable : tient aussi sur un petit écran)
+    fl_tab = ttk.Frame(tabs)
+    tabs.add(fl_tab, text="  FLmake  ")
+    fl_canvas = tk.Canvas(fl_tab, bg=BG, highlightthickness=0)
+    fl_sb = ttk.Scrollbar(fl_tab, orient="vertical", command=fl_canvas.yview)
+    body = ttk.Frame(fl_canvas, padding=14)
+    body_win = fl_canvas.create_window((0, 0), window=body, anchor="nw")
+    body.bind("<Configure>", lambda e: fl_canvas.configure(scrollregion=fl_canvas.bbox("all")))
+    fl_canvas.bind("<Configure>", lambda e: fl_canvas.itemconfigure(body_win, width=e.width))
+    fl_canvas.configure(yscrollcommand=fl_sb.set)
+    fl_sb.pack(side="right", fill="y")
+    fl_canvas.pack(side="left", fill="both", expand=True)
+
+    def fl_wheel(e):
+        step = -1 if getattr(e, "num", 0) == 4 or e.delta > 0 else 1
+        fl_canvas.yview_scroll(step * (max(1, abs(e.delta) // 120) if e.delta else 1), "units")
+    fl_canvas.bind("<Enter>", lambda e: (root.bind_all("<MouseWheel>", fl_wheel), root.bind_all("<Button-4>", fl_wheel), root.bind_all("<Button-5>", fl_wheel)))
+    fl_canvas.bind("<Leave>", lambda e: (root.unbind_all("<MouseWheel>"), root.unbind_all("<Button-4>"), root.unbind_all("<Button-5>")))
+    fm0 = FM.settings()
+
+    def fm_save(**kw):
+        cfg = C.load_config()
+        fm = FM.settings(cfg)
+        fm.update(kw)
+        cfg["flmake"] = fm
+        C.save_config(cfg)
+        return fm
+
+    cf1 = card(body)
+    fm_on = tk.BooleanVar(value=fm0["on"])
+    fm_open = tk.BooleanVar(value=fm0.get("open", True))
+    ttk.Checkbutton(cf1, text="Activer FLmake : un projet FL Studio prêt pour chaque prod reçue", variable=fm_on, style="Card.TCheckbutton",
+                    command=lambda: (fm_save(on=fm_on.get()), msg_var.set("FLmake activé." if fm_on.get() else "FLmake désactivé."))).pack(anchor="w")
+    ttk.Checkbutton(cf1, text="Ouvrir FL Studio tout seul quand la prod arrive", variable=fm_open, style="Card.TCheckbutton",
+                    command=lambda: fm_save(open=fm_open.get())).pack(anchor="w", pady=(4, 0))
+    ttk.Label(cf1, text="Le projet reprend ton preset de voix, prend le BPM de la prod, met l'instru sur la piste 1 (insert 1), règle Graillon "
+                        "(insert 2, ton micro) sur la clé de la prod et s'enregistre au nom de la prod.", style="CardMuted.TLabel", wraplength=700).pack(anchor="w", pady=(6, 0))
+
+    cf2 = card(body)
+    ttk.Label(cf2, text="Ton preset de voix (projet modèle FL)", style="CardH.TLabel").pack(anchor="w")
+    tpl_var = tk.StringVar(value=fm0["template"])
+    tpl_state = tk.StringVar()
+    r = ttk.Frame(cf2, style="Card.TFrame")
+    r.pack(fill="x", pady=(6, 0))
+    ttk.Entry(r, textvariable=tpl_var, state="readonly").pack(side="left", fill="x", expand=True)
+
+    def check_tpl():
+        p = tpl_var.get()
+        tpl_state.set(FM.inspect_template(p)["msg"] if p else "Pas encore choisi.")
+
+    def pick_tpl():
+        p = filedialog.askopenfilename(title="Ton projet modèle FL (preset de voix)", filetypes=[("Projet FL Studio", "*.flp")], parent=root)
+        if p:
+            fm_save(template=str(Path(p)))
+            tpl_var.set(str(Path(p)))
+            check_tpl()
+
+    def help_tpl():
+        messagebox.showinfo("Créer ton modèle FL", (
+            "À faire une seule fois :\n\n"
+            "1. Dans FL Studio : Fichier → Nouveau.\n"
+            "2. Mixer, insert 2 : charge ton preset de voix (glisse ton fichier .fst sur l'insert 2), avec Graillon dedans. "
+            "En haut à droite du mixer, choisis ton micro comme entrée de l'insert 2.\n"
+            "3. Glisse n'importe quel .wav au début de la piste 1 de la playlist, et envoie ce son vers l'insert 1 "
+            "(réglages du son → FX / Insert 1). C'est lui que FLmake remplace par l'instru.\n"
+            "4. Fichier → Enregistrer sous… (ex. « Modèle FLmake.flp »), puis choisis ce fichier ici."), parent=root)
+    ttk.Button(r, text="Choisir…", command=pick_tpl).pack(side="left", padx=(8, 0))
+    ttk.Button(r, text="Comment le créer ?", command=help_tpl).pack(side="left", padx=(8, 0))
+    ttk.Label(cf2, textvariable=tpl_state, style="CardMuted.TLabel", wraplength=700).pack(anchor="w", pady=(6, 0))
+
+    cf3 = card(body)
+    ttk.Label(cf3, text="Dossier des projets FL", style="CardH.TLabel").pack(anchor="w")
+    fdir_var = tk.StringVar(value=fm0["dossier"])
+    r = ttk.Frame(cf3, style="Card.TFrame")
+    r.pack(fill="x", pady=(6, 0))
+    ttk.Entry(r, textvariable=fdir_var, state="readonly").pack(side="left", fill="x", expand=True)
+
+    def pick_fdir():
+        p = filedialog.askdirectory(title="Où enregistrer les projets FL ?", initialdir=fdir_var.get(), parent=root)
+        if p:
+            Path(p).mkdir(parents=True, exist_ok=True)
+            fm_save(dossier=str(Path(p)))
+            fdir_var.set(str(Path(p)))
+    ttk.Button(r, text="Changer…", command=pick_fdir).pack(side="left", padx=(8, 0))
+    ttk.Button(r, text="Ouvrir", command=lambda: (Path(fdir_var.get()).mkdir(parents=True, exist_ok=True), _open_path(fdir_var.get()))).pack(side="left", padx=(8, 0))
+
+    cf4 = card(body)
+    ttk.Label(cf4, text="FL Studio et clé de Graillon", style="CardH.TLabel").pack(anchor="w")
+    flexe_var = tk.StringVar(value=FM.fl_exe(fm0) or "FL Studio introuvable : choisis FL64.exe")
+    r = ttk.Frame(cf4, style="Card.TFrame")
+    r.pack(fill="x", pady=(6, 0))
+    ttk.Entry(r, textvariable=flexe_var, state="readonly").pack(side="left", fill="x", expand=True)
+
+    def pick_fl():
+        p = filedialog.askopenfilename(title="FL Studio (FL64.exe)", filetypes=[("FL Studio", "FL64.exe FL.exe"), ("Programme", "*.exe")], parent=root)
+        if p:
+            fm_save(fl=str(Path(p)))
+            flexe_var.set(str(Path(p)))
+    ttk.Button(r, text="Choisir…", command=pick_fl).pack(side="left", padx=(8, 0))
+    script_var = tk.StringVar()
+    ttk.Label(cf4, textvariable=script_var, style="CardMuted.TLabel", wraplength=700).pack(anchor="w", pady=(6, 4))
+    r = ttk.Frame(cf4, style="Card.TFrame")
+    r.pack(fill="x")
+
+    def inst_script():
+        try:
+            f = FM.install_script()
+            msg_var.set(f"Script installé : {f}")
+        except OSError as e:
+            msg_var.set(f"Installation du script impossible : {e}")
+        refresh_fl()
+
+    def help_script():
+        messagebox.showinfo("Clé de Graillon automatique", (
+            "FL Studio ne lance ses scripts que sur un port MIDI. À faire une seule fois :\n\n"
+            "1. Clique « Installer le script dans FL ».\n"
+            "2. Installe loopMIDI (gratuit : tobias-erichsen.de/software/loopmidi.html) et crée un port avec le bouton +.\n"
+            "3. Dans FL Studio : Options → MIDI settings. Dans « Input », choisis le port loopMIDI, active-le, "
+            "et dans « Controller type » choisis « Melofinds FLmake ». Redémarre FL.\n\n"
+            "Sans ça, tout le reste marche : seule la clé de Graillon reste à régler à la main (elle est dans le nom du projet)."), parent=root)
+    ttk.Button(r, text="Installer le script dans FL", command=inst_script).pack(side="left")
+    ttk.Button(r, text="Comment l'activer ?", command=help_script).pack(side="left", padx=8)
+
+    cf5 = card(body)
+    ttk.Label(cf5, text="Derniers projets", style="CardH.TLabel").pack(anchor="w", pady=(0, 6))
+    projs = ttk.Treeview(cf5, columns=("p", "q"), show="headings", height=4, selectmode="browse")
+    projs.heading("p", text="Projet")
+    projs.heading("q", text="Créé")
+    projs.column("p", width=520)
+    projs.column("q", width=110, anchor="e")
+    projs.pack(fill="x")
+    r = ttk.Frame(cf5, style="Card.TFrame")
+    r.pack(fill="x", pady=(8, 0))
+
+    def open_proj():
+        sel = projs.selection()
+        if not sel:
+            msg_var.set("Choisis un projet dans la liste.")
+            return
+        try:
+            msg_var.set(FM.open_in_fl(sel[0]))
+        except (OSError, FM.FlpError) as e:
+            msg_var.set(f"FLmake : {e}")
+
+    def test_make():
+        start = C.load_config().get("dossier") or C.default_folder()
+        p = filedialog.askopenfilename(title="Une prod (.wav) pour tester FLmake", initialdir=start, filetypes=[("Prod", "*.wav")], parent=root)
+        if not p:
+            return
+        stem = Path(p).stem
+        try:
+            out, r_ = FM.make(p, C.find_key(stem), C.find_bpm(stem), stem)
+            msg_var.set(r_)
+            if fm_open.get():
+                msg_var.set(f"{r_} · {FM.open_in_fl(out)}")
+        except (OSError, FM.FlpError) as e:
+            msg_var.set(f"FLmake : {e}")
+        refresh_fl()
+    ttk.Button(r, text="Ouvrir dans FL (clé Graillon)", command=open_proj).pack(side="left")
+    ttk.Button(r, text="Tester avec une prod…", style="Accent.TButton", command=test_make).pack(side="left", padx=8)
+    last_var = tk.StringVar()
+    ttk.Label(cf5, textvariable=last_var, style="CardMuted.TLabel", wraplength=700).pack(anchor="w", pady=(6, 0))
+
+    def refresh_fl():
+        script_var.set("Script FL : installé ✓ (à activer une fois dans FL, voir « Comment l'activer ? »)" if FM.script_installed()
+                       else "Script FL : pas installé — la clé de Graillon ne se réglera pas toute seule.")
+        sel = projs.selection()
+        projs.delete(*projs.get_children())
+        for f in FM.recent_projects():
+            projs.insert("", "end", iid=str(f), values=(f.name, _ago(f.stat().st_mtime)))
+        if sel and projs.exists(sel[0]):
+            projs.selection_set(sel[0])
+        res = FM.last_result()
+        last_var.set(f"Dernier passage du script dans FL : {'✓' if res[1] else '✗'} {res[2]}" if res else "")
+    check_tpl()
+
     # --- Dossier & réglages
     set_tab = ttk.Frame(tabs, padding=14)
     tabs.add(set_tab, text="  Dossier & réglages  ")
@@ -404,7 +581,7 @@ def manager_window(selftest=False):
             devs.selection_set(sel[0])
         hist.delete(*hist.get_children())
         for h in st["history"][:30]:
-            label = h.get("detail") if h.get("ok") else f"✗ {h.get('t', '')} — {h.get('detail', '')}"
+            label = (h.get("detail") + ("  · FL ✓" if h.get("flp") and not str(h.get("flp")).startswith("FLmake") else "")) if h.get("ok") else f"✗ {h.get('t', '')} — {h.get('detail', '')}"
             hist.insert("", "end", values=(label, _ago(h.get("at"))))
         if not st["history"]:
             hist.insert("", "end", values=("Aucune prod reçue pour l'instant.", ""))
@@ -412,6 +589,7 @@ def manager_window(selftest=False):
     def tick():
         try:
             refresh()
+            refresh_fl()
         finally:
             root.after(3000, tick)
 
@@ -419,7 +597,7 @@ def manager_window(selftest=False):
         tabs.select(dev_tab)
     tick()
     if selftest:
-        for t in (home, dev_tab, set_tab):
+        for t in (home, dev_tab, fl_tab, set_tab):
             tabs.select(t)
             root.update()
         root.destroy()
