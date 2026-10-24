@@ -3590,71 +3590,145 @@ let lastFocus = null;
 // calée sur la prod (réglage fin du calage si besoin). Les prises restent dans
 // ce navigateur (IndexedDB) et se téléchargent.
 
-const rec = { state: 'idle', stream: null, ctx: null, analyser: null, recorder: null, chunks: [], mime: '', offset: 0, startAt: 0, beat: null, raf: 0, tick: 0, autoStop: 0 };
-const take = { id: null, audio: null, url: '', offset: 0, sync: 0, beatId: null, gainNode: null, duration: 0 };
+const rec = { state: 'idle', stream: null, ctx: null, analyser: null, cap: null, recorder: null, chunks: [], mime: '', offset: 0, startAt: 0, beat: null, raf: 0, tick: 0, autoStop: 0 };
+const take = { id: null, audio: null, url: '', offset: 0, sync: 0, beatId: null, duration: 0 };
 const takePos = new Map(); // position de lecture de chaque prise (pause / reprise, barre)
 
 // --- Volume de la voix. Échelle affichée : 150 % = gain ×3,1 ; jusqu'à 300 % (×6,2).
-// Un compresseur-limiteur suit le gain (à l'écoute comme dans le .wav exporté) : la voix
-// monte vraiment sans grésiller.
+// Après le gain, un limiteur ne touche que les crêtes qui dépasseraient -1 dB : pas de
+// compression, pas de souffle remonté. Le son est calculé sur le fichier (le même à
+// l'écoute et dans le .wav téléchargé).
 const GAIN_PER_PCT = 3.1 / 150;
 const MAX_PCT = 300;
 const MAX_GAIN = MAX_PCT * GAIN_PER_PCT;
 const AUTO_MAX_GAIN = 4;
+const CEIL = 0.891; // -1 dBFS
 const gainToPct = (g) => Math.round((g || 0) / GAIN_PER_PCT);
-function makeLimiter(ctx) {
-  const c = ctx.createDynamicsCompressor();
-  c.threshold.value = -10;
-  c.knee.value = 6;
-  c.ratio.value = 12;
-  c.attack.value = 0.003;
-  c.release.value = 0.15;
-  return c;
-}
 let audioCtxRef = null;
 const audioCtx = () => (audioCtxRef ||= new (window.AudioContext || window.webkitAudioContext)());
-async function decodeTake(r) {
-  const buf = await r.blob.arrayBuffer();
-  return new Promise((resolve, reject) => {
-    const p = audioCtx().decodeAudioData(buf, resolve, reject);
-    if (p?.then) p.then(resolve, reject);
-  });
-}
-function peakOf(ab) {
-  let peak = 0;
-  for (let c = 0; c < ab.numberOfChannels; c++) {
-    const d = ab.getChannelData(c);
-    for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; }
+
+// Limiteur « brickwall » avec anticipation de 5 ms et relâchement de 120 ms.
+// En dessous de -1 dB le son n'est pas modifié (à part le gain choisi).
+function limitInPlace(chans, rate, gain) {
+  const n = chans[0].length;
+  if (!n) return chans;
+  const look = Math.max(1, Math.round(rate * 0.005));
+  const rel = Math.exp(-1 / (rate * 0.12));
+  const req = new Float32Array(n); // gain maximal permis à chaque échantillon
+  for (let i = 0; i < n; i++) {
+    let pk = 0;
+    for (const c of chans) { const v = Math.abs(c[i] * gain); if (v > pk) pk = v; }
+    req[i] = pk > CEIL ? CEIL / pk : 1;
   }
-  return peak;
+  // minimum glissant sur [i, i + look] (file monotone)
+  const env = new Float32Array(n);
+  const dq = new Int32Array(n);
+  let qh = 0; let qt = 0; let j = 0;
+  for (let i = 0; i < n; i++) {
+    const last = Math.min(n - 1, i + look);
+    while (j <= last) { while (qt > qh && req[dq[qt - 1]] >= req[j]) qt--; dq[qt++] = j++; }
+    while (dq[qh] < i) qh++;
+    env[i] = req[dq[qh]];
+  }
+  let g = 1;
+  for (let i = 0; i < n; i++) { g = Math.min(env[i], 1 - (1 - g) * rel); env[i] = g; }
+  // lissage sur la fenêtre d'anticipation : reste sous le besoin de chaque crête
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    sum += env[i];
+    if (i > look) sum -= env[i - look - 1];
+    const k = (sum / Math.min(i + 1, look + 1)) * gain;
+    for (const c of chans) c[i] = Math.max(-CEIL, Math.min(CEIL, c[i] * k));
+  }
+  return chans;
 }
-const autoGainFor = (peak) => (peak > 0.002 ? Math.min(AUTO_MAX_GAIN, Math.max(1, 0.89 / peak)) : 1); // ≈ -1 dB
-async function measureTake(r) {
-  try { const peak = peakOf(await decodeTake(r)); return { peak, autoGain: autoGainFor(peak) }; } catch { return { peak: null, autoGain: 1 }; }
-}
-const beatVol = () => Math.max(0, Math.min(100, Number(local.get('recBeatVol', 100)) || 0));
-function wavFrom(ab, gain) {
-  const ch = ab.numberOfChannels;
-  const len = ab.length;
-  const peak = peakOf(ab);
-  const g = peak * gain > 0.99 ? 0.99 / peak : gain; // jamais de saturation
-  const data = new DataView(new ArrayBuffer(44 + len * ch * 2));
-  const str = (o, t) => { for (let i = 0; i < t.length; i++) data.setUint8(o + i, t.charCodeAt(i)); };
-  str(0, 'RIFF'); data.setUint32(4, 36 + len * ch * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
-  data.setUint32(16, 16, true); data.setUint16(20, 1, true); data.setUint16(22, ch, true);
-  data.setUint32(24, ab.sampleRate, true); data.setUint32(28, ab.sampleRate * ch * 2, true);
-  data.setUint16(32, ch * 2, true); data.setUint16(34, 16, true); str(36, 'data'); data.setUint32(40, len * ch * 2, true);
-  const chans = Array.from({ length: ch }, (_, c) => ab.getChannelData(c));
+
+// WAV PCM 24 bits (sans perte)
+function encodeWav(chans, rate) {
+  const ch = chans.length;
+  const len = chans[0].length;
+  const bytes = new Uint8Array(44 + len * ch * 3);
+  const dv = new DataView(bytes.buffer);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) bytes[o + i] = t.charCodeAt(i); };
+  str(0, 'RIFF'); dv.setUint32(4, 36 + len * ch * 3, true); str(8, 'WAVE'); str(12, 'fmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, ch, true);
+  dv.setUint32(24, rate, true); dv.setUint32(28, rate * ch * 3, true);
+  dv.setUint16(32, ch * 3, true); dv.setUint16(34, 24, true); str(36, 'data'); dv.setUint32(40, len * ch * 3, true);
   let o = 44;
   for (let i = 0; i < len; i++) {
     for (let c = 0; c < ch; c++) {
-      const v = Math.max(-1, Math.min(1, chans[c][i] * g));
-      data.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7fff, true);
-      o += 2;
+      const v = Math.max(-1, Math.min(1, chans[c][i]));
+      const x = Math.round(v < 0 ? v * 0x800000 : v * 0x7fffff);
+      bytes[o] = x & 255; bytes[o + 1] = (x >> 8) & 255; bytes[o + 2] = (x >> 16) & 255;
+      o += 3;
     }
   }
-  return new Blob([data], { type: 'audio/wav' });
+  return new Blob([bytes], { type: 'audio/wav' });
 }
+
+// Lecture directe d'un WAV (sans rééchantillonnage du navigateur)
+function parseWav(buf) {
+  const dv = new DataView(buf);
+  if (dv.byteLength < 44 || dv.getUint32(0) !== 0x52494646 || dv.getUint32(8) !== 0x57415645) return null;
+  let p = 12;
+  let fmt = null;
+  while (p + 8 <= dv.byteLength) {
+    const id = dv.getUint32(p);
+    const size = dv.getUint32(p + 4, true);
+    const body = p + 8;
+    if (id === 0x666d7420) {
+      fmt = { tag: dv.getUint16(body, true), ch: dv.getUint16(body + 2, true), rate: dv.getUint32(body + 4, true), bits: dv.getUint16(body + 14, true) };
+    } else if (id === 0x64617461 && fmt) {
+      const bps = fmt.bits / 8;
+      const float = fmt.bits === 32 && fmt.tag === 3;
+      if (![2, 3, 4].includes(bps) || !fmt.ch) return null;
+      const n = Math.floor(Math.min(size, dv.byteLength - body) / (bps * fmt.ch));
+      const chans = Array.from({ length: fmt.ch }, () => new Float32Array(n));
+      let o = body;
+      for (let i = 0; i < n; i++) {
+        for (let c = 0; c < fmt.ch; c++) {
+          let v;
+          if (bps === 2) v = dv.getInt16(o, true) / 0x8000;
+          else if (bps === 3) v = (((dv.getUint8(o) | (dv.getUint8(o + 1) << 8) | (dv.getUint8(o + 2) << 16)) << 8) >> 8) / 0x800000;
+          else v = float ? dv.getFloat32(o, true) : dv.getInt32(o, true) / 0x80000000;
+          chans[c][i] = v;
+          o += bps;
+        }
+      }
+      return { chans, rate: fmt.rate };
+    }
+    p = body + size + (size & 1);
+  }
+  return null;
+}
+
+// Prise décodée { chans, rate } (gardée en mémoire pour les réglages de volume)
+const decoded = new Map();
+async function decodeTake(r) {
+  if (decoded.has(r.id)) return decoded.get(r.id);
+  const buf = await r.blob.arrayBuffer();
+  let d = /wav/.test(r.mime || r.blob.type || '') ? parseWav(buf) : null;
+  if (!d) {
+    const ab = await new Promise((resolve, reject) => {
+      const pr = audioCtx().decodeAudioData(buf, resolve, reject);
+      if (pr?.then) pr.then(resolve, reject);
+    });
+    d = { chans: Array.from({ length: ab.numberOfChannels }, (_, c) => ab.getChannelData(c).slice()), rate: ab.sampleRate };
+  }
+  decoded.set(r.id, d);
+  while (decoded.size > 3) decoded.delete(decoded.keys().next().value);
+  return d;
+}
+function peakOf(chans) {
+  let peak = 0;
+  for (const d of chans) for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; }
+  return peak;
+}
+const autoGainFor = (peak) => (peak > 0.002 ? Math.min(AUTO_MAX_GAIN, Math.max(1, CEIL / peak)) : 1); // ≈ -1 dB
+async function measureTake(r) {
+  try { const peak = peakOf((await decodeTake(r)).chans); return { peak, autoGain: autoGainFor(peak) }; } catch { return { peak: null, autoGain: 1 }; }
+}
+const beatVol = () => Math.max(0, Math.min(100, Number(local.get('recBeatVol', 100)) || 0));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(cond, ms = 8000) {
   const end = Date.now() + ms;
@@ -3704,6 +3778,98 @@ const recStore = {
   },
 };
 
+// --- Capture du micro sans perte : les échantillons bruts (PCM) sont copiés tels
+// quels, sans encodage. AudioWorklet si possible, sinon ScriptProcessor ;
+// MediaRecorder (compressé) seulement si le navigateur n'a pas Web Audio.
+const CAPTURE_WORKLET = `class MfCapture extends AudioWorkletProcessor {
+  constructor() { super(); this.on = false; this.buf = null; this.n = 0;
+    this.port.onmessage = (e) => {
+      if (e.data === 'start') this.on = true;
+      else if (e.data === 'stop') { this.flush(); this.on = false; this.port.postMessage({ end: true }); }
+    };
+  }
+  flush() {
+    if (this.buf && this.n) { const ch = this.buf.map((b) => b.slice(0, this.n)); this.port.postMessage({ ch }, ch.map((b) => b.buffer)); }
+    this.buf = null; this.n = 0;
+  }
+  process(inputs) {
+    if (!this.on) return true;
+    let inp = inputs[0];
+    if (!inp || !inp.length) inp = [new Float32Array(128)];
+    const len = inp[0].length;
+    if (this.buf && (this.buf.length !== inp.length || this.n + len > 16384)) this.flush();
+    if (!this.buf) this.buf = inp.map(() => new Float32Array(16384));
+    for (let c = 0; c < inp.length; c++) this.buf[c].set(inp[c], this.n);
+    this.n += len;
+    return true;
+  }
+}
+registerProcessor('mf-capture', MfCapture);`;
+
+async function setupCapture(ctx, stream) {
+  if (!ctx) return null;
+  try { if (ctx.state !== 'running') await ctx.resume(); } catch { /* bloqué */ }
+  if (ctx.state !== 'running') return null;
+  const src = ctx.createMediaStreamSource(stream);
+  const sink = ctx.createGain();
+  sink.gain.value = 0; // rien n'est renvoyé dans le casque
+  sink.connect(ctx.destination);
+  const cap = { rate: ctx.sampleRate, chunks: [], frames: 0, on: false, node: null, ended: null };
+  const push = (chs) => { if (cap.on && chs?.[0]?.length) { cap.chunks.push(chs); cap.frames += chs[0].length; } };
+  try {
+    if (!ctx.audioWorklet || typeof AudioWorkletNode === 'undefined') throw new Error('pas de worklet');
+    const url = URL.createObjectURL(new Blob([CAPTURE_WORKLET], { type: 'application/javascript' }));
+    try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+    const node = new AudioWorkletNode(ctx, 'mf-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+    node.port.onmessage = (e) => { if (e.data?.ch) push(e.data.ch); if (e.data?.end) cap.ended?.(); };
+    src.connect(node).connect(sink);
+    cap.node = node;
+    cap.start = () => { cap.on = true; node.port.postMessage('start'); };
+    cap.stop = () => new Promise((res) => {
+      const done = () => { cap.on = false; res(); };
+      cap.ended = done;
+      node.port.postMessage('stop');
+      setTimeout(done, 1500);
+    });
+  } catch {
+    if (!ctx.createScriptProcessor) return null;
+    const node = ctx.createScriptProcessor(4096, 2, 1);
+    node.onaudioprocess = (e) => { const b = e.inputBuffer; push(Array.from({ length: b.numberOfChannels }, (_, c) => b.getChannelData(c).slice())); };
+    src.connect(node).connect(sink);
+    cap.node = node;
+    cap.start = () => { cap.on = true; };
+    cap.stop = async () => { cap.on = false; };
+  }
+  return cap;
+}
+
+// Une seule piste (la voix) : micro stéréo → moyenne, ou le seul côté qui capte
+// (carte son avec le micro branché sur une entrée).
+function captureToMono(cap) {
+  const n = cap.frames;
+  const chCount = Math.max(1, ...cap.chunks.map((c) => c.length));
+  const energy = new Array(chCount).fill(0);
+  for (const ck of cap.chunks) for (let c = 0; c < chCount; c++) { const d = ck[c] || ck[0]; for (let i = 0; i < d.length; i++) energy[c] += d[i] * d[i]; }
+  const loud = energy.indexOf(Math.max(...energy));
+  const solo = chCount === 1 || energy.some((e, c) => c !== loud && e < energy[loud] * 0.05);
+  const out = new Float32Array(n);
+  let o = 0;
+  for (const ck of cap.chunks) {
+    const len = ck[0].length;
+    if (solo) out.set(ck[loud] || ck[0], o);
+    else for (let i = 0; i < len; i++) { let v = 0; for (let c = 0; c < chCount; c++) v += (ck[c] || ck[0])[i]; out[o + i] = v / chCount; }
+    o += len;
+  }
+  return out;
+}
+
+// Micro brut : pas d'anti-écho, pas de réduction de bruit, pas de gain auto.
+// L'anti-écho (option, sans écouteurs) passe le micro en mode « appel » et abîme la voix.
+const micConstraints = (echo) => ({
+  echoCancellation: !!echo, noiseSuppression: false, autoGainControl: false, voiceIsolation: false,
+  sampleRate: { ideal: 48000 }, sampleSize: { ideal: 24 },
+});
+
 function recExt(mime) { return /mp4|aac|m4a/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : /wav/.test(mime) ? 'wav' : 'webm'; }
 function pickMime() {
   if (typeof MediaRecorder === 'undefined') return null;
@@ -3730,18 +3896,22 @@ function seekBeat(t) {
 }
 
 // --- Enregistrement
-async function startRec(item, { fromStart, countdown }, ui) {
+async function startRec(item, { fromStart, countdown, echo }, ui) {
   if (rec.state !== 'idle') return;
   stopTake();
+  const AC = window.AudioContext || window.webkitAudioContext;
   const mime = pickMime();
-  if (mime === null || !navigator.mediaDevices?.getUserMedia) { toast('Ce navigateur ne sait pas enregistrer le micro'); return; }
+  if (!navigator.mediaDevices?.getUserMedia || (!AC && mime === null)) { toast('Ce navigateur ne sait pas enregistrer le micro'); return; }
   rec.state = 'arming';
   ui.update();
+  // Contexte audio créé au toucher (sur iPhone il ne démarre que comme ça)
+  try { rec.ctx = AC ? new AC({ latencyHint: 'interactive' }) : null; rec.ctx?.resume().catch(() => {}); } catch { rec.ctx = null; }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints(echo) });
     if (rec.state !== 'arming') { stream.getTracks().forEach((t) => t.stop()); return; } // panneau fermé entre-temps
     rec.stream = stream;
   } catch (e) {
+    releaseMic();
     rec.state = 'idle';
     ui.update();
     toast(e?.name === 'NotAllowedError' ? 'Micro refusé : autorise-le dans les réglages du navigateur (icône à gauche de l’adresse)' : 'Micro introuvable');
@@ -3749,7 +3919,12 @@ async function startRec(item, { fromStart, countdown }, ui) {
   }
   // Niveau du micro
   try {
-    rec.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    rec.cap = await setupCapture(rec.ctx, rec.stream);
+  } catch { rec.cap = null; }
+  if (rec.state !== 'arming') return;
+  if (!rec.cap && mime === null) { cancelRec(); ui.update(); toast('Ce navigateur ne sait pas enregistrer le micro'); return; }
+  try {
+    if (!rec.ctx) throw new Error('pas de Web Audio');
     await rec.ctx.resume();
     rec.analyser = rec.ctx.createAnalyser();
     rec.analyser.fftSize = 1024;
@@ -3786,9 +3961,13 @@ async function startRec(item, { fromStart, countdown }, ui) {
   rec.chunks = [];
   rec.mime = mime;
   rec.beat = { id: ytIdOf(item), title: item.title || '', url: ytWatchUrl(item) };
-  rec.recorder = mime ? new MediaRecorder(rec.stream, { mimeType: mime, audioBitsPerSecond: 160000 }) : new MediaRecorder(rec.stream);
-  rec.recorder.ondataavailable = (e) => { if (e.data?.size) rec.chunks.push(e.data); };
-  rec.recorder.start(250);
+  if (rec.cap) {
+    rec.cap.start(); // PCM brut, sans perte
+  } else {
+    rec.recorder = mime ? new MediaRecorder(rec.stream, { mimeType: mime, audioBitsPerSecond: 320000 }) : new MediaRecorder(rec.stream);
+    rec.recorder.ondataavailable = (e) => { if (e.data?.size) rec.chunks.push(e.data); };
+    rec.recorder.start(250);
+  }
   rec.offset = playerNow();
   rec.startAt = performance.now();
   rec.state = 'rec';
@@ -3803,10 +3982,12 @@ function releaseMic() {
   clearInterval(rec.tick);
   clearTimeout(rec.autoStop);
   rec.stream?.getTracks().forEach((t) => t.stop());
+  try { rec.cap?.node?.disconnect(); } catch { /* déjà débranché */ }
   try { rec.ctx?.close(); } catch { /* déjà fermé */ }
-  Object.assign(rec, { stream: null, ctx: null, analyser: null, raf: 0, tick: 0, autoStop: 0 });
+  Object.assign(rec, { stream: null, ctx: null, analyser: null, cap: null, raf: 0, tick: 0, autoStop: 0 });
 }
 function cancelRec() {
+  if (rec.cap) rec.cap.on = false;
   try { if (rec.recorder?.state === 'recording') rec.recorder.stop(); } catch { /* déjà arrêté */ }
   releaseMic();
   rec.recorder = null;
@@ -3818,15 +3999,28 @@ async function stopRec(ui) {
   if (rec.state === 'count' || rec.state === 'arming') { cancelRec(); ui?.update(); return null; }
   if (rec.state !== 'rec') return null;
   rec.state = 'saving';
-  const duration = (performance.now() - rec.startAt) / 1000;
-  const done = new Promise((r) => { rec.recorder.onstop = r; });
-  try { rec.recorder.stop(); } catch { /* déjà arrêté */ }
-  await Promise.race([done, wait(3000)]);
-  ytSend('pauseVideo');
-  ytSend('setVolume', [100]);
-  player.state = 2;
-  releaseMic();
-  const blob = new Blob(rec.chunks, { type: rec.recorder?.mimeType || rec.mime || 'audio/webm' });
+  let duration = (performance.now() - rec.startAt) / 1000;
+  let blob;
+  if (rec.cap) {
+    const cap = rec.cap;
+    await cap.stop();
+    ytSend('pauseVideo');
+    ytSend('setVolume', [100]);
+    player.state = 2;
+    releaseMic();
+    const mono = captureToMono(cap);
+    duration = mono.length / cap.rate;
+    blob = mono.length ? encodeWav([mono], cap.rate) : new Blob([]);
+  } else {
+    const done = new Promise((r) => { rec.recorder.onstop = r; });
+    try { rec.recorder.stop(); } catch { /* déjà arrêté */ }
+    await Promise.race([done, wait(3000)]);
+    ytSend('pauseVideo');
+    ytSend('setVolume', [100]);
+    player.state = 2;
+    releaseMic();
+    blob = new Blob(rec.chunks, { type: rec.recorder?.mimeType || rec.mime || 'audio/webm' });
+  }
   rec.recorder = null;
   rec.state = 'idle';
   renderMini();
@@ -3851,8 +4045,7 @@ function stopTake() {
   clearInterval(take.sync);
   take.audio.pause();
   URL.revokeObjectURL(take.url);
-  try { take.gainNode?.disconnect(); } catch { /* déjà débranché */ }
-  Object.assign(take, { id: null, audio: null, url: '', sync: 0, beatId: null, gainNode: null, duration: 0 });
+  Object.assign(take, { id: null, audio: null, url: '', sync: 0, beatId: null, duration: 0 });
   if (isPlaying()) { ytSend('pauseVideo'); player.state = 2; }
   ytSend('setVolume', [100]);
   renderMini();
@@ -3898,15 +4091,12 @@ async function playTake(r, btn, startAt = null) {
   if (take.id !== r.id) return;
   ytSend('pauseVideo');
   seekBeat(r.offset + from - recLatency());
-  take.url = URL.createObjectURL(r.blob);
+  // La prise avec son volume, calculée comme le .wav téléchargé (sans perte)
+  let blob = r.blob;
+  try { blob = await renderTake(r); } catch { /* fichier d'origine, volume normal */ }
+  if (take.id !== r.id) return;
+  take.url = URL.createObjectURL(blob);
   take.audio = new Audio(take.url);
-  try {
-    const ctx = audioCtx();
-    await ctx.resume();
-    take.gainNode = ctx.createGain();
-    take.gainNode.gain.value = r.gain ?? 1;
-    ctx.createMediaElementSource(take.audio).connect(take.gainNode).connect(makeLimiter(ctx)).connect(ctx.destination);
-  } catch { take.gainNode = null; take.audio.volume = 1; } // sans Web Audio : volume normal
   ytSend('setVolume', [beatVol()]);
   take.offset = r.offset;
   take.beatId = r.beatId;
@@ -3932,19 +4122,30 @@ async function playTake(r, btn, startAt = null) {
   }, 250);
 }
 
-// La prise avec son volume et le même limiteur qu'à l'écoute, en .wav
+// La prise avec son volume (gain + limiteur de crêtes), en .wav 24 bits
 async function renderTake(r) {
-  const ab = await decodeTake(r);
-  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-  if (!OAC) return wavFrom(ab, r.gain ?? 1);
-  const oc = new OAC(ab.numberOfChannels, ab.length, ab.sampleRate);
-  const src = oc.createBufferSource();
-  src.buffer = ab;
-  const g = oc.createGain();
-  g.gain.value = r.gain ?? 1;
-  src.connect(g).connect(makeLimiter(oc)).connect(oc.destination);
-  src.start();
-  return wavFrom(await oc.startRendering(), 1);
+  const d = await decodeTake(r);
+  const chans = d.chans.map((c) => c.slice());
+  return encodeWav(limitInPlace(chans, d.rate, r.gain ?? 1), d.rate);
+}
+// Volume changé pendant la réécoute : la prise est recalculée et reprend au même endroit
+let regainT = 0;
+function regainTake(r) {
+  clearTimeout(regainT);
+  regainT = setTimeout(async () => {
+    if (take.id !== r.id || !take.audio) return;
+    let blob;
+    try { blob = await renderTake(r); } catch { return; }
+    if (take.id !== r.id || !take.audio) return;
+    const a = take.audio;
+    const t = a.currentTime;
+    const was = !a.paused;
+    const old = take.url;
+    take.url = URL.createObjectURL(blob);
+    a.src = take.url;
+    URL.revokeObjectURL(old);
+    a.addEventListener('loadedmetadata', () => { a.currentTime = t; if (was) a.play().catch(() => {}); }, { once: true });
+  }, 180);
 }
 async function downloadTake(r) {
   let blob = r.blob;
@@ -4006,7 +4207,7 @@ function takeRow(r, refresh, { showBeat = false } = {}) {
     r.gain = Math.max(0, Math.min(MAX_GAIN, g));
     vol.value = String(gainToPct(r.gain));
     volTxt.textContent = pct(r.gain);
-    if (take.id === r.id && take.gainNode) take.gainNode.gain.value = r.gain;
+    if (take.id === r.id) regainTake(r);
     clearTimeout(saveT);
     saveT = setTimeout(() => recStore.put(r), 400);
   };
@@ -4037,14 +4238,17 @@ function openStudio(item) {
   if (!vid) { toast('Pas de vidéo YouTube pour cette prod'); return; }
   let r0 = null;
   try { r0 = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
-  const opts = local.get('recOpts', { fromStart: true, countdown: true });
+  const opts = local.get('recOpts', { fromStart: true, countdown: true, echo: false });
   const fromStart = h('input', { type: 'checkbox', id: 'recFromStart' });
   fromStart.checked = opts.fromStart !== false;
   const countdown = h('input', { type: 'checkbox', id: 'recCountdown' });
   countdown.checked = opts.countdown !== false;
-  const saveOpts = () => local.set('recOpts', { fromStart: fromStart.checked, countdown: countdown.checked });
+  const echo = h('input', { type: 'checkbox', id: 'recEcho' });
+  echo.checked = opts.echo === true;
+  const saveOpts = () => local.set('recOpts', { fromStart: fromStart.checked, countdown: countdown.checked, echo: echo.checked });
   fromStart.addEventListener('change', saveOpts);
   countdown.addEventListener('change', saveOpts);
+  echo.addEventListener('change', saveOpts);
 
   const big = h('button', { type: 'button', class: 'rec-big', 'aria-label': 'Enregistrer' }, h('span', { class: 'rec-dot' }));
   const timer = h('div', { class: 'rec-time' }, '0:00');
@@ -4067,7 +4271,7 @@ function openStudio(item) {
       if (st === 'idle') { status.textContent = 'Touche le bouton rouge pour rapper sur la prod.'; timer.textContent = '0:00'; meter.firstChild.style.width = '0%'; counter.hidden = true; }
       if (st === 'rec') status.textContent = 'Ça enregistre… Touche ■ pour arrêter et garder la prise.';
       if (st === 'saving') status.textContent = 'J’enregistre la prise…';
-      fromStart.disabled = countdown.disabled = st !== 'idle';
+      fromStart.disabled = countdown.disabled = echo.disabled = st !== 'idle';
     },
     say(t) { status.textContent = t; },
     level(p) { meter.firstChild.style.width = `${Math.min(100, Math.round(p * 140))}%`; meter.classList.toggle('hot', p > 0.95); },
@@ -4079,7 +4283,7 @@ function openStudio(item) {
     },
   };
   big.addEventListener('click', () => {
-    if (rec.state === 'idle') startRec(item, { fromStart: fromStart.checked, countdown: countdown.checked }, ui);
+    if (rec.state === 'idle') startRec(item, { fromStart: fromStart.checked, countdown: countdown.checked, echo: echo.checked }, ui);
     else stopRec(ui);
   });
 
@@ -4095,8 +4299,9 @@ function openStudio(item) {
     })(),
     h('div', { class: 'rec-opts' },
       h('label', { for: 'recFromStart' }, fromStart, 'Repartir du début de la prod'),
-      h('label', { for: 'recCountdown' }, countdown, 'Décompte 3 s')),
-    h('p', { class: 'hint' }, 'Mets des écouteurs : sinon le micro enregistre aussi la prod. Seule ta voix est enregistrée ; à la réécoute, elle repart calée sur la prod.'),
+      h('label', { for: 'recCountdown' }, countdown, 'Décompte 3 s'),
+      h('label', { for: 'recEcho', title: 'Seulement sans écouteurs : retire la prod du micro, mais abîme la voix' }, echo, 'Anti-écho (sans écouteurs)')),
+    h('p', { class: 'hint' }, 'Mets des écouteurs : la voix est enregistrée brute, sans perte (WAV 24 bits), sans réduction de bruit. Sans écouteurs, le micro capte aussi la prod (l’option anti-écho l’enlève, mais abîme la voix). À la réécoute, ta voix repart calée sur la prod.'),
     h('div', { class: 'd-sec' }, h('h4', {}, 'Tes prises sur cette prod'), list),
     h('details', { class: 'rec-adv' }, h('summary', {}, 'Voix en avance ou en retard sur la prod ?'),
       h('div', { class: 'rec-lat' }, h('span', {}, 'Calage'), lat, latVal),

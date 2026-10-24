@@ -94,6 +94,13 @@ un dictaphone. Chaque prise retient où elle commence dans la prod : à la réé
 repart calée sur la prod (réglage fin du calage si besoin). Les prises restent dans le
 navigateur (onglet **Recs**) et se téléchargent. Conseil : mets des écouteurs.
 
+Qualité : la voix est enregistrée **brute et sans perte** (échantillons PCM copiés tels
+quels par un AudioWorklet, stockés en WAV 24 bits), micro sans anti-écho, sans réduction
+de bruit et sans gain automatique. L'anti-écho reste en option pour enregistrer sans
+écouteurs, mais il abîme la voix. Le volume de la voix (jusqu'à 300 %) passe par un
+limiteur qui ne touche que les crêtes au-dessus de -1 dB : pas de compression, pas de
+souffle remonté. La réécoute et le .wav téléchargé sont calculés de la même façon.
+
 ## Télécharger les prods sur ton PC (même loin de chez toi)
 
 Installateur Windows : **MelofindsSetup.exe**
