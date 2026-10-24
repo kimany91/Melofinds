@@ -962,7 +962,7 @@ def apply_update(progress=None, reopen=False):
     return f"Mise à jour vers la version {ver}…"
 
 
-def watch_windows_shutdown(callback):
+def watch_windows_shutdown(callback, report=None):
     """Fenêtre invisible qui reçoit « Windows s'éteint / ferme la session » et appelle
     callback (quelques secondes au plus). Renvoie une fonction qui arrête la surveillance."""
     if not WINDOWS:
@@ -987,6 +987,7 @@ def watch_windows_shutdown(callback):
                     ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON), ("hCursor", wintypes.HANDLE),
                     ("hbrBackground", wintypes.HBRUSH), ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR)]
     state = {"done": False, "hwnd": None}
+    report = report if report is not None else {}
 
     def proc(hwnd, msg, wp, lp):
         if msg == 0x0011:  # WM_QUERYENDSESSION : on ne bloque jamais l'arrêt
@@ -1009,17 +1010,22 @@ def watch_windows_shutdown(callback):
             wc.lpfnWndProc = wndproc
             wc.hInstance = hinst
             wc.lpszClassName = "MelofindsPCWorker"
-            user32.RegisterClassW(ctypes.byref(wc))
+            if not user32.RegisterClassW(ctypes.byref(wc)):
+                report["register"] = ctypes.get_last_error()
             hwnd = user32.CreateWindowExW(0, "MelofindsPCWorker", "Melofinds PC (en ligne)", 0, 0, 0, 0, 0, None, None, hinst, None)
             if not hwnd:
+                report["create"] = ctypes.get_last_error()
+                log(f"Surveillance de l'arrêt de Windows indisponible (erreur {report['create']}).")
                 return
+            report["hwnd"] = int(hwnd)
             state["hwnd"] = hwnd
             msg = wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
         except Exception as e:
-            log(f"Surveillance de l'arrêt de Windows indisponible : {e}")
+            report["error"] = repr(e)[:200]
+            log(f"Surveillance de l'arrêt de Windows indisponible : {e!r}")
     threading.Thread(target=run, name="arret-windows", daemon=True).start()
 
     def stop():

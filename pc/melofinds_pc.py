@@ -88,6 +88,19 @@ def selftest(out):
             res["preview"] = {"bytes": n, "parts": len(C.chunks(prev.read_bytes())), "ok": 0 < n <= 2 * C.ATTACH_MAX}
     except Exception as e:
         res["preview"] = {"ok": False, "err": str(e)[:200]}
+    # Arrêt de Windows : la fenêtre invisible qui prévient le téléphone doit exister
+    if C.WINDOWS:
+        import ctypes
+        import time
+        rep = {}
+        stop = C.watch_windows_shutdown(lambda: rep.update(called=True), rep)
+        time.sleep(1.5)
+        found = ctypes.windll.user32.FindWindowW("MelofindsPCWorker", None)
+        res["shutdown_watch"] = {**rep, "found": bool(found)}
+        if found:
+            ctypes.windll.user32.SendMessageW(found, 0x16, 1, 0)
+            res["shutdown_watch"]["called"] = bool(rep.get("called"))
+        stop()
     # Tunebat (informatif) : une prod connue, sortie sur Spotify par son beatmaker
     res["tunebat"] = C.tunebat_lookup("NEMZZZ TYPE BEAT", "Nemzzz", 173) or "rien / injoignable"
     res["glyphs_missing"] = missing_glyphs()

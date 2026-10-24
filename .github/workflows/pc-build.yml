@@ -205,6 +205,7 @@ jobs:
           for ($i = 0; $i -lt 60 -and (Workers).Count; $i++) { Start-Sleep -Milliseconds 500 }
           $r.shutdown_logged = [bool](Select-String -Path "$dir\melofinds.log" -Pattern "Windows s'éteint" -SimpleMatch -Quiet)
           $r.shutdown_stopped = (Workers).Count -eq 0
+          $journal = if (Test-Path "$dir\melofinds.log") { Get-Content "$dir\melofinds.log" -Tail 60 } else { @() }
 
           $u = Get-ChildItem "$dir\unins*.exe" | Select-Object -First 1
           Run-Wait $u.FullName @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') | Out-Null
@@ -213,7 +214,7 @@ jobs:
           $r | ConvertTo-Json
           $bad = @($r.GetEnumerator() | Where-Object { $_.Key -notin 'old_version', 'new_version', 'update_exit' -and $_.Value -ne $true })
           if ($r.update_exit -ne 0 -or $bad.Count) {
-            Write-Host "---- journal du programme"; if (Test-Path "$dir\melofinds.log") { Get-Content "$dir\melofinds.log" -Tail 80 }
+            Write-Host "---- journal du programme"; $journal
             Write-Host "---- journal de l'installateur"; if (Test-Path $log) { Get-Content $log -Tail 80 }
             Write-Error "Test de mise à jour raté : $($bad.Key -join ', ')"; exit 1
           }
