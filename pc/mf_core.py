@@ -1018,6 +1018,7 @@ def watch_windows_shutdown(callback, report=None):
                 log(f"Surveillance de l'arrêt de Windows indisponible (erreur {report['create']}).")
                 return
             report["hwnd"] = int(hwnd)
+            log(f"Surveillance de l'arrêt de Windows active (fenêtre {int(hwnd)}).")
             state["hwnd"] = hwnd
             msg = wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
