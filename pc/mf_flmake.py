@@ -20,6 +20,7 @@ Formats vérifiés sur de vrais projets FL 20, FL 25 et FL 2026 (PyFLP, flpdiff,
 
 import base64
 import os
+import shutil
 import re
 import struct
 import subprocess
@@ -443,7 +444,7 @@ def settings(cfg=None):
     fm = cfg.get("flmake") if isinstance(cfg.get("flmake"), dict) else {}
     fm.setdefault("on", False)
     fm.setdefault("template", "")
-    fm.setdefault("dossier", str(Path(cfg.get("dossier") or C.default_folder()) / "Projets FL"))
+    fm.setdefault("dossier", str(Path(cfg.get("dossier") or C.default_folder())))
     fm.setdefault("fl", "")
     fm.setdefault("open", True)
     return fm
@@ -724,8 +725,30 @@ def make(wav, key=None, bpm=None, title=None, cfg=None):
     wav = Path(wav)
     if not C.is_wav(wav):
         raise FlpError("l'instru n'est pas un .wav")
-    out = project_path(fm["dossier"], wav.stem)
-    summary = build_project(fm["template"], wav, out, bpm=C.valid_bpm(bpm), title=title or wav.stem)
+    root = Path(fm["dossier"])
+    created = None
+    try:
+        in_own_folder = C.inside(wav, root) and wav.parent.resolve() != root.resolve()
+    except OSError:
+        in_own_folder = False
+    if in_own_folder:  # la prod est déjà dans son dossier de projet : le .flp va à côté
+        out, i = wav.parent / f"{wav.parent.name}.flp", 2
+        while out.exists():
+            out = wav.parent / f"{wav.parent.name} ({i}).flp"
+            i += 1
+        instru = wav
+    else:  # prod d'ailleurs : nouveau dossier de projet, avec une copie de la prod dedans
+        out = project_path(root, wav.stem)
+        created = out.parent
+        created.mkdir(parents=True)
+        instru = created / f"{created.name}.wav"
+        shutil.copy2(wav, instru)
+    try:
+        summary = build_project(fm["template"], instru, out, bpm=C.valid_bpm(bpm), title=title or out.stem)
+    except Exception:
+        if created:
+            shutil.rmtree(created, ignore_errors=True)
+        raise
     note, mode = split_key(C.valid_key(key))
     key_txt = f", clé {note}{(' ' + mode) if mode else ''}" if note else ", clé inconnue"
     return out, f"Projet FL « {out.name} » prêt ({summary}{key_txt})"

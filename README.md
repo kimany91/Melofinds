@@ -122,7 +122,7 @@ ouvre le site dans Chrome) :
   dernières prods reçues ;
 - **Appareils** : téléphones appairés (nom, type, dernière activité), ajouter avec le
   code d'appairage, renommer, retirer ;
-- **Dossier & réglages** : dossier des prods, emplacement du programme, journal,
+- **Dossier & réglages** : dossier des projets, emplacement du programme, journal,
   mises à jour, désinstallation (les prods restent dans leur dossier).
 
 - Nom du fichier : `Titre [Clé, BPM] [Licence].wav`, avec la licence lue par l'app :
@@ -148,13 +148,15 @@ Même style que Melofinds Web, avec un menu à gauche :
 - **Accueil** : en ligne / hors ligne, et la **barre de téléchargement** de la prod qui
   arrive (recherche, téléchargement en %, conversion en WAV, projet FL, prods en attente),
   puis les dernières prods reçues.
-- **Mes projets FL** : tous les projets FL du dossier des projets choisi (ceux de FLmake
-  et ceux que tu enregistres toi-même), avec clé, BPM, instru et date de modification ;
-  recherche, **favoris ★**, **ouvrir dans FL**, écouter l'instru, ouvrir le dossier, et
-  **renommer** : le dossier du projet et tous les fichiers qui portent son nom (projet,
-  sauvegardes, exports) prennent le nouveau nom, et les chemins enregistrés dans les projets
-  FL suivent (tout ou rien : en cas de problème, tout est remis comme avant). La prod
-  (.wav) n'est pas touchée.
+- **Mes projets FL** : tous les projets du **dossier des projets** (un seul dossier : il
+  n'y a plus de dossier des prods à part). Chaque prod reçue y arrive dans son propre
+  dossier, avec son projet FL :
+  `Titre [C# min, 150 BPM] [FFP]/Titre [C# min, 150 BPM] [FFP].wav` et `….flp`.
+  Clé, BPM, instru, date ; recherche, **favoris ★**, **ouvrir dans FL** (crée le projet
+  FLmake s'il n'y a encore que la prod), écouter l'instru, ouvrir le dossier, et
+  **renommer** : le dossier du projet et tous les fichiers qui portent son nom (prod,
+  projet, sauvegardes, exports) prennent le nouveau nom, et les chemins enregistrés dans
+  les projets FL suivent (tout ou rien : en cas de problème, tout est remis comme avant).
 - **FLmake**, **Appareils**, **Réglages**.
 
 Une prod déjà reçue n'est « déjà sur ton PC » que si son fichier y est encore : supprimée
@@ -169,9 +171,10 @@ Onglet **FLmake** du panneau Melofinds PC. Une fois activé, pour chaque prod re
    haut « INSTRU » reliée à l'insert 1, piste « VOICE » à l'insert 2).
 2. Il met le **BPM** de la prod, pose **l'instru au début de la piste « INSTRU »**
    (sinon la piste du haut ; clip à la bonne longueur, canal « clip audio » créé
-   s'il n'y a pas déjà un son sur cette piste) et **enregistre le projet dans un
-   dossier au nom de la prod**, comme une sauvegarde FL
-   (`Titre [C# min, 150 BPM] [FFP]/Titre [C# min, 150 BPM] [FFP].flp`).
+   s'il n'y a pas déjà un son sur cette piste) et **enregistre le projet dans le
+   dossier de la prod**, à côté du .wav, comme une sauvegarde FL
+   (`Titre [C# min, 150 BPM] [FFP]/Titre [C# min, 150 BPM] [FFP].flp`). Une prod venue
+   d'ailleurs (bouton « Tester ») est copiée dans son nouveau dossier de projet.
 3. Il **ouvre FL Studio** sur le projet (une seule fois si plusieurs prods arrivent
    d'un coup). Le script **Melofinds FLmake** règle alors **Graillon sur la clé de la
    prod** et sauvegarde.

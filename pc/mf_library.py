@@ -179,29 +179,46 @@ AUDIO = (".wav", ".mp3", ".flac", ".ogg", ".aif", ".aiff", ".m4a")
 
 
 def scan_projects(cfg=None):
-    """Mes projets FL : chaque projet (dossier avec un .flp, ou .flp seul) du dossier des
-    projets choisi, les plus récemment modifiés d'abord."""
+    """Mes projets FL : chaque dossier de projet du dossier des projets (projet FL et/ou
+    prod .wav), plus les .flp seuls ; les plus récemment modifiés d'abord."""
     cfg = cfg if cfg is not None else C.load_config()
     folder = Path(FM.settings(cfg)["dossier"])
     favs = set(cfg.get("fav_projects") or [])
-    beats = str(Path(cfg.get("dossier") or C.default_folder()).resolve()).lower()
     out = []
-    for flp, sub in _project_flps(folder):
-        name = sub.name if sub else flp.stem
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        entries = []
+    for e in entries:
+        try:
+            if e.is_dir():
+                flps = sorted(e.glob("*.flp"), key=lambda p: (p.stem != e.name, -p.stat().st_mtime))
+                wavs = sorted(e.glob("*.wav"), key=lambda p: p.stem != e.name)
+                if not flps and not wavs:
+                    continue
+                flp, sub, name = (flps[0] if flps else None), e, e.name
+            elif e.suffix.lower() == ".flp":
+                flp, sub, wavs, name = e, None, [], e.stem
+            else:
+                continue
+        except OSError:
+            continue
         title, suffix, key, bpm, lic = parse_name(name)
         it = Prod(id=f"p:{name.lower()}", name=name, title=title or name, suffix=suffix, key=key, bpm=bpm, lic=lic,
                   flp=flp, folder=sub, kind="project")
         try:
-            flps = [p for p in sub.glob("*.flp")] if sub else [flp]
-            it.date = max(p.stat().st_mtime for p in flps)
-            it.extra["files"] = sum(1 for p in sub.rglob("*") if p.is_file()) if sub else 1
-        except (OSError, ValueError):
+            files = [p for p in sub.rglob("*") if p.is_file()] if sub else [flp]
+            it.date = max((p.stat().st_mtime for p in files), default=0.0)
+            it.extra["files"] = len(files)
+        except OSError:
             it.date = 0.0
-        sounds = [s for s in _flp_samples(flp) if s and not s.startswith("%") and s.lower().endswith(AUDIO)]
-        sounds.sort(key=lambda s: str(Path(s).parent).lower() != beats)  # l'instru (dossier des prods) d'abord
+        sounds = [Path(s) for s in (_flp_samples(flp) if flp else []) if s and not s.startswith("%") and s.lower().endswith(AUDIO)]
+        if sub:  # l'instru du dossier du projet d'abord
+            sounds.sort(key=lambda p: str(p.parent).lower() != str(sub).lower() and str(p.parent).lower() != str(sub.resolve()).lower())
+        sounds = sounds or wavs
         if sounds:
-            it.extra["instru"] = parse_name(Path(sounds[0]).stem)[0] or Path(sounds[0]).stem
-            it.extra["instru_path"] = Path(sounds[0])
+            it.extra["instru"] = parse_name(sounds[0].stem)[0] or sounds[0].stem
+            it.extra["instru_path"] = sounds[0]
         it.fav = it.id in favs
         out.append(it)
     return sorted(out, key=lambda i: i.date, reverse=True)
@@ -219,18 +236,20 @@ def toggle_fav(item, cfg=None):
 
 
 def open_item(item, cfg=None):
-    """Ouvre la prod dans FL (projet FLmake, créé si besoin), sinon le .wav."""
+    """Ouvre le projet dans FL ; s'il n'a encore que la prod, crée le projet FLmake à côté
+    (si un modèle est choisi), sinon ouvre la prod."""
     cfg = cfg if cfg is not None else C.load_config()
     if item.flp and item.flp.is_file():
         return FM.open_in_fl(item.flp, item.key or None, item.bpm, cfg)
+    wav = item.wav or item.extra.get("instru_path")
     fm = FM.settings(cfg)
-    if item.wav and fm["template"] and Path(fm["template"]).is_file():
-        out, msg = FM.make(item.wav, item.key or None, item.bpm, item.name, cfg)
-        item.flp, item.folder = out, out.parent
+    if wav and Path(wav).is_file() and fm["template"] and Path(fm["template"]).is_file():
+        out, msg = FM.make(wav, item.key or None, item.bpm, None, cfg)
+        item.flp = out
         return f"{msg} · {FM.open_in_fl(out, item.key or None, item.bpm, cfg)}"
-    if item.wav:
+    if wav and Path(wav).is_file():
         if C.WINDOWS:
-            os.startfile(str(item.wav))  # noqa: S606 (fichier du dossier des prods)
+            os.startfile(str(wav))  # noqa: S606 (fichier du dossier des projets)
         return "Prod ouverte (choisis ton modèle dans FLmake pour avoir un projet FL)"
     raise LibError("rien à ouvrir")
 
@@ -398,9 +417,11 @@ def rename(item, new_title, cfg=None):
     if item.id in favs:
         new_id = f"p:{new.lower()}" if item.kind == "project" else new.lower()
         cfg[item.fav_key] = [new_id if f == item.id else f for f in favs]
-    if plan["wav"]:
-        ren = cfg.get("renamed") or {}
-        ren[plan["wav"][0].name] = plan["wav"][1].name
-        cfg["renamed"] = dict(list(ren.items())[-500:])
+    # Suivi des fichiers reçus : le PC ne retélécharge pas une prod renommée (ou déplacée
+    # avec son dossier de projet)
+    ren = cfg.get("renamed") or {}
+    for old, newp in mapping:
+        ren[old] = newp
+    cfg["renamed"] = dict(list(ren.items())[-1000:])
     C.save_config(cfg)
     return new

@@ -31,7 +31,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.4.1"
+VERSION = "3.5.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -213,18 +213,52 @@ def load_state():
     return st
 
 
-def received_file(st, cfg, vid, root):
-    """Fichier .wav déjà reçu pour cette vidéo, s'il est encore dans le dossier (en suivant
-    les renommages faits depuis le panneau). None sinon : il faut la retélécharger."""
-    name = (st.get("files") or {}).get(vid)
-    renamed = cfg.get("renamed") or {}
+def projects_root(cfg):
+    """Le dossier des projets : chaque prod reçue y arrive dans son propre dossier
+    (« Nom/Nom.wav », et « Nom/Nom.flp » avec FLmake)."""
+    fm = cfg.get("flmake") if isinstance(cfg.get("flmake"), dict) else {}
+    return Path(fm.get("dossier") or cfg.get("dossier") or default_folder())
+
+
+def follow_renames(path, renamed):
+    """Chemin après les renommages faits depuis le panneau (fichier ou dossier parent)."""
+    p = str(path)
     for _ in range(50):
-        if not name:
-            return None
-        p = Path(root) / name
+        nxt = None
+        for old, new in renamed.items():
+            o = old.rstrip("\\/")
+            if p.lower() == o.lower():
+                nxt = new
+            elif Path(p).name == old and not any(c in old for c in "\\/"):  # anciennes versions : nom seul
+                nxt = str(Path(p).with_name(new))
+            else:
+                for sep in ("\\", "/"):
+                    if p.lower().startswith(o.lower() + sep):
+                        nxt = new.rstrip("\\/") + sep + p[len(o) + 1:]
+                        break
+            if nxt:
+                break
+        if not nxt or nxt == p:
+            return Path(p)
+        p = nxt
+    return Path(p)
+
+
+def received_file(st, cfg, vid, roots):
+    """Fichier .wav déjà reçu pour cette vidéo, s'il est encore là (en suivant les
+    renommages faits depuis le panneau). None sinon : il faut la retélécharger."""
+    name = (st.get("files") or {}).get(vid)
+    if not name:
+        return None
+    roots = [roots] if isinstance(roots, (str, Path)) else roots
+    renamed = cfg.get("renamed") or {}
+    cands = [Path(name)] if Path(name).is_absolute() else [Path(r) / name for r in roots]
+    for c in cands:
+        if c.is_file():
+            return c
+        p = follow_renames(c, renamed)
         if p.is_file():
             return p
-        name = renamed.get(name)
     return None
 
 
@@ -581,6 +615,15 @@ def inside(path, root):
         return False
 
 
+def unique_project(root, name):
+    """« root/Nom/Nom.wav » (ou « Nom (2) » si le dossier existe déjà)."""
+    sub, i = name, 2
+    while (Path(root) / sub).exists():
+        sub = f"{name} ({i})"
+        i += 1
+    return Path(root) / sub / f"{sub}.wav"
+
+
 def unique_path(root, name):
     p = Path(root) / f"{name}.wav"
     i = 2
@@ -631,8 +674,9 @@ def download(video_id, root, info, out=None, progress=None):
     desc = meta.get("description") or ""
     key = valid_key(info.get("key")) or find_key(meta.get("title") or "", desc)
     bpm = valid_bpm(info.get("bpm")) or find_bpm(meta.get("title") or "", desc)
-    final = unique_path(root, build_name(meta.get("title") or info.get("t") or video_id, key, bpm, info.get("lic"), info.get("limit")))
-    if not inside(final, root) or final.suffix.lower() != ".wav":
+    # Chaque prod arrive dans son propre dossier de projet : « Nom/Nom.wav »
+    final = unique_project(root, build_name(meta.get("title") or info.get("t") or video_id, key, bpm, info.get("lic"), info.get("limit")))
+    if not inside(final, root) or final.suffix.lower() != ".wav" or final.parent.parent.resolve() != Path(root).resolve():
         return False, "nom de fichier refusé"
 
     # 2) Téléchargement + conversion dans un dossier temporaire, hors de ton dossier.
@@ -663,9 +707,14 @@ def download(video_id, root, info, out=None, progress=None):
         if not wavs:
             return False, "la conversion en WAV a échoué"
         # 3) Seul le .wav vérifié entre dans ton dossier.
+        final.parent.mkdir(parents=True, exist_ok=False)
         shutil.move(str(wavs[0]), str(final))
     if not is_wav(final):
         final.unlink(missing_ok=True)
+        try:
+            final.parent.rmdir()
+        except OSError:
+            pass
         return False, "fichier non WAV supprimé"
     if out is not None:  # pour FLmake
         out.update(path=str(final), key=key, bpm=bpm, title=clean_title(meta.get("title") or info.get("t") or video_id))

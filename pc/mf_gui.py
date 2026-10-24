@@ -449,7 +449,7 @@ def manager_window(selftest=False):
     fdir_var = tk.StringVar()
 
     # ================= Mes projets FL
-    prods = page("prods", "Mes projets FL", "Tous les projets FL de ton dossier des projets (FLmake et ceux que tu enregistres). "
+    prods = page("prods", "Mes projets FL", "Chaque prod reçue arrive dans son propre dossier de projet, avec son projet FL. "
                                             "Double-clic pour ouvrir dans FL.")
     fold = tk.Frame(prods, bg=BG)
     fold.pack(fill="x", pady=(0, 10))
@@ -457,17 +457,19 @@ def manager_window(selftest=False):
     fold_lbl.pack(side="left")
 
     def change_proj_dir():
-        cur = FM.settings()["dossier"]
-        p = filedialog.askdirectory(title="Dossier de tes projets FL", initialdir=cur, parent=root)
-        if p:
-            cfg = C.load_config()
-            fm = FM.settings(cfg)
-            fm["dossier"] = str(Path(p))
-            cfg["flmake"] = fm
-            C.save_config(cfg)
-            fdir_var.set(str(Path(p)))
-            load_prods(force=True)
-            toast("Dossier des projets FL changé")
+        """Le seul dossier : chaque prod reçue y arrive dans son dossier de projet."""
+        p = filedialog.askdirectory(title="Ton dossier des projets", initialdir=FM.settings()["dossier"], parent=root)
+        if not p:
+            return
+        Path(p).mkdir(parents=True, exist_ok=True)
+        cfg = C.load_config()
+        fm = FM.settings(cfg)
+        fm["dossier"] = cfg["dossier"] = str(Path(p))
+        cfg["flmake"] = fm
+        C.save_config(cfg)
+        fdir_var.set(str(Path(p)))
+        load_prods(force=True)
+        toast("Dossier des projets changé : les prochaines prods arriveront là, chacune dans son dossier.")
     Btn(fold, "Changer…", change_proj_dir, kind="subtle", padx=8, pady=0).pack(side="left", padx=(8, 0))
     Btn(fold, "Ouvrir", lambda: _open_path(FM.settings()["dossier"]), kind="subtle", padx=0, pady=0).pack(side="left")
 
@@ -571,6 +573,7 @@ def manager_window(selftest=False):
             sel_lbl.configure(text="Choisis un projet dans la liste.")
             return
         a_fav.set(text="★ Favori" if it.fav else "☆ Favori")
+        a_open.set(text="Ouvrir dans FL" if it.flp else ("Créer le projet FL" if FM.settings()["template"] else "Ouvrir la prod"))
         ip = it.extra.get("instru_path")
         a_play.set(enabled=bool(ip and ip.is_file()))
         files = it.extra.get("files")
@@ -581,9 +584,10 @@ def manager_window(selftest=False):
         if not it:
             return
         try:
-            toast(FM.open_in_fl(it.flp, it.key or None, it.bpm))
-        except (OSError, FM.FlpError) as e:
+            toast(L.open_item(it), 7000)
+        except (OSError, FM.FlpError, L.LibError) as e:
             toast(f"Impossible d'ouvrir : {e}")
+        load_prods(force=True)
 
     def do_fav(it=None):
         it = it or selected()
@@ -782,14 +786,8 @@ def manager_window(selftest=False):
 
     fdir_var.set(fm0["dossier"])
 
-    def pick_fdir():
-        p = filedialog.askdirectory(title="Où enregistrer les projets FL ?", initialdir=fdir_var.get(), parent=root)
-        if p:
-            Path(p).mkdir(parents=True, exist_ok=True)
-            fm_save(dossier=str(Path(p)))
-            fdir_var.set(str(Path(p)))
-    path_card(flm, "Dossier des projets FL", "Chaque projet a son dossier, au nom de la prod.", fdir_var,
-              (("Changer…", pick_fdir, "ghost"),
+    path_card(flm, "Dossier des projets", "Chaque prod arrive dans son dossier, au nom de la prod : la prod (.wav) et son projet FL.", fdir_var,
+              (("Changer…", change_proj_dir, "ghost"),
                ("Ouvrir", lambda: (Path(fdir_var.get()).mkdir(parents=True, exist_ok=True), _open_path(fdir_var.get())), "ghost")))
 
     flexe_var = tk.StringVar(value=FM.fl_exe(fm0) or "FL Studio introuvable : choisis FL64.exe")
@@ -948,21 +946,10 @@ def manager_window(selftest=False):
     Btn(dbar, "Retirer", remove_dev, kind="danger").pack(side="left")
 
     # ================= Réglages
-    setp = page("settings", "Réglages", "Dossier des prods, démarrage, mises à jour.", scroll=True)
-    beats_var = tk.StringVar(value=C.load_config().get("dossier") or C.default_folder())
-
-    def change_folder():
-        p = filedialog.askdirectory(title="Où ranger les prods reçues ?", initialdir=beats_var.get(), parent=root)
-        if not p:
-            return
-        cfg = C.load_config()
-        cfg["dossier"] = str(Path(p))
-        Path(cfg["dossier"]).mkdir(parents=True, exist_ok=True)
-        C.save_config(cfg)
-        beats_var.set(cfg["dossier"])
-        toast("Dossier changé : les prochaines prods arriveront là.")
-    path_card(setp, "Dossier des prods", "Seuls des fichiers .wav y sont enregistrés, nommés « Titre [Clé, BPM] [Licence].wav ».", beats_var,
-              (("Changer…", change_folder, "ghost"), ("Ouvrir", lambda: _open_path(beats_var.get()), "ghost")))
+    setp = page("settings", "Réglages", "Dossier des projets, démarrage, mises à jour.", scroll=True)
+    path_card(setp, "Dossier des projets", "Chaque prod reçue y arrive dans son propre dossier : « Nom/Nom.wav », et « Nom/Nom.flp » "
+                                         "avec FLmake. Seuls des fichiers .wav y sont téléchargés.", fdir_var,
+              (("Changer…", change_proj_dir, "ghost"), ("Ouvrir", lambda: (Path(fdir_var.get()).mkdir(parents=True, exist_ok=True), _open_path(fdir_var.get())), "ghost")))
     sc = card(setp)
     sc.pack(fill="x", pady=(0, 14))
     sw_auto = setting_row(sc, "Se mettre en ligne au démarrage de l'ordinateur", "Melofinds PC reçoit tes prods même si tu n'ouvres pas ce panneau.",

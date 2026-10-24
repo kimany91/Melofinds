@@ -90,7 +90,7 @@ def worker(once=False):
                 pass
             cfg = C.load_config()  # relu à chaque tour : dossier et appareils modifiables à chaud
             devices = cfg["devices"]
-            root = Path(cfg.get("dossier") or C.default_folder())
+            root = C.projects_root(cfg)  # dossier des projets : un dossier par prod
             try:
                 root.mkdir(parents=True, exist_ok=True)
             except OSError as e:
@@ -158,7 +158,7 @@ def worker(once=False):
                     vid = str(msg.get("v") or "")
                     if not C.VIDEO_ID.match(vid):
                         continue
-                    have = C.received_file(st, cfg, vid, root)
+                    have = C.received_file(st, cfg, vid, [root, Path(cfg.get("dossier") or C.default_folder())])
                     if have and not msg.get("force"):
                         C.reply(code, {"v": vid, "ok": True, "deja": True, "file": have.name})
                         continue
@@ -179,7 +179,7 @@ def worker(once=False):
                     flp = None
                     if ok:
                         done.add(vid)
-                        st.setdefault("files", {})[vid] = Path(got.get("path") or detail).name
+                        st.setdefault("files", {})[vid] = str(Path(got.get("path") or root / detail).resolve())
                         if len(st["files"]) > 3000:
                             st["files"] = dict(list(st["files"].items())[-3000:])
                         # FLmake : projet FL prêt (BPM, instru, preset de voix) ; FL s'ouvre après le lot

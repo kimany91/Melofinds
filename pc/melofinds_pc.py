@@ -43,8 +43,10 @@ def selftest(out):
     vid = os.environ.get("MELOFINDS_TEST_VIDEO", "")
     if C.VIDEO_ID.match(vid):  # vrai téléchargement (informatif : YouTube bloque souvent les serveurs)
         with tempfile.TemporaryDirectory(prefix="melofinds-test-") as d:
-            ok, detail = C.download(vid, d, {})
-            res["download"] = {"ok": ok, "detail": detail, "files": [x.name for x in Path(d).iterdir()]}
+            seen = {}
+            ok, detail = C.download(vid, d, {}, None, lambda st, pct: seen.update({st: max(seen.get(st) or 0, pct or 0)}))
+            res["download"] = {"ok": ok, "detail": detail, "progress": seen,
+                               "files": [str(x.relative_to(d)) for x in Path(d).rglob("*")]}
     try:
         import mf_gui as G
         G.manager_window(selftest=True)

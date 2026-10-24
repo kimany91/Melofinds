@@ -368,32 +368,50 @@ class FLmake(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Mes prods : liste, favoris, renommage, prods déjà reçues
+# Mes projets FL : un dossier par prod (« Nom/Nom.wav » + « Nom/Nom.flp »)
 
 import mf_library as L
 
 
-class MesProds(unittest.TestCase):
+class MesProjetsFL(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp(prefix="mf-lib-"))
         mpc.P.set(self.d / "prog")
-        self.beats = self.d / "Prods"
-        self.beats.mkdir()
+        self.root = self.d / "Projets FL"
+        self.root.mkdir()
         tpl = self.d / "MODEL FL.flp"
         tpl.write_bytes(fake_flp())
-        self.cfg = {"dossier": str(self.beats), "devices": [],
-                    "flmake": {"on": True, "template": str(tpl), "dossier": str(self.d / "Projets FL")}}
+        self.cfg = {"dossier": str(self.d / "Prods (ancien)"), "devices": [],
+                    "flmake": {"on": True, "template": str(tpl), "dossier": str(self.root)}}
         mpc.save_config(self.cfg)
         self.name = "Lucki Type Beat - 'Haze' [C# min, 150 BPM] [FFP]"
-        self.wav = self.beats / f"{self.name}.wav"
+        # comme un téléchargement : la prod arrive dans son propre dossier
+        self.wav = mpc.unique_project(self.root, self.name)
+        self.wav.parent.mkdir()
         self.wav.write_bytes(fake_wav(2))
-        (self.beats / "Autre [140 BPM].wav").write_bytes(fake_wav(1))
         self.flp, _ = FM.make(self.wav, "C# min", 150, None, mpc.load_config())
         (self.flp.parent / f"{self.name} (autosave).flp").write_bytes(self.flp.read_bytes())
         (self.flp.parent / f"{self.name}.mp3").write_bytes(b"export")
 
-    def item(self):
-        return next(i for i in L.scan() if i.flp)
+    def project(self, name=None):
+        return next(i for i in L.scan_projects() if i.name == (name or self.name))
+
+    def test_un_dossier_par_prod(self):
+        self.assertEqual(self.wav, self.root / self.name / f"{self.name}.wav")
+        self.assertEqual(self.flp, self.root / self.name / f"{self.name}.flp")  # projet à côté de la prod
+        self.assertIn(str(self.wav.resolve()), L._flp_samples(self.flp))
+        self.assertEqual(mpc.unique_project(self.root, self.name), self.root / f"{self.name} (2)" / f"{self.name} (2).wav")
+        self.assertEqual(mpc.projects_root(mpc.load_config()), self.root)
+
+    def test_prod_venue_d_ailleurs_copiee_dans_son_projet(self):
+        ext = self.d / "Ailleurs" / "Beat [D min, 90 BPM].wav"
+        ext.parent.mkdir()
+        ext.write_bytes(fake_wav(1))
+        out, _ = FM.make(ext, "D min", 90, None, mpc.load_config())
+        self.assertEqual(out.parent, self.root / ext.stem)
+        copy = out.parent / f"{ext.stem}.wav"
+        self.assertTrue(copy.exists() and ext.exists())
+        self.assertIn(str(copy.resolve()), L._flp_samples(out))
 
     def test_noms(self):
         self.assertEqual(L.parse_name(self.name), ("Lucki Type Beat - 'Haze'", "[C# min, 150 BPM] [FFP]", "C# min", 150, "FFP"))
@@ -401,89 +419,67 @@ class MesProds(unittest.TestCase):
         self.assertEqual(L.parse_name("Beat [Remix] [C min]")[:2], ("Beat [Remix]", "[C min]"))
         self.assertEqual(L.clean_new_title(' Ma prod: "finale"? '), "Ma prod finale")
 
-    def test_liste_avec_projet_fl(self):
-        items = L.scan()
-        self.assertEqual(len(items), 2)
-        it = self.item()
-        self.assertEqual((it.wav, it.flp, it.key, it.bpm, it.lic), (self.wav, self.flp, "C# min", 150, "FFP"))
-        self.assertIsNone(next(i for i in items if not i.flp).folder)
+    def test_liste_des_projets(self):
+        perso = self.root / "Mon son perso"
+        perso.mkdir()
+        (perso / "Mon son perso.flp").write_bytes(fake_flp())
+        (self.root / "Vieux projet.flp").write_bytes(fake_flp())
+        seule = self.root / "Prod seule [140 BPM]"
+        seule.mkdir()
+        (seule / "Prod seule [140 BPM].wav").write_bytes(fake_wav(1))  # FLmake désactivé : la prod seule
+        items = {i.name: i for i in L.scan_projects()}
+        self.assertEqual(sorted(items), sorted([self.name, "Mon son perso", "Vieux projet", "Prod seule [140 BPM]"]))
+        it = items[self.name]
+        self.assertEqual((it.kind, it.key, it.bpm, it.extra["instru"], it.extra["files"]), ("project", "C# min", 150, "Lucki Type Beat - 'Haze'", 4))
+        self.assertEqual(it.extra["instru_path"].resolve(), self.wav.resolve())
+        self.assertIsNone(items["Vieux projet"].folder)
+        self.assertIsNone(items["Prod seule [140 BPM]"].flp)
+        # ouvrir un projet qui n'a que la prod : le projet FL est créé à côté
+        out, _ = FM.make(items["Prod seule [140 BPM]"].extra["instru_path"], None, 140, None, mpc.load_config())
+        self.assertEqual(out, seule / "Prod seule [140 BPM].flp")
 
-    def test_favori(self):
-        it = self.item()
-        L.toggle_fav(it)
-        self.assertTrue(self.item().fav)
-        L.toggle_fav(self.item())
-        self.assertFalse(self.item().fav)
+    def test_favori_projet(self):
+        L.toggle_fav(self.project())
+        self.assertTrue(self.project().fav)
+        self.assertEqual(mpc.load_config().get("fav_projects"), [f"p:{self.name.lower()}"])
+        L.toggle_fav(self.project())
+        self.assertFalse(self.project().fav)
 
-    def test_renommer_tout(self):
-        it = self.item()
-        L.toggle_fav(it)
-        new = L.rename(self.item(), "Haze (finale)")
+    def test_renommer_tout_le_projet(self):
+        L.toggle_fav(self.project())
+        new = L.rename(self.project(), "Haze (finale)")
         self.assertEqual(new, "Haze (finale) [C# min, 150 BPM] [FFP]")
-        folder = self.d / "Projets FL" / new
-        self.assertEqual(sorted(p.name for p in folder.iterdir()), sorted([f"{new}.flp", f"{new} (autosave).flp", f"{new}.mp3"]))
-        self.assertFalse(self.wav.exists())
-        new_wav = self.beats / f"{new}.wav"
-        self.assertTrue(new_wav.exists())
+        folder = self.root / new
+        self.assertEqual(sorted(p.name for p in folder.iterdir()),
+                         sorted([f"{new}.flp", f"{new} (autosave).flp", f"{new}.mp3", f"{new}.wav"]))
+        new_wav = folder / f"{new}.wav"
         for f in folder.glob("*.flp"):
-            self.assertIn(str(new_wav.resolve()), L._flp_samples(f))
+            self.assertIn(str(new_wav.resolve()), L._flp_samples(f))  # l'instru suit
             titles = [FM._text(v, True) for e, v in FM.read_flp(f.read_bytes())[3] if e == FM.EV_TITLE]
             self.assertEqual(titles, [new])
-        it2 = self.item()
-        self.assertEqual((it2.name, it2.fav, it2.wav), (new, True, new_wav))
-        # le PC ne retélécharge pas une prod renommée
-        st = {"files": {"jNQXAC9IVRw": f"{self.name}.wav"}}
-        self.assertEqual(mpc.received_file(st, mpc.load_config(), "jNQXAC9IVRw", self.beats), new_wav)
+        it = self.project(new)
+        self.assertTrue(it.fav)
+        # le PC ne retélécharge pas une prod dont le projet a été renommé
+        st = {"files": {"jNQXAC9IVRw": str(self.wav.resolve())}}
+        self.assertEqual(mpc.received_file(st, mpc.load_config(), "jNQXAC9IVRw", [self.root]).resolve(), new_wav.resolve())
 
     def test_renommer_annule_si_nom_pris(self):
-        taken = self.d / "Projets FL" / "Pris [C# min, 150 BPM] [FFP]"
-        taken.mkdir()
+        (self.root / "Pris [C# min, 150 BPM] [FFP]").mkdir()
         before = sorted(str(p.relative_to(self.d)) for p in self.d.rglob("*"))
         flp_bytes = self.flp.read_bytes()
         with self.assertRaises(L.LibError):
-            L.rename(self.item(), "Pris")
+            L.rename(self.project(), "Pris")
         self.assertEqual(sorted(str(p.relative_to(self.d)) for p in self.d.rglob("*")), before)  # tout est remis
         self.assertEqual(self.flp.read_bytes(), flp_bytes)
 
     def test_prod_supprimee_retelechargee(self):
-        st = {"files": {"jNQXAC9IVRw": f"{self.name}.wav"}}
-        self.assertEqual(mpc.received_file(st, self.cfg, "jNQXAC9IVRw", self.beats), self.wav)
+        st = {"files": {"jNQXAC9IVRw": str(self.wav)}}
+        self.assertEqual(mpc.received_file(st, self.cfg, "jNQXAC9IVRw", [self.root]), self.wav)
         self.wav.unlink()
-        self.assertIsNone(mpc.received_file(st, self.cfg, "jNQXAC9IVRw", self.beats))
-        self.assertIsNone(mpc.received_file({}, self.cfg, "jNQXAC9IVRw", self.beats))
-
-
-class MesProjetsFL(MesProds):
-    """La page « Mes projets FL » : les projets du dossier des projets, pas les prods."""
-
-    def test_liste_des_projets(self):
-        perso = self.d / "Projets FL" / "Mon son perso"
-        perso.mkdir()
-        (perso / "Mon son perso.flp").write_bytes(fake_flp())
-        (self.d / "Projets FL" / "Vieux projet.flp").write_bytes(fake_flp())
-        items = L.scan_projects()
-        self.assertEqual(sorted(i.name for i in items), sorted([self.name, "Mon son perso", "Vieux projet"]))
-        it = next(i for i in items if i.name == self.name)
-        self.assertEqual((it.kind, it.key, it.bpm, it.extra["instru"], it.extra["files"]), ("project", "C# min", 150, "Lucki Type Beat - 'Haze'", 3))
-        self.assertIsNone(it.wav)  # la prod n'appartient pas au projet : jamais renommée avec lui
-        self.assertIsNone(next(i for i in items if i.name == "Vieux projet").folder)
-
-    def test_favori_projet(self):
-        it = L.scan_projects()[0]
-        L.toggle_fav(it)
-        self.assertTrue(L.scan_projects()[0].fav)
-        self.assertEqual(mpc.load_config().get("fav_projects"), [it.id])
-        self.assertFalse(any(i.fav for i in L.scan()))  # favoris des prods séparés
-
-    def test_renommer_projet_garde_la_prod(self):
-        it = L.scan_projects()[0]
-        L.toggle_fav(it)
-        new = L.rename(L.scan_projects()[0], "Session Haze")
-        self.assertEqual(new, "Session Haze [C# min, 150 BPM] [FFP]")
-        folder = self.d / "Projets FL" / new
-        self.assertEqual(sorted(p.name for p in folder.iterdir()), sorted([f"{new}.flp", f"{new} (autosave).flp", f"{new}.mp3"]))
-        self.assertTrue(self.wav.exists())  # le .wav de la prod ne bouge pas
-        for f in folder.glob("*.flp"):
-            self.assertIn(str(self.wav.resolve()), L._flp_samples(f))
-        it2 = L.scan_projects()[0]
-        self.assertEqual((it2.name, it2.fav), (new, True))
+        self.assertIsNone(mpc.received_file(st, self.cfg, "jNQXAC9IVRw", [self.root]))
+        self.assertIsNone(mpc.received_file({}, self.cfg, "jNQXAC9IVRw", [self.root]))
+        # anciennes versions : nom seul, dans l'ancien dossier des prods
+        old = Path(self.cfg["dossier"])
+        old.mkdir()
+        (old / "x.wav").write_bytes(fake_wav(1))
+        self.assertEqual(mpc.received_file({"files": {"v": "x.wav"}}, self.cfg, "v", [self.root, old]), old / "x.wav")

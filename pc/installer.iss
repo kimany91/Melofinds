@@ -100,8 +100,8 @@ var
 procedure InitializeWizard;
 begin
   BeatsPage := CreateInputDirPage(wpSelectDir,
-    'Dossier des prods', 'Où arrivent les prods reçues ?',
-    'Les prods envoyées depuis ton téléphone arriveront dans ce dossier, en .wav (rien d''autre n''y est écrit). Tu pourras le changer plus tard dans Melofinds PC.',
+    'Dossier des projets', 'Où arrivent tes projets ?',
+    'Chaque prod envoyée depuis ton téléphone arrive dans ce dossier, dans son propre dossier de projet : la prod en .wav, et son projet FL si tu actives FLmake. Tu pourras le changer plus tard dans Melofinds PC.',
     False, '');
   BeatsPage.Add('');
   BeatsPage.Values[0] := GetPreviousData('BeatsDir', ExpandConstant('{%USERPROFILE}') + '\Music\Melofinds');
