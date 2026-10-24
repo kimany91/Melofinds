@@ -82,9 +82,15 @@ class Remote:
     ntfy.sh (pièces jointes de 2 Mo, 20 Mo / 3 h, ~250 envois / jour) sont respectées."""
     AUDIO_PER_HOUR = 25
     BYTES_3H = 17_000_000
+    SYNC_PER_TICK = 3
 
     def __init__(self, st):
         self.st = st
+        self.queue = {}          # appareil → sons à lui envoyer (synchronisation du téléphone)
+        self.reported = {}       # appareil → dernier état de synchro annoncé
+        self.blocked_until = 0.0
+        self.kick = False
+        self.fmap = {}
         self.want = set()        # appareils qui attendent la liste tout de suite
         self.active = {}         # appareil → dernière commande (la liste ne part qu'aux appareils actifs)
         self.sent_at = {}        # appareil → dernier envoi de la liste
@@ -99,34 +105,91 @@ class Remote:
     def _budget(self, size):
         now = time.time()
         self.audio = [(t, n) for t, n in self.audio if t > now - 3 * 3600]
-        last_hour = sum(1 for t, _ in self.audio if t > now - 3600)
+        last_hour = sum(1 for t, n in self.audio if t > now - 3600 and n > 300_000)
         return last_hour < self.AUDIO_PER_HOUR and sum(n for _, n in self.audio) + size <= self.BYTES_3H
+
+    def next_free(self, size=1_900_000):
+        """Heure à laquelle ntfy.sh acceptera de nouveau un son (les pièces jointes expirent après 3 h)."""
+        now = time.time()
+        if self._budget(size):
+            return now
+        total = sum(n for _, n in self.audio)
+        for t, n in sorted(self.audio):
+            total -= n
+            if total + size <= self.BYTES_3H:
+                return t + 3 * 3600
+        return now + 3 * 3600
 
     def push_audio(self, code, it, f, auto=False):
         """Copie d'écoute d'un son du projet, découpée en pièces jointes de 1,9 Mo."""
+        """Renvoie "ok", "budget" (limite ntfy.sh : à refaire plus tard) ou "error"."""
         meta = {"aud": f["id"], "p": it.id, "n": f["name"][:140], "v": f["label"], "m": int(f["mtime"])}
+        if not self._budget(1_000_000):
+            if not auto:
+                C.reply(code, {"aud": f["id"], "err": "limite d'envoi atteinte (ntfy.sh) : réessaie dans un moment"})
+            return "budget"
         try:
             with tempfile.TemporaryDirectory(prefix="melofinds-ecoute-") as tmp:
                 data = C.make_preview(f["path"], Path(tmp) / "ecoute.m4a").read_bytes()
         except (OSError, C.subprocess.SubprocessError) as e:
             if not auto:
                 C.reply(code, {"aud": f["id"], "err": f"copie d'écoute impossible : {e}"[:200]})
-            return False
+            return "error"
         if not self._budget(len(data)):
             if not auto:
                 C.reply(code, {"aud": f["id"], "err": "limite d'envoi atteinte (ntfy.sh) : réessaie dans un moment"})
-            return False
+            return "budget"
         parts = C.chunks(data)
         for i, part in enumerate(parts):
             if not C.publish_attachment(code, part, f"{f['id']}-{i}.m4a", {**meta, "i": i, "of": len(parts), "len": len(data)}):
                 if not auto:
                     C.reply(code, {"aud": f["id"], "err": "envoi de la copie d'écoute impossible"})
-                return False
-        self.audio.append((time.time(), len(data)))
+                self.blocked_until = time.time() + 900  # ntfy.sh refuse : on réessaie dans 15 min
+                return "budget"
+        now = time.time()
+        self.audio.append((now, len(data)))
         pushed = self.st.setdefault("pushed", {})
-        pushed[f["id"]] = int(time.time())
+        pushed[f["id"]] = int(now)
         self.st["pushed"] = dict(list(pushed.items())[-500:])
-        return True
+        sent = self.st.setdefault("sent_dev", {}).setdefault(code, {})
+        sent[f["id"]] = [int(f["mtime"]), int(now)]
+        self.st["sent_dev"][code] = dict(list(sent.items())[-800:])
+        return "ok"
+
+    def sync_request(self, code, fids):
+        """Le téléphone dit quels sons il n'a pas encore (dernière version de chaque projet) :
+        ils partent petit à petit, sans dépasser les limites de ntfy.sh."""
+        q = [x for x in self.queue.get(code, []) if x in fids]  # ce qu'il a reçu entre-temps n'est plus demandé
+        for fid in fids:
+            if isinstance(fid, str) and re.fullmatch(r"[a-f0-9]{12}", fid) and fid not in q:
+                q.append(fid)
+        self.queue[code] = q[:300]
+        self.kick = True
+
+    def process_sync(self, devices):
+        now = time.time()
+        sent = 0
+        for d in devices:
+            code = d["code"]
+            q = self.queue.get(code) or []
+            done_dev = self.st.get("sent_dev", {}).get(code, {})
+            while q and sent < self.SYNC_PER_TICK and now >= self.blocked_until:
+                fid = q[0]
+                hit = self.fmap.get(fid)
+                rec = done_dev.get(fid)
+                if not hit or (rec and rec[0] >= int(hit[1]["mtime"]) and now - rec[1] < 2.5 * 3600):
+                    q.pop(0)  # disparu, ou déjà envoyé il y a moins de 2 h 30 (encore sur ntfy)
+                    continue
+                res = self.push_audio(code, hit[0], hit[1], auto=True)
+                if res == "budget":
+                    self.blocked_until = max(self.blocked_until, self.next_free())
+                    break
+                q.pop(0)
+                sent += 1
+            state = (len(q), int(max(0, self.next_free() - now) // 600)) if q else (0, 0)
+            if state != self.reported.get(code, (0, 0)):
+                C.reply(code, {"sync": {"left": len(q), "wait": int(max(0, max(self.blocked_until, self.next_free()) - now)) if q else 0}})
+                self.reported[code] = state
 
     def command(self, code, msg, cfg):
         """Commande signée venue de l'app (déjà vérifiée)."""
@@ -137,6 +200,10 @@ class Remote:
             return
         if cmd == "lib":
             self.want.add(code)
+            return
+        if cmd == "sync":
+            f = msg.get("f")
+            self.sync_request(code, [x for x in f if isinstance(x, str)][:300] if isinstance(f, list) else [])
             return
         if cmd == "play":
             it, f = L.find_audio(str(msg.get("f") or "")[:16], cfg)
@@ -183,9 +250,9 @@ class Remote:
         toutes les 3 min), quand l'app la demande, et à l'arrêt. Les nouveaux sons
         (versions exportées…) partent aussi tout seuls en copie d'écoute."""
         now = time.time()
-        if not self.enabled(cfg) or not devices or not (self.want or final or now - self.checked > 45):
+        if not self.enabled(cfg) or not devices or not (self.want or self.kick or final or now - self.checked > 45):
             return
-        self.checked = now
+        self.checked, self.kick = now, False
         fmap = {}
         try:
             lib = L.library_index(cfg, files_out=fmap)
@@ -202,13 +269,17 @@ class Remote:
             if C.publish_attachment(code, body, "projets.json", {"lib": 1, "n": len(lib["projects"]), "at": lib["at"]}):
                 self.sig[code], self.sent_at[code] = sig, now
                 self.want.discard(code)
+                self.audio.append((now, len(body)))  # compte aussi dans les 20 Mo de ntfy.sh
+        self.fmap = fmap
         if not final:
             self.new_sounds(devices, fmap, now)
+            self.process_sync(devices)
 
     def new_sounds(self, devices, fmap, now):
         """Sons apparus ou modifiés dans les projets (un export « Haze 1.3.4.wav »…) :
         copie d'écoute envoyée toute seule, 2 par tour au plus, les plus récents d'abord."""
         cur = {fid: int(f["mtime"]) for fid, (_, f) in fmap.items()}
+        targets = phone_targets(fmap)
         known = self.st.get("known")
         if not isinstance(known, dict):  # premier passage : on note ce qui existe déjà
             self.st["known"] = cur
@@ -218,7 +289,7 @@ class Remote:
         todo.sort(key=lambda x: -x[1])
         for fid, m in todo[:2]:
             known[fid] = m
-            if pushed.get(fid, 0) >= m:  # déjà envoyé (prod qui vient d'arriver)
+            if pushed.get(fid, 0) >= m or fid not in targets:  # déjà envoyé, ou pas la dernière version
                 continue
             it, f = fmap[fid]
             for d in devices:
@@ -227,6 +298,16 @@ class Remote:
             if fid not in known and now - m >= 3 * 86400:
                 known[fid] = m
         self.st["known"] = {k: v for k, v in known.items() if k in cur}
+
+
+def phone_targets(fmap):
+    """Le son de chaque projet que le téléphone garde : la dernière version, sinon l'instru."""
+    best = {}
+    for fid, (it, f) in fmap.items():
+        rank = 2 if f.get("latest") else 1 if f["instru"] else 0
+        if rank and rank > best.get(it.id, (0, None))[0]:
+            best[it.id] = (rank, fid)
+    return {fid for _, fid in best.values()}
 
 
 def _handle(msg, code, d, root, cfg, st, recent, seen, done, left, remote=None):

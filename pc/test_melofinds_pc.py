@@ -848,3 +848,70 @@ class EnvoiAutomatiqueALApp(EcouteEtGestionDepuisLApp):
     def test_versions_fl(self):
         self.assertEqual(L.version_of("Haze_2"), (2,))
         self.assertEqual(L.version_of("Haze_2 [C# min, 150 BPM]"), (2,))
+
+
+class SynchroDuTelephone(unittest.TestCase):
+    """Le téléphone garde la dernière version de chaque projet : il dit ce qui lui manque,
+    le PC l'envoie petit à petit sans dépasser les limites de ntfy.sh."""
+    CODE = EcouteEtGestionDepuisLApp.CODE
+    tearDown = EcouteEtGestionDepuisLApp.tearDown
+
+    def setUp(self):
+        EcouteEtGestionDepuisLApp.setUp(self)
+        for x in self.patches:  # copies d'écoute de 1,5 Mo (une seule pièce jointe)
+            x.stop()
+        self.patches = [mock.patch.object(mpc, "reply", lambda code, m: self.sent.append(m) or True),
+                        mock.patch.object(mpc, "publish_attachment", lambda code, data, fn, meta, timeout=60: self.files.append((fn, meta, len(data))) or True),
+                        mock.patch.object(mpc, "make_preview", lambda src, out: (Path(out).write_bytes(b"a" * 1_500_000), Path(out))[1])]
+        for x in self.patches:
+            x.start()
+        for n in ("Nuit", "Brume", "Ciel"):
+            (self.root / n).mkdir()
+            (self.root / n / f"{n}.wav").write_bytes(fake_wav(1))
+
+    def targets(self):
+        fmap = {}
+        L.library_index(files_out=fmap)
+        return fmap, W.phone_targets(fmap)
+
+    def test_cible_derniere_version_sinon_instru(self):
+        fmap, t = self.targets()
+        names = sorted(fmap[f][1]["name"] for f in t)
+        self.assertEqual(names, ["Brume", "Ciel", "Haze 1.3.3", "Nuit"])
+
+    def test_envoi_petit_a_petit(self):
+        r = W.Remote(mpc.load_state())
+        devs = mpc.load_config()["devices"]
+        _, t = self.targets()
+        r.command(self.CODE, {"cmd": "sync", "f": sorted(t) + ["zz", 5]}, mpc.load_config())
+        r.tick(devs, mpc.load_config())
+        auds = [m for _, m, _ in self.files if "aud" in m]
+        self.assertEqual(len(auds), W.Remote.SYNC_PER_TICK)  # 3 par tour
+        self.assertEqual(self.sent[-1]["sync"]["left"], 1)
+        r.checked = 0
+        r.tick(devs, mpc.load_config())
+        self.assertEqual(len([m for _, m, _ in self.files if "aud" in m]), 4)
+        self.assertEqual(self.sent[-1], {"sync": {"left": 0, "wait": 0}})
+        # redemandés tout de suite (le téléphone ne les a pas encore récupérés) : pas renvoyés
+        r.command(self.CODE, {"cmd": "sync", "f": sorted(t)}, mpc.load_config())
+        r.checked = 0
+        r.tick(devs, mpc.load_config())
+        self.assertEqual(len([m for _, m, _ in self.files if "aud" in m]), 4)
+
+    def test_limite_ntfy_attente_annoncee(self):
+        r = W.Remote(mpc.load_state())
+        r.audio = [(time.time() - 3600, 16_000_000)]  # 16 Mo déjà envoyés il y a 1 h
+        devs = mpc.load_config()["devices"]
+        _, t = self.targets()
+        r.command(self.CODE, {"cmd": "sync", "f": sorted(t)}, mpc.load_config())
+        r.tick(devs, mpc.load_config())
+        self.assertFalse([m for _, m, _ in self.files if "aud" in m])
+        st = self.sent[-1]["sync"]
+        self.assertEqual(st["left"], 4)
+        self.assertTrue(7000 < st["wait"] <= 7300)  # ~2 h : quand les 16 Mo expirent
+
+    def test_debit_adapte(self):
+        self.assertEqual(mpc.preview_kbps(180), 73)
+        self.assertEqual(mpc.preview_kbps(120), 96)
+        self.assertEqual(mpc.preview_kbps(330), 64)
+        self.assertEqual(mpc.preview_kbps(None), 80)

@@ -53,6 +53,7 @@
 }
 
 * { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -700,8 +701,17 @@ body.mobile .mini-rec { padding: 9px; }
 .nav-sm { display: none; }
 body.mobile .nav-lg { display: none; }
 body.mobile .nav-sm { display: inline; }
-#view-pc { max-width: 1180px; }
-.pc-live { display: grid; gap: 12px; max-width: 860px; }
+#view-pc { overflow-wrap: anywhere; min-width: 0; overflow-x: clip; }
+.pc-live { display: grid; gap: 12px; min-width: 0; }
+.pc-status > div { min-width: 0; }
+.pc-sync { display: grid; gap: 8px; margin: 2px 0 10px; padding: 12px 14px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); }
+.pcs-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
+.pcs-top b { font-size: 14.5px; }
+.pcs-top span { font-size: 12.5px; color: var(--muted); }
+.pcs-bar { height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden; }
+.pcs-bar i { display: block; height: 100%; border-radius: 3px; background: var(--ffp); transition: width .4s var(--ease); }
+.pcp-off { font-style: normal; font-size: 12px; font-weight: 700; color: var(--upto); }
+.pcp-off.ok { color: var(--ffp); }
 .pc-live .actions { margin: 0; }
 .pc-old { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 16px; border-radius: 16px; background: color-mix(in srgb, var(--upto) 10%, var(--panel-2)); border: 1px solid color-mix(in srgb, var(--upto) 45%, var(--line)); }
 .pc-old > div { flex: 1 1 240px; display: grid; gap: 2px; }
@@ -720,7 +730,7 @@ body.mobile .nav-sm { display: inline; }
 .pc-row .ghost.sm { flex: none; padding: 6px 10px; font-size: 12.5px; }
 .pc-lib-head { padding-top: 34px; }
 .pc-lib-bar { display: flex; gap: 10px; align-items: center; }
-.pc-input { width: 100%; min-width: 0; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel); color: var(--text); font: 600 15px var(--f-body); }
+.pc-input { width: 100%; min-width: 0; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel); color: var(--text); font: 600 16px var(--f-body); }
 .pc-input:focus { outline: none; border-color: var(--accent); }
 .pc-lib-bar .pc-input { flex: 1; }
 .pc-lib-bar .ghost { flex: none; }

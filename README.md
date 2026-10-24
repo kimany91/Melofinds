@@ -178,10 +178,16 @@ ouvre le site dans Chrome) :
   le téléphone est prévenu tout de suite (« PC éteint »).
 - Versions reconnues : `0.1`, `1.3.3`, `v2`, `version 3`, `Haze_2` (nouvelle version de
   FL), dans le dossier du projet et ses sous-dossiers (.wav, .mp3, .flac, .m4a…).
-- **PC éteint** : la liste des projets et les sons déjà écoutés (60 au plus) restent sur
-  le téléphone : tout se voit et s'écoute. Un renommage, un style ou un favori fait PC
+- **Sons gardés sur le téléphone** : la **dernière version** de chaque projet (sinon son
+  instru) arrive toute seule sur le téléphone, sans rien demander : le téléphone dit au
+  PC ce qui lui manque, le PC l'envoie petit à petit (copie d'écoute AAC 64 à 96 kb/s,
+  une seule pièce jointe pour une prod de 3 min). Une barre « 12 / 30 sons sur ce
+  téléphone » suit l'avancement ; chaque carte dit « ✓ Écoutable hors ligne ». Les
+  autres versions s'écoutent à la demande quand le PC est allumé.
+- **PC éteint** : la liste des projets et les sons gardés (200 au plus) restent sur le
+  téléphone : tout se voit et s'écoute. Un renommage, un style ou un favori fait PC
   éteint part dès qu'il se rallume.
-- PC trop ancien (avant 3.10) : l'onglet le dit, avec un bouton « Mettre à jour le PC ».
+- PC trop ancien (avant 3.11) : l'onglet le dit, avec un bouton « Mettre à jour le PC ».
 - Limites de ntfy.sh (gratuit) : pièces jointes gardées 3 h, 20 Mo par 3 h et ~250
   envois par jour pour le PC ; le PC envoie donc au plus 25 copies d'écoute par heure
   (17 Mo par 3 h), la liste seulement quand elle change (toutes les 3 min au plus) ou

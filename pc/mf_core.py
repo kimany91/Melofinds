@@ -32,7 +32,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.10.0"
+VERSION = "3.11.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -593,13 +593,39 @@ def publish_attachment(code, data, filename, meta, timeout=60):
         return False
 
 
+def audio_seconds(path):
+    """Durée d'un son (ffprobe, sinon en-tête WAV), ou None."""
+    probe = tool_path("ffprobe.exe")
+    if probe:
+        try:
+            r = run_tool([probe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)], 30)
+            return float(decode(r.stdout).strip())
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    try:
+        import wave
+        with wave.open(str(path), "rb") as w:
+            return w.getnframes() / float(w.getframerate())
+    except (OSError, EOFError, ValueError, wave.Error):
+        return None
+
+
+def preview_kbps(seconds):
+    """Débit de la copie d'écoute : le plus haut (96 kb/s) qui tient en une seule pièce
+    jointe ntfy (~1,7 Mo), 64 kb/s au minimum. Une prod de 3 min : ~73 kb/s, un envoi."""
+    if not seconds or seconds <= 0:
+        return 80
+    return max(64, min(96, int(1_700_000 * 8 / min(seconds, PREVIEW_MAX_SECONDS) / 1000) - 2))
+
+
 def make_preview(src, out):
-    """Copie d'écoute légère du son (AAC 96 kb/s, 6 min max) pour l'app web."""
+    """Copie d'écoute légère du son (AAC 64 à 96 kb/s, 6 min max) pour l'app web."""
     ffmpeg = tool_path("ffmpeg.exe")
     if not ffmpeg:
         raise OSError("ffmpeg manquant")
+    kbps = preview_kbps(audio_seconds(src))
     r = run_tool([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), "-vn", "-map", "0:a:0",
-                  "-t", str(PREVIEW_MAX_SECONDS), "-ac", "2", "-ar", "44100", "-c:a", "aac", "-b:a", "96k",
+                  "-t", str(PREVIEW_MAX_SECONDS), "-ac", "2", "-ar", "44100", "-c:a", "aac", "-b:a", f"{kbps}k",
                   "-movflags", "+faststart", "-f", "mp4", str(out)], 180)
     if r.returncode != 0 or not Path(out).is_file():
         raise OSError(last_line(r.stderr))

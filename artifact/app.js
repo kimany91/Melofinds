@@ -2696,7 +2696,7 @@ function listenPc() {
       }
       if (m.pong && pc.onPong) pc.onPong(m);
       // Le PC vient de se rallumer : on renvoie ce qui a pu expirer pendant qu'il était éteint.
-      if (m.pc === 'online' && fresh) setTimeout(resendPending, 15e3);
+      if (m.pc === 'online' && fresh) { setTimeout(resendPending, 15e3); setTimeout(() => pcSync(true), 20e3); }
       syncPcUi();
       return;
     }
@@ -2808,12 +2808,13 @@ function syncPcUi() {
   renderPcView();
 }
 
-function pcStatusText() {
+function pcStatusText(short) {
   if (!pc.info) return { ok: false, t: 'PC pas encore connecté', s: 'Fais les 3 étapes ci-dessous.' };
   const ago = Date.now() - (pc.info.at || 0);
   const when = ago < 90e3 ? 'à l’instant' : ago < 3600e3 ? `il y a ${Math.round(ago / 60e3)} min` : ago < 864e5 ? `il y a ${Math.round(ago / 3600e3)} h` : `il y a ${Math.round(ago / 864e5)} j`;
   const waiting = Object.values(pc.queue).filter((q) => q.state === 'sent' || q.state === 'unsent').length;
   if (!pcOn()) return { ok: false, off: true, t: pc.info.offline ? (pc.info.why === 'shutdown' ? 'PC éteint' : 'PC hors ligne') : 'PC éteint ou hors ligne', s: `Dernier signe ${when}. ${waiting ? `${waiting} prod${waiting > 1 ? 's' : ''} en file d’attente : elle${waiting > 1 ? 's' : ''} arrivera${waiting > 1 ? 'nt' : ''} dès qu’il se rallume.` : 'Tes envois l’attendront et arriveront dès qu’il se rallume.'}` };
+  if (short) return { ok: true, t: `PC en ligne${pc.info.version ? ` · ${pc.info.version}` : ''}`, s: `Dernier signe ${when}` };
   return { ok: true, t: `PC en ligne${pc.info.version ? ` · version ${pc.info.version}` : ''}`, s: `${pc.info.name ? `Ce téléphone s’appelle « ${pc.info.name} » sur le PC · ` : ''}Dernier signe ${when}${pc.info.dossier ? ` · dossier ${pc.info.dossier}` : ''}` };
 }
 function renderPcStatus() {
@@ -2878,7 +2879,9 @@ function savePcLib() {
   if (pcLib.data) local.set('pcLib', pcLib.data);
 }
 
-// Sons écoutés : gardés dans ce navigateur (IndexedDB), 60 au plus
+// Sons gardés dans ce navigateur (IndexedDB) : la dernière version de chaque projet
+// arrive toute seule (synchronisation), plus ceux que tu écoutes ; 200 au plus.
+const PC_KEEP = 200;
 const pcAudioStore = {
   db: null,
   open() {
@@ -2911,7 +2914,11 @@ const pcAudioStore = {
   async load() {
     const rows = (await this.req('readonly', (st) => st.getAll())) || [];
     rows.forEach((r) => pcLib.cached.set(r.id, r.m));
-    if (rows.length > 60) rows.sort((a, b) => a.at - b.at).slice(0, rows.length - 60).forEach((r) => this.del(r.id));
+    if (rows.length > PC_KEEP) {
+      // on garde d'abord la dernière version de chaque projet, puis les plus récents
+      const keep = new Set(pcTargets().map((f) => f.f));
+      rows.sort((a, b) => (keep.has(a.id) - keep.has(b.id)) || (a.at - b.at)).slice(0, rows.length - PC_KEEP).forEach((r) => this.del(r.id));
+    }
   },
 };
 
@@ -2936,6 +2943,12 @@ function onPcViewMessage(d, m, fresh) {
       pc.cur = { v, t: String(m.q.t || pc.queue[v]?.t || v).slice(0, 160), left: Math.max(0, Number(m.q.left) || 0), at: (d.time || 0) * 1000 };
       renderPcView();
     }
+    return true;
+  }
+  if (m.sync && typeof m.sync === 'object') {
+    pcSeen(d);
+    pcLib.syncInfo = { left: Math.max(0, Number(m.sync.left) || 0), wait: Math.max(0, Number(m.sync.wait) || 0), at: (d.time || 0) * 1000 };
+    renderPcView();
     return true;
   }
   if (m.cmd) {
@@ -2967,6 +2980,7 @@ async function onPcLib(d, m) {
     pcLib.cmds = pcLib.cmds.filter((c) => c.at > lib.at * 1000 + 2000);
     savePcLib();
     renderPcView();
+    pcSync();
   } catch { /* pièce jointe expirée (3 h) : on garde la liste qu'on a */ }
 }
 
@@ -2993,12 +3007,29 @@ async function onPcAudio(d, m, fresh) {
     const blob = new Blob(blobs, { type: 'audio/mp4' });
     if (!blob.size || blob.size > 16e6) return;
     await pcAudioStore.put({ id: fid, m: mt, blob, n: String(m.n || '').slice(0, 140), v: String(m.v || '').slice(0, 20), p: String(m.p || '').slice(0, 260), at: Date.now() });
-    if (pcLib.cached.size > 60) pcAudioStore.load();
+    if (pcLib.cached.size > PC_KEEP) pcAudioStore.load();
     if (pcLib.waiting === fid) { pcLib.waiting = null; playPcBlob(fid, blob); }
     renderPcView();
   } catch {
     if (pcLib.waiting === fid) { pcLib.waiting = null; renderPcView(); toast('Son pas récupéré : réessaie'); }
   }
+}
+
+// --- Synchronisation : la dernière version de chaque projet (sinon l'instru) est
+// gardée sur ce téléphone, pour l'écouter même PC éteint. Le téléphone dit au PC ce qui
+// lui manque ; le PC l'envoie petit à petit (limites de ntfy.sh : ~10 sons par 3 h).
+const pcTarget = (p) => p.files.find((f) => f.l) || p.files.find((f) => f.i) || null;
+const pcTargets = () => pcProjects().map(pcTarget).filter(Boolean);
+const pcHas = (f) => (pcLib.cached.has(f.f) ? pcLib.cached.get(f.f) : -1) >= f.m;
+const pcSyncState = { at: 0, sig: '' };
+function pcSync(force) {
+  if (!WEB || !pc.info || !pcLib.data || !pcOn() || versionLt(pc.info.version, '3.11.0')) return;
+  const miss = pcTargets().filter((f) => !pcHas(f)).map((f) => f.f);
+  if (!miss.length) { pcLib.syncInfo = null; return; }
+  const sig = miss.join(',');
+  if (!force && sig === pcSyncState.sig && Date.now() - pcSyncState.at < 10 * 60e3) return;
+  Object.assign(pcSyncState, { sig, at: Date.now() });
+  ntfyPublish({ cmd: 'sync', f: miss.slice(0, 300) }).catch(() => { pcSyncState.at = 0; });
 }
 
 function askPcLib(force) {
@@ -3197,7 +3228,10 @@ function pcFileRow(p, f) {
   const playing = cur && !pcPlayer.audio.paused;
   const loading = pcLib.waiting === f.f;
   const kept = pcLib.cached.has(f.f);
-  const sub = cur ? null : loading ? 'Le PC prépare le son…' : `${kept ? 'Gardé sur ce téléphone' : pcOn() ? 'Sur le PC' : 'PC éteint'}${f.e && f.e !== 'wav' ? ` · ${f.e.toUpperCase()}` : ''}`;
+  const target = pcTarget(p)?.f === f.f;
+  const state = loading ? 'Le PC envoie ce son…' : kept ? (pcHas(f) ? 'Sur ce téléphone · écoutable hors ligne' : 'Sur ce téléphone (ancienne copie)')
+    : target ? (pcOn() ? 'Arrive sur ce téléphone…' : 'Arrivera quand le PC sera allumé') : pcOn() ? 'Sur le PC · touche pour l’écouter' : 'Sur le PC (éteint)';
+  const sub = cur ? null : `${state}${f.e && f.e !== 'wav' ? ` · ${f.e.toUpperCase()}` : ''}`;
   return h('div', { class: `pcf${cur ? ' on' : ''}${f.i ? ' instru' : f.v ? ' ver' : ''}`, 'data-f': f.f },
     h('button', { type: 'button', class: `pcf-play${loading ? ' loading' : ''}`, 'aria-label': playing ? 'Pause' : `Écouter ${f.n}`, onclick: () => playPcFile(f) }, icon(playing ? 'pause' : 'play')),
     h('div', { class: 'pcf-main', onclick: () => playPcFile(f) },
@@ -3218,7 +3252,8 @@ function pcCard(p) {
     h('div', { class: 'pcp-top' },
       h('span', { class: 'pc-tile' }, p.ic),
       h('div', { class: 'pcp-tt' }, h('b', { title: p.t }, pcName(p.t)),
-        h('span', {}, p.renaming ? 'Renommage en attente du PC…' : [p.fl ? 'Projet FL' : 'Prod', p.d ? fmtAgo(p.d * 1000) : '', vers.length ? `${vers.length} version${vers.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · '))),
+        h('span', {}, p.renaming ? 'Renommage en attente du PC…' : [p.fl ? 'Projet FL' : 'Prod', p.d ? fmtAgo(p.d * 1000) : '', vers.length ? `${vers.length} version${vers.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ')),
+        pcTarget(p) ? h('em', { class: `pcp-off${pcHas(pcTarget(p)) ? ' ok' : ''}` }, pcHas(pcTarget(p)) ? '✓ Écoutable hors ligne' : '↓ Arrive sur ce téléphone') : null),
       h('button', { type: 'button', class: `pcp-star${p.fav ? ' on' : ''}`, 'aria-label': p.fav ? 'Retirer des favoris' : 'Mettre en favori',
         onclick: () => pcCommand({ cmd: 'fav', p: p.p, on: !p.fav }, p.fav ? 'Retiré des favoris' : 'Mis en favori') }, icon('star'))),
     p.k || p.b || p.lic ? h('div', { class: 'pcp-chips' }, chip(p.k, p.tb.includes('key') ? 'tb' : ''), chip(p.b ? `${p.b} BPM` : '', p.tb.includes('bpm') ? 'tb' : ''), chip(p.lic, 'lic')) : null,
@@ -3264,7 +3299,7 @@ function renderPcView() {
   const view = $('#view-pc');
   if (!WEB || !view?.classList.contains('active')) return;
   // --- état + file d'attente
-  const st = pcStatusText();
+  const st = pcStatusText(true);
   if (pc.cur && (Date.now() - pc.cur.at > 30 * 60e3 || pc.queue[pc.cur.v]?.state === 'done' || pc.queue[pc.cur.v]?.state === 'error')) pc.cur = null;
   const waiting = Object.entries(pc.queue).filter(([id, q]) => (q.state === 'sent' || q.state === 'unsent' || q.state === 'sending') && id !== pc.cur?.v)
     .sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
@@ -3274,12 +3309,12 @@ function renderPcView() {
     h('div', { class: 'pc-row-main' }, h('b', {}, displayTitle(q.t || id)),
       h('span', {}, q.state === 'done' ? pcName(String(q.file || 'Sur ton PC').replace(/\.wav$/i, '')) : q.state === 'error' ? (q.err || 'Erreur') : q.state === 'unsent' ? 'Partira dès que tu as du réseau' : pcOn() ? 'En file d’attente sur le PC' : 'Arrivera dès que le PC se rallume')),
     q.state !== 'done' ? h('button', { type: 'button', class: 'ghost sm', onclick: () => sendToPc({ id, url: `https://www.youtube.com/watch?v=${id}`, title: q.t }) }, 'Renvoyer') : null);
-  const old = pc.info?.version && versionLt(pc.info.version, '3.10.0');
+  const old = pc.info?.version && versionLt(pc.info.version, '3.11.0');
   $('#pcLive').replaceChildren(...[
     h('div', { class: `pc-status${st.ok ? ' ok' : ''}${st.off ? ' off' : ''}` }, h('span', { class: 'pc-led', 'aria-hidden': 'true' }), h('div', {}, h('b', {}, st.t), h('span', {}, st.s))),
     !pc.info ? h('div', { class: 'actions' }, h('button', { type: 'button', class: 'primary', onclick: () => openPcSetup() }, 'Connecter mon PC')) : null,
     old ? h('div', { class: 'pc-old' }, h('div', {}, h('b', {}, `Ton PC a la version ${pc.info.version}`),
-      h('span', {}, 'Mets-le à jour pour voir ici tes projets, tes versions et les écouter : la liste arrive toute seule ensuite.')), pcUpdateBtn()) : null,
+      h('span', {}, 'Mets-le à jour : tes projets et la dernière version de chacun arrivent alors tout seuls sur ce téléphone, écoutables même PC éteint.')), pcUpdateBtn()) : null,
     pc.cur ? h('div', { class: 'pcq-cur' }, h('span', { class: 'pcq-k' }, 'En cours'), h('b', {}, displayTitle(pc.cur.t)),
       h('span', {}, `Téléchargement et conversion en WAV sur ton PC${pc.cur.left ? ` · +${pc.cur.left} derrière` : ''}`), h('div', { class: 'pcq-bar' }, h('i'))) : null,
     waiting.length ? h('div', { class: 'pcq-sec' }, h('h4', {}, `En attente · ${waiting.length}`), h('div', { class: 'pc-list' }, waiting.map((e, n) => row(e, n)))) : null,
@@ -3290,7 +3325,18 @@ function renderPcView() {
   const all = pcProjects();
   const q = strip(pcLib.q).toLowerCase();
   const list = all.filter((p) => (pcLib.filter !== 'fav' || p.fav) && (!q || strip(`${p.t} ${p.k} ${p.files.map((f) => `${f.n} ${f.v}`).join(' ')}`).toLowerCase().includes(q)));
-  $('#pcLibMeta').textContent = pcLib.data ? `${list.length} projet${list.length > 1 ? 's' : ''}${list.length !== all.length ? ` sur ${all.length}` : ''} · mis à jour ${fmtAgo(pcLib.data.at * 1000)}${pcOn() ? '' : ' · gardé ici, PC éteint'}` : '';
+  const tg = all.map(pcTarget).filter(Boolean);
+  const have = tg.filter(pcHas).length;
+  const si = pcLib.syncInfo && Date.now() - pcLib.syncInfo.at < 6 * 3600e3 ? pcLib.syncInfo : null;
+  const waitTxt = si?.left && si.wait > 120 ? ` · ${si.left} en route, reprise dans ~${si.wait >= 3600 ? `${Math.floor(si.wait / 3600)} h ${String(Math.round((si.wait % 3600) / 60)).padStart(2, '0')}` : `${Math.round(si.wait / 60)} min`} (limite du relais gratuit)` : '';
+  $('#pcLibMeta').textContent = pcLib.data ? `${list.length} projet${list.length > 1 ? 's' : ''}${list.length !== all.length ? ` sur ${all.length}` : ''} · liste du PC ${fmtAgo(pcLib.data.at * 1000)}` : '';
+  const sync = $('#pcSync');
+  if (sync) {
+    sync.hidden = !pcLib.data || !tg.length;
+    sync.replaceChildren(h('div', { class: 'pcs-top' }, h('b', {}, `${have} / ${tg.length} sons sur ce téléphone`),
+      h('span', {}, have === tg.length ? 'Tout s’écoute même PC éteint' : pcOn() ? `Le PC envoie les autres${waitTxt}` : 'Les autres arriveront quand le PC sera allumé')),
+      h('div', { class: 'pcs-bar' }, h('i', { style: `width:${tg.length ? (have / tg.length) * 100 : 0}%` })));
+  }
   $$('#pcLibSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.f === pcLib.filter));
   const grid = $('#pcLibGrid');
   if (!pcLib.data) {
@@ -3378,7 +3424,9 @@ function setupTarget() {
     $$('#pcLibSeg .seg-btn').forEach((b) => b.addEventListener('click', () => { pcLib.filter = b.dataset.f; local.set('pcLibFilter', pcLib.filter); renderPcView(); }));
     $('#pcLibRefresh').addEventListener('click', () => askPcLib(true));
     $('#pcSetupBtn').addEventListener('click', () => openPcSetup());
-    pcAudioStore.load().then(renderPcView);
+    pcAudioStore.load().then(() => { renderPcView(); pcSync(); });
+    setInterval(() => pcSync(), 5 * 60e3);
+    try { navigator.storage?.persist?.(); } catch { /* le navigateur décide */ }
     const keyBtn = h('button', { type: 'button', class: 'link', id: 'keyBtn', onclick: openKeySettings }, ytKey() ? 'Clé YouTube' : 'Descriptions complètes (clé YouTube, facultatif)');
     $('.results-foot').append(keyBtn);
     if (!ytKey()) pipedInstances();
