@@ -227,17 +227,32 @@ def _u16(s):
     return (s + "\0").encode("utf-16-le")
 
 
-def fake_flp(ppq=96, clip_len=3840, sample=r"C:\Sons\placeholder.wav"):
-    item = lambda pos, idx, ln, s, e: struct.pack("<IHHIHH2sH4sff", pos, 20480, idx, ln, 499, 0, b"x\0", 64, b"@d\x80\x80", s, e) + b"\0" * 28
-    evs = [
-        _ev(199, b"21.2.3.4004\0"), _ev(156, struct.pack("<I", 140000)), _ev(194, _u16("Modèle")),
-        _ev(64, struct.pack("<H", 0)), _ev(21, b"\0"), _ev(145, struct.pack("<i", 0)), _ev(196, _u16(r"%FLStudioFactoryData%\Kick.wav")),
-        _ev(64, struct.pack("<H", 1)), _ev(21, b"\0"), _ev(145, struct.pack("<i", 0)), _ev(196, _u16(sample)),
-        _ev(213, bytes(range(256)) * 2),  # données de plugin (Graillon…) : recopiées telles quelles
-        _ev(233, item(0, 20481, 384, -1.0, -1.0) + item(0, 1, clip_len, 0.0, float(clip_len))),
-    ]
+def fake_flp(version="25.2.4.4960", tempo=130, clip=False, ppq=96, tracks=("INSTRU", "VOICE", "")):
+    """Petit projet au format FL : version, tempo, un canal « Kick » (sampler), le
+    mixer avec un plugin (Graillon…), un arrangement avec des pistes nommées."""
+    evs = [_ev(199, (version + "\0").encode()), _ev(172, b"\x01"), _ev(1, b"\0"), _ev(194, _u16("MODEL FL"))]
+    if tempo:
+        evs.append(_ev(156, struct.pack("<I", tempo * 1000)))
+    evs += [_ev(64, struct.pack("<H", 0)), _ev(21, b"\0"), _ev(201, _u16("")), _ev(203, _u16("Kick")),
+            _ev(212, bytes(36) + struct.pack("<II", 7, 9) + bytes(8)), _ev(196, _u16(r"%FLStudioFactoryData%\Kick.wav"))]
+    nchan = 1
+    if clip:  # un son déjà posé sur la piste INSTRU
+        evs += [_ev(64, struct.pack("<H", 1)), _ev(21, b"\4"), _ev(201, _u16("")), _ev(203, _u16("placeholder")),
+                _ev(212, bytes(44)), _ev(196, _u16(r"C:\Sons\placeholder.wav"))]
+        nchan = 2
+    major = int(version.split(".")[0])
+    size = 80 if major >= 25 else 60 if major >= 21 else 32
+    rec = b""
+    if clip:
+        rec = FM._clip_record(size, 96, 1, 1234, 499, 1)
+    evs += [_ev(99, struct.pack("<H", 0)), _ev(241, _u16("Arrangement")), _ev(233, rec)]
+    for n, name in enumerate(tracks, 1):
+        evs.append(_ev(238, struct.pack("<I", n) + bytes(66)))
+        if name:
+            evs.append(_ev(239, _u16(name)))
+    evs += [_ev(236, bytes(12)), _ev(213, bytes(range(256)) * 2), _ev(203, _u16("Graillon 3"))]  # mixer : insert 2
     body = b"".join(evs)
-    return struct.pack("<4sIhHH", b"FLhd", 6, 0, 2, ppq) + b"FLdt" + struct.pack("<I", len(body)) + body
+    return struct.pack("<4sIhHH", b"FLhd", 6, 0, nchan, ppq) + b"FLdt" + struct.pack("<I", len(body)) + body
 
 
 def fake_wav(seconds=10, rate=48000, ch=2):
@@ -250,60 +265,100 @@ def fake_wav(seconds=10, rate=48000, ch=2):
 class FLmake(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp(prefix="mf-fl-"))
-        self.tpl = self.d / "Modele.flp"
-        self.tpl.write_bytes(fake_flp())
         self.wav = self.d / "Prod [C# min, 150 BPM].wav"
         self.wav.write_bytes(fake_wav(10))
 
+    def tpl(self, **kw):
+        p = self.d / f"tpl{len(list(self.d.glob('tpl*')))}.flp"
+        p.write_bytes(fake_flp(**kw))
+        return p
+
+    def build(self, **kw):
+        out = self.d / "out" / "Prod.flp"
+        FM.build_project(self.tpl(**kw), self.wav, out, bpm=150, title="Prod")
+        return FM.Project(out.read_bytes())
+
+    def instru(self, pr):
+        size, blob, clips = pr.clips()
+        ch = pr.channels()
+        return size, [(c, ch[c["item"]]) for c in clips if c["item"] < FM.PATTERN_BASE and ch.get(c["item"], {}).get("sample") == str(self.wav.resolve())]
+
     def test_lecture_ecriture_identique(self):
-        data = self.tpl.read_bytes()
-        self.assertEqual(FM.write_flp(*FM.read_flp(data)), data)
+        for v in ("25.2.4.4960", "21.2.3.4004", "20.8.4.2576"):
+            data = fake_flp(version=v, clip=True)
+            self.assertEqual(FM.write_flp(*FM.read_flp(data)), data)
 
-    def test_modele_reconnu(self):
-        t = FM.inspect_template(self.tpl)
-        self.assertTrue(t["ok"], t["msg"])
-        self.assertEqual(t["channel"], 1)  # le son placé dans la playlist, pas le kick
-        self.assertTrue(t["in_playlist"])
-        self.assertEqual(t["tempo"], 140)
+    def test_evenement_172_fl25(self):
+        fmt, nchan, ppq, evs = FM.read_flp(fake_flp())
+        self.assertEqual(nchan, 1)
+        self.assertEqual(evs[1], [172, b"\x01"])  # 1 octet, pas 4 (sinon tout se décale)
 
-    def test_projet_de_la_prod(self):
-        out = self.d / "Projets" / "Prod.flp"
-        FM.build_project(self.tpl, self.wav, out, bpm=150, title="Prod")
-        fmt, nchan, ppq, evs = FM.read_flp(out.read_bytes())
-        get = lambda i: [v for e, v in evs if e == i]
-        self.assertEqual(struct.unpack("<I", get(156)[0])[0], 150000)
-        paths = [v.decode("utf-16-le").rstrip("\0") for v in get(196)]
-        self.assertEqual(paths[0], r"%FLStudioFactoryData%\Kick.wav")
-        self.assertEqual(Path(paths[1]), self.wav.resolve())
-        self.assertEqual(get(194)[0].decode("utf-16-le").rstrip("\0"), "Prod")
-        self.assertEqual(get(213)[0], bytes(range(256)) * 2)
-        pl = get(233)[0]
-        self.assertEqual(struct.unpack_from("<I", pl, 8)[0], 384)  # le pattern ne bouge pas
-        ticks = 10 * 150 / 60 * 96
-        self.assertEqual(struct.unpack_from("<I", pl, 60 + 8)[0], ticks)
-        self.assertEqual(struct.unpack_from("<ff", pl, 60 + 24), (0.0, ticks))
-        self.assertEqual(len(get(64)), 2)
+    def test_modele_fl25_sans_son_instru_creee_sur_la_piste_instru(self):
+        pr = self.build(tracks=("VOICE", "INSTRU", ""))
+        size, mine = self.instru(pr)
+        self.assertEqual(size, 80)
+        self.assertEqual(len(mine), 1)
+        clip, ch = mine[0]
+        self.assertEqual((clip["track"], clip["pos"], clip["len"]), (2, 0, 10 * 150 / 60 * 96))
+        self.assertEqual((ch["type"], ch["name"]), (4, "Prod [C# min, 150 BPM]"))
+        self.assertEqual(pr.nchan, 2)
+        blob = pr.clips()[1]
+        self.assertEqual(struct.unpack_from("<ff", blob, 24), (-1.0, -1.0))  # clip entier
+        self.assertEqual(struct.unpack_from("<f", blob, 52)[0], 1.0)
+        self.assertEqual(struct.unpack_from("<d", blob, 64)[0], 1.0)
+        rt = [v for e, v in pr.events[ch["start"]:ch["end"]] if e == FM.EV_CHANNEL_RUNTIME][0]
+        self.assertEqual(struct.unpack_from("<II", rt, 36), (8, 10))  # identifiants de voix uniques
+
+    def test_piste_du_haut_par_defaut(self):
+        pr = self.build(tracks=("", "VOICE"))
+        self.assertEqual(self.instru(pr)[1][0][0]["track"], 1)
+
+    def test_formats_fl21_et_fl20(self):
+        for v, size in (("21.2.3.4004", 60), ("20.8.4.2576", 32)):
+            got, mine = self.instru(self.build(version=v))
+            self.assertEqual((got, len(mine)), (size, 1), v)
+
+    def test_tempo(self):
+        pr = self.build(tempo=130)
+        self.assertEqual([struct.unpack("<I", v)[0] for e, v in pr.events if e == 156], [150000])
+        pr = self.build(tempo=None)  # FL n'écrit pas le tempo par défaut : on l'ajoute
+        self.assertEqual([struct.unpack("<I", v)[0] for e, v in pr.events if e == 156], [150000])
+        self.assertEqual(pr.events[-1][0], 156)
+
+    def test_son_deja_pose_remplace(self):
+        pr = self.build(clip=True)
+        size, mine = self.instru(pr)
+        self.assertEqual(pr.nchan, 2)  # pas de canal en plus
+        self.assertEqual(len(mine), 1)
+        self.assertEqual((mine[0][0]["pos"], mine[0][0]["len"]), (0, 2400))
+
+    def test_reste_du_modele_intact(self):
+        pr = self.build()
+        self.assertIn([213, bytes(range(256)) * 2], pr.events)  # plugins du mixer (preset de voix)
+        self.assertEqual([FM._text(v, True) for e, v in pr.events if e == 194], ["Prod"])
+        kick = pr.channels()[0]
+        self.assertEqual(kick["sample"], r"%FLStudioFactoryData%\Kick.wav")
 
     def test_duree_wav(self):
         self.assertAlmostEqual(FM.wav_seconds(self.wav), 10.0)
 
-    def test_modele_sans_son_refuse(self):
-        bad = self.d / "vide.flp"
-        body = _ev(199, b"21.0.0.1\0") + _ev(156, struct.pack("<I", 140000))
-        bad.write_bytes(struct.pack("<4sIhHH", b"FLhd", 6, 0, 0, 96) + b"FLdt" + struct.pack("<I", len(body)) + body)
-        self.assertFalse(FM.inspect_template(bad)["ok"])
+    def test_modeles_refuses(self):
         self.assertFalse(FM.inspect_template(self.d / "absent.flp")["ok"])
         (self.d / "faux.flp").write_bytes(b"MThd pas un projet")
         self.assertFalse(FM.inspect_template(self.d / "faux.flp")["ok"])
+        t = FM.inspect_template(self.tpl())
+        self.assertTrue(t["ok"], t["msg"])
+        self.assertEqual((t["track"], t["track_name"]), (1, "INSTRU"))
 
-    def test_make_nom_et_dossier(self):
-        cfg = {"dossier": str(self.d), "flmake": {"on": True, "template": str(self.tpl), "dossier": str(self.d / "FL")}}
+    def test_make_dossier_au_nom_de_la_prod(self):
+        tpl = self.tpl()
+        cfg = {"dossier": str(self.d), "flmake": {"on": True, "template": str(tpl), "dossier": str(self.d / "FL")}}
         out, msg = FM.make(self.wav, "C# min", 150, None, cfg)
-        self.assertEqual(out.name, "Prod [C# min, 150 BPM].flp")
-        self.assertEqual(out.parent, self.d / "FL")
+        self.assertEqual(out, self.d / "FL" / "Prod [C# min, 150 BPM]" / "Prod [C# min, 150 BPM].flp")
         out2, _ = FM.make(self.wav, "C# min", 150, None, cfg)
-        self.assertEqual(out2.name, "Prod [C# min, 150 BPM] (2).flp")
+        self.assertEqual(out2, self.d / "FL" / "Prod [C# min, 150 BPM] (2)" / "Prod [C# min, 150 BPM] (2).flp")
         self.assertIn("C# min", msg)
+        self.assertEqual([p.name for p in FM.recent_projects(cfg)][:1], [out2.name])
         self.assertEqual(FM.split_key("Bb maj"), ("Bb", "maj"))
         self.assertEqual(FM.maybe_make(self.wav, None, None, None, {"flmake": {"on": False}}), (None, None))
 

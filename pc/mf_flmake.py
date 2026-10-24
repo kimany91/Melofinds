@@ -2,16 +2,23 @@
 
 Pour chaque prod téléchargée (si FLmake est activé) :
   1. copie ton projet modèle FL (ton preset de voix : insert 2 avec ton micro et Graillon) ;
-  2. y met le BPM de la prod et remplace le son de la piste 1 (→ insert 1) par l'instru ;
-  3. enregistre le projet sous le nom de la prod dans ton dossier de projets ;
+  2. y met le BPM de la prod et pose l'instru sur la piste du haut (« INSTRU ») ;
+  3. enregistre le projet dans un dossier au nom de la prod (comme une sauvegarde FL) ;
   4. ouvre FL Studio sur ce projet. Le script « Melofinds FLmake » (dans FL) règle alors
      Graillon sur la clé de la prod et sauvegarde.
 
-Le projet est modifié directement dans le fichier .flp (format à événements de FL
-Studio) : seuls le tempo, le chemin du son de la piste de l'instru, la longueur de son
-clip et le titre changent ; tout le reste du modèle est recopié octet pour octet.
+Le projet est modifié directement dans le fichier .flp (suite d'événements de FL Studio).
+Seuls le tempo, le titre, le canal de l'instru et son clip sont touchés ; tout le reste du
+modèle (mixer, preset de voix, plugins) est recopié octet pour octet.
+
+Formats vérifiés sur de vrais projets FL 20, FL 25 et FL 2026 (PyFLP, flpdiff, flpkit) :
+  - FL 25+ : l'événement 172 n'a qu'un octet (contrôle : nombre de canaux = en-tête) ;
+  - clip de playlist : 32 octets (FL ≤ 20), 60 (FL 21-24), 80 (FL 25+) ;
+  - clip audio entier : décalages −1.0 / −1.0 ; piste 1 stockée sous le n° 499 ;
+  - tempo absent quand il vaut la valeur par défaut : on l'ajoute en fin de fichier.
 """
 
+import base64
 import os
 import re
 import struct
@@ -22,20 +29,36 @@ from pathlib import Path
 import mf_core as C
 from mf_core import P, log
 
-# --- Format .flp : en-tête « FLhd » + bloc « FLdt » d'événements (id sur 1 octet).
-#     id < 64 : 1 octet · < 128 : 2 octets · < 192 : 4 octets · sinon taille (varint) + données
 WORD, DWORD, TEXT = 64, 128, 192
+EV_CHANNEL_TYPE = 21          # 4 = clip audio
+EV_ROUTE = 22                 # insert du mixer (anciens projets)
 EV_CHANNEL_NEW = 64           # début d'un canal (n° du canal)
-EV_TEMPO_COARSE = 66          # anciens projets : tempo entier
-EV_TEMPO_FINE_OLD = 93        # anciens projets : partie décimale
+EV_TEMPO_COARSE = 66          # très anciens projets : tempo entier
+EV_TEMPO_FINE_OLD = 93        # très anciens projets : partie décimale
+EV_ARRANGEMENT = 99           # début d'un arrangement (playlist)
 EV_TEMPO = 156                # tempo × 1000
-EV_TITLE = 194                # titre du projet (Infos du projet)
+EV_TITLE = 194                # titre du projet
 EV_SAMPLE_PATH = 196          # fichier du son d'un canal
 EV_VERSION = 199              # version de FL (texte ASCII)
+EV_PLUGIN_INTERNAL = 201      # nom interne du plugin ('' pour un son)
+EV_NAME = 203                 # nom du canal
+EV_CHANNEL_RUNTIME = 212      # identifiants de voix du canal
 EV_PLAYLIST = 233             # clips de la playlist
+EV_TRACK_DATA = 238           # une piste de la playlist
+EV_TRACK_NAME = 239           # nom de la piste
 NEW_TEXT_IDS = (TEXT + 49, TEXT + 39, TEXT + 47)
 PATTERN_BASE = 20480
+TRACK_TOP = 499               # piste 1 (les pistes sont stockées à l'envers)
 HEADER = struct.Struct("<4sIhHH")
+SIZE_RULES = ({172: 1}, {172: 3}, {})  # FL 2026/25 (vérifié), variante, classique
+
+# Canal « clip audio » authentique (sans son), recopié de vraies sauvegardes FL :
+# toutes les valeurs par défaut dont FL a besoin pour jouer le son.
+CLIP_SCOPE = {
+    25: base64.b64decode("QDoAFQTJAgAA1DQAAAAAAAAAAP////8AAAAAUAAAAAMAAAAAAAAAAAAAAAAAAAA6AAAAZAAAAAAAAAAAAAAAywIAAJtLAAAAgIItFAApAQAB0RQAAAAAABkAAAAAAAAEAAAAkAAAAIqAAIAAiwAAAQBZAABhgAAwAEWAAFYAAUcABFMAAEoAAEsAAEwAAFUACIMAAIAARgAAaAEAMgHbGAAZAAAQJwAAAAAAAAABAAAAAAAAAAAAAOUUAAAAAAAyAAAAAAAAAAAAAAAAAADdCQAAAAD0AQAAANeoAYwAAAAAAAAAAQAAAP////88AAAAAACAPwAAgD8AAIA/AACAPwAAgD8AAAAAAwAAAAAAAAAABAAAMAAAAAAAAQCnBQAAAAAAAAABAAAAAAAAAAAAAQAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAACAAAA/v////////8AAAAAAAAAAAAAAAAAAAAAAADwPwAAAAAAAAAA/////wEBAAAAAAAAAADgP4QAAAAAkAAAAACRAAAAACAA5BBkAAAAAAAAAAAAAAAAAAAA5BA8AAAAAAAAAAAAAAAAAAAA2kQAAAAAAAAAAGQAAAAgTgAAIE4AADB1AAAyAAAAIE4AAAAAAABkAAAAIE4AAAAAAAC2gAAAAAAAAAAAAAAAAAAAAAAAANpEBAAAAAAAAABkAAAAIE4AACBOAAAwdQAAMgAAACBOAAAAAAAAZAAAACBOAAAAAAAAtoAAAAAAAAAAAAAAAAAAAJv////aRAAAAAAAAAAAZAAAACBOAAAgTgAAMHUAADIAAAAgTgAAAAAAAGQAAAAgTgAAAAAAALaAAAAAAAAAAAAAAAAAAAAAAAAA2kQAAAAAAAAAAGQAAAAgTgAAIE4AADB1AAAyAAAAIE4AAAAAAABkAAAAIE4AAAAAAAC2gAAAAAAAAAAAAAAAAAAAAAAAANpEAAAAAAAAAABkAAAAIE4AACBOAAAwdQAAMgAAACBOAAAAAAAAZAAAACBOAAAAAAAAtoAAAAAAAAAAAAAAAAAAAAAAAACPBgAAABQAxAIAAKr/////MwA="),
+    20: base64.b64decode("QAsAFQTJAgAA1DQAAAAAAAAAAP////8AAAAAUAAAAAAAAAAAAAAAAAAAAAAAAACoAAAA/AAAAAAAAAAAAAAAywIAAJsAAAAAgFxlagAAAdEUAAAAAAAZAAAAAAAABAAAAJAAAACKgACAAIsAAAEAWQAAYYAARYAAVgABRwAEUwAASgAASwAATAAAVQAIgwAAgABGAAAWANsYABkAABAnAAAAAAAAAAEAAAAAAAAAAAAA5RQAAAAAADIAAAAAAAAAAAAAAAAAAN0JAAAAAPQBAAAA154BjAAAAAAAAAABAAAA/////zwAAAAAAIA/AACAPwAAgD8AAIA/AACAPwAAAAADAAAAAAAAAAAEAAAwAAAAAAABAKcFAAAAAAAAAAEAAAAAAAAAAAABAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAD+/////////wAAAAAAAAAAAAAAAAAAAAAAAPA/AAAAAAAAAAD/////AQGEAAAAAJAAAAAAkQAAAAAgAOQQZAAAAAAAAAAAAAAAAAAAAOQQPAAAAAAAAAAAAAAAAAAAANpEAAAAAAAAAABkAAAAIE4AACBOAAAwdQAAMgAAACBOAAAAAAAAZAAAACBOAAAAAAAAtoAAAAAAAAAAAAAAAAAAAAAAAADaRAQAAAAAAAAAZAAAACBOAAAgTgAAMHUAADIAAAAgTgAAAAAAAGQAAAAgTgAAAAAAALaAAAAAAAAAAAAAAAAAAACb////2kQAAAAAAAAAAGQAAAAgTgAAIE4AADB1AAAyAAAAIE4AAAAAAABkAAAAIE4AAAAAAAC2gAAAAAAAAAAAAAAAAAAAAAAAANpEAAAAAAAAAABkAAAAIE4AACBOAAAwdQAAMgAAACBOAAAAAAAAZAAAACBOAAAAAAAAtoAAAAAAAAAAAAAAAAAAAAAAAADaRAAAAAAAAAAAZAAAACBOAAAgTgAAMHUAADIAAAAgTgAAAAAAAGQAAAAgTgAAAAAAALaAAAAAAAAAAAAAAAAAAAAAAAAAjwIAAAAUAMQCAAA="),
+}
+INSTRU_NAMES = re.compile(r"\b(instrus?|instrumentale?s?|beats?|prods?|prod de|la prod)\b", re.I)
 
 
 class FlpError(Exception):
@@ -54,21 +77,14 @@ def _varint(n):
             return bytes(out)
 
 
-def read_flp(data):
-    """→ (format, nb de canaux, ppq, [[id, données], …])"""
-    if len(data) < 22:
-        raise FlpError("fichier trop court")
-    magic, size, fmt, nchan, ppq = HEADER.unpack_from(data, 0)
-    if magic != b"FLhd" or size != 6 or data[14:18] != b"FLdt":
-        raise FlpError("ce n'est pas un projet FL Studio (.flp)")
-    total = struct.unpack_from("<I", data, 18)[0]
-    if 22 + total != len(data):
-        raise FlpError("projet FL abîmé (taille incorrecte)")
-    events, i = [], 22
-    while i < len(data):
+def _parse_events(data, start, end, rules):
+    events, i = [], start
+    while i < end:
         eid = data[i]
         i += 1
-        if eid < WORD:
+        if eid in rules:
+            n = rules[eid]
+        elif eid < WORD:
             n = 1
         elif eid < DWORD:
             n = 2
@@ -77,7 +93,7 @@ def read_flp(data):
         else:
             n, shift = 0, 0
             while True:
-                if i >= len(data):
+                if i >= end:
                     raise FlpError("projet FL abîmé (taille d'événement)")
                 b = data[i]
                 i += 1
@@ -85,11 +101,35 @@ def read_flp(data):
                 shift += 7
                 if not b & 0x80:
                     break
-        if i + n > len(data):
+        if i + n > end:
             raise FlpError("projet FL abîmé (événement coupé)")
         events.append([eid, bytes(data[i:i + n])])
         i += n
-    return fmt, nchan, ppq, events
+    return events
+
+
+def read_flp(data):
+    """→ (format, nb de canaux, ppq, [[id, données], …]). Choisit la règle de taille
+    qui relit exactement autant de canaux que l'en-tête en annonce."""
+    if len(data) < 22:
+        raise FlpError("fichier trop court")
+    magic, size, fmt, nchan, ppq = HEADER.unpack_from(data, 0)
+    if magic != b"FLhd" or size != 6 or data[14:18] != b"FLdt":
+        raise FlpError("ce n'est pas un projet FL Studio (.flp)")
+    total = struct.unpack_from("<I", data, 18)[0]
+    if 22 + total != len(data):
+        raise FlpError("projet FL abîmé (taille incorrecte)")
+    first = None
+    for rules in SIZE_RULES:
+        try:
+            events = _parse_events(data, 22, len(data), rules)
+        except FlpError as e:
+            first = first or e
+            continue
+        if sum(1 for e, _ in events if e == EV_CHANNEL_NEW) == nchan:
+            return fmt, nchan, ppq, events
+        first = first or FlpError("projet FL illisible (version de FL non reconnue)")
+    raise first
 
 
 def write_flp(fmt, nchan, ppq, events):
@@ -102,13 +142,17 @@ def write_flp(fmt, nchan, ppq, events):
     return HEADER.pack(b"FLhd", 6, fmt, nchan, ppq) + b"FLdt" + struct.pack("<I", len(body)) + bytes(body)
 
 
-def _unicode(events):
-    """FL 11.5+ écrit les textes en UTF-16."""
+def fl_version(events):
     for eid, val in events:
         if eid == EV_VERSION:
-            parts = [int(x) for x in re.findall(r"\d+", val.decode("ascii", "replace"))[:2]] or [0]
-            return parts >= [11, 5]
-    return True
+            parts = [int(x) for x in re.findall(r"\d+", val.decode("ascii", "replace"))[:3]]
+            return tuple(parts) or (0,)
+    return (0,)
+
+
+def _unicode(events):
+    """FL 11.5+ écrit les textes en UTF-16."""
+    return list(fl_version(events)[:2]) >= [11, 5] or fl_version(events) == (0,)
 
 
 def _text(val, uni):
@@ -122,49 +166,122 @@ def _enc(s, uni):
     return (s + "\0").encode("utf-16-le") if uni else (s + "\0").encode("cp1252", "replace")
 
 
-def _items(val):
-    size = 60 if len(val) % 60 == 0 else 32 if len(val) % 32 == 0 else 0
-    return size, (len(val) // size if size else 0)
+def _stride(blob, version):
+    """Taille d'un clip : détectée sur les clips existants (signature 20480), sinon
+    d'après la version de FL."""
+    if blob:
+        for size in (80, 60, 32):
+            if len(blob) % size == 0 and all(struct.unpack_from("<H", blob, k + 4)[0] == PATTERN_BASE
+                                              for k in range(0, len(blob), size)):
+                return size
+        return None
+    return 80 if version[0] >= 25 else 60 if version[0] >= 21 else 32
 
 
-def _clip_channels(events):
-    """N° des canaux (sons) placés dans la playlist."""
-    out = []
-    for eid, val in events:
-        if eid == EV_PLAYLIST:
-            size, n = _items(val)
-            for k in range(n):
-                base, idx = struct.unpack_from("<HH", val, k * size + 4)
-                if base == PATTERN_BASE and idx < PATTERN_BASE:
-                    out.append(idx)
-    return out
+def _clip_record(size, position, channel, length, track_rv, clip_id, template=None):
+    """Un clip audio entier (non coupé) sur la playlist."""
+    if template and len(template) == size:
+        rec = bytearray(template)
+    else:
+        rec = bytearray(size)
+        struct.pack_into("<HH4B", rec, 16, 120, 64, 64, 100, 128, 128)
+        if size >= 60:
+            struct.pack_into("<f", rec, 52, 1.0)
+        if size >= 80:
+            struct.pack_into("<d", rec, 64, 1.0)
+    struct.pack_into("<IHHIHH", rec, 0, position, PATTERN_BASE, channel, length, track_rv, 0)
+    struct.pack_into("<ff", rec, 24, -1.0, -1.0)
+    if size >= 36:
+        struct.pack_into("<I", rec, 32, clip_id)
+    return bytes(rec)
+
+
+class Project:
+    """Vue d'un projet : canaux, arrangement, pistes, clips."""
+
+    def __init__(self, data):
+        self.fmt, self.nchan, self.ppq, self.events = read_flp(data)
+        self.version = fl_version(self.events)
+        self.uni = _unicode(self.events)
+
+    def channels(self):
+        """{n° : {start, end, type, sample, name}} — un canal va de son 64 au suivant
+        (ou au début des arrangements)."""
+        out, cur = {}, None
+        for i, (e, v) in enumerate(self.events):
+            if e == EV_CHANNEL_NEW:
+                if cur is not None:
+                    out[cur]["end"] = i
+                cur = struct.unpack("<H", v)[0]
+                out[cur] = {"start": i, "end": None, "type": None, "sample": "", "name": ""}
+            elif cur is not None and e == EV_ARRANGEMENT:
+                out[cur]["end"] = i
+                cur = None
+            elif cur is not None:
+                c = out[cur]
+                if e == EV_CHANNEL_TYPE and c["type"] is None:
+                    c["type"] = v[0]
+                elif e == EV_SAMPLE_PATH:
+                    c["sample"] = _text(v, self.uni)
+                elif e == EV_NAME and not c["name"]:
+                    c["name"] = _text(v, self.uni)
+        if cur is not None:
+            out[cur]["end"] = len(self.events)
+        return out
+
+    def arrangement(self):
+        """Premier arrangement : (début, fin, index du clip-blob ou None, [(n° piste, nom)])."""
+        start = next((i for i, (e, _) in enumerate(self.events) if e == EV_ARRANGEMENT), None)
+        if start is None:
+            raise FlpError("pas de playlist dans le modèle")
+        end = next((i for i in range(start + 1, len(self.events)) if self.events[i][0] == EV_ARRANGEMENT), len(self.events))
+        pl = next((i for i in range(start, end) if self.events[i][0] == EV_PLAYLIST), None)
+        tracks, last = [], None
+        for i in range(start, end):
+            e, v = self.events[i]
+            if e == EV_TRACK_DATA and len(v) >= 4:
+                last = struct.unpack_from("<I", v)[0]
+                tracks.append([last, ""])
+            elif e == EV_TRACK_NAME and tracks:
+                tracks[-1][1] = _text(v, self.uni)
+        return start, end, pl, tracks
+
+    def instru_track(self):
+        """Piste de l'instru : celle nommée « INSTRU » (ou beat / prod), sinon la piste 1."""
+        _, _, _, tracks = self.arrangement()
+        for n, name in tracks:
+            if name and INSTRU_NAMES.search(name):
+                return n, name
+        return 1, (tracks[0][1] if tracks and tracks[0][0] == 1 else "")
+
+    def clips(self):
+        _, _, pl, _ = self.arrangement()
+        blob = self.events[pl][1] if pl is not None else b""
+        size = _stride(blob, self.version)
+        if size is None:
+            raise FlpError("clips de la playlist illisibles (version de FL non reconnue)")
+        out = []
+        for k in range(0, len(blob), size):
+            pos, base, idx, length, rv, grp = struct.unpack_from("<IHHIHH", blob, k)
+            out.append({"at": k, "pos": pos, "item": idx, "len": length, "track": TRACK_TOP + 1 - rv})
+        return size, blob, out
 
 
 def inspect_template(path):
-    """Vérifie le modèle → {ok, msg, ...}. Le son de l'instru = le premier son placé
-    dans la playlist (sinon le premier canal qui a un son)."""
+    """Vérifie le modèle → {ok, msg, …}."""
     try:
-        fmt, nchan, ppq, events = read_flp(Path(path).read_bytes())
+        pr = Project(Path(path).read_bytes())
+        track, tname = pr.instru_track()
+        size, _, clips = pr.clips()
     except (OSError, FlpError) as e:
         return {"ok": False, "msg": f"Modèle illisible : {e}"}
-    uni = _unicode(events)
-    chans, cur = {}, None
-    for i, (eid, val) in enumerate(events):
-        if eid == EV_CHANNEL_NEW:
-            cur = struct.unpack("<H", val)[0]
-        elif eid == EV_SAMPLE_PATH and cur is not None and cur not in chans:
-            chans[cur] = (i, _text(val, uni))
-    with_sample = {k: v for k, v in chans.items() if v[1]}
-    clips = _clip_channels(events)
-    chan = next((c for c in clips if c in with_sample), None)
-    if chan is None and with_sample:
-        chan = min(with_sample)
-    tempo = next((struct.unpack("<I", v)[0] / 1000 for e, v in events if e == EV_TEMPO), None)
-    if chan is None:
-        return {"ok": False, "msg": "Aucun son dans le modèle : glisse n'importe quel .wav sur la piste 1 de la playlist (envoyé vers l'insert 1), puis enregistre le modèle."}
-    return {"ok": True, "channel": chan, "sample": with_sample[chan][1], "in_playlist": chan in clips, "ppq": ppq, "tempo": tempo,
-            "msg": f"Modèle OK : l'instru remplacera « {Path(with_sample[chan][1].replace(chr(92), '/')).name} »"
-                   + ("" if chan in clips else " (pas encore placé dans la playlist)") + "."}
+    chans = pr.channels()
+    on_track = [c for c in clips if c["track"] == track and c["item"] < PATTERN_BASE and chans.get(c["item"], {}).get("sample")]
+    tempo = next((struct.unpack("<I", v)[0] / 1000 for e, v in pr.events if e == EV_TEMPO), None)
+    where = f"piste {track}" + (f" « {tname} »" if tname else "")
+    ver = ".".join(str(x) for x in pr.version[:2])
+    return {"ok": True, "track": track, "track_name": tname, "replace": bool(on_track), "tempo": tempo, "ppq": pr.ppq, "version": pr.version,
+            "msg": f"Modèle OK (FL {ver}) : l'instru sera posée sur la {where}, au début, envoyée vers son insert."}
 
 
 def wav_seconds(path):
@@ -195,62 +312,121 @@ def wav_seconds(path):
     raise FlpError("durée du .wav illisible")
 
 
+def _new_channel_scope(pr, iid, name, sample, insert=1):
+    """Événements d'un nouveau canal « clip audio » : cloné sur un clip audio du modèle
+    s'il y en a un, sinon sur un clip audio authentique de la même époque de FL."""
+    chans = pr.channels()
+    src = next((c for c in chans.values() if c["type"] == 4 and c["sample"]), None)
+    if src:
+        scope = [list(ev) for ev in pr.events[src["start"]:src["end"]]]
+    else:
+        raw = CLIP_SCOPE[25 if pr.version[0] >= 21 else 20]
+        scope = _parse_events(raw, 0, len(raw), {})
+    # identifiants de voix uniques (octets 36 et 40 du bloc 212), comme FL
+    maxf = [0, 0]
+    for c in chans.values():
+        for e, v in pr.events[c["start"]:c["end"]]:
+            if e == EV_CHANNEL_RUNTIME and len(v) >= 44:
+                maxf[0] = max(maxf[0], struct.unpack_from("<I", v, 36)[0])
+                maxf[1] = max(maxf[1], struct.unpack_from("<I", v, 40)[0])
+    out, has_sample, has_route = [], False, False
+    for e, v in scope:
+        if e == EV_CHANNEL_NEW:
+            v = struct.pack("<H", iid)
+        elif e == EV_CHANNEL_TYPE:
+            v = b"\x04"
+        elif e == EV_PLUGIN_INTERNAL:
+            v = _enc("", pr.uni)
+        elif e == EV_NAME:
+            v = _enc(name, pr.uni)
+        elif e == EV_SAMPLE_PATH:
+            v, has_sample = _enc(sample, pr.uni), True
+        elif e == EV_ROUTE:
+            v, has_route = bytes([insert]), True
+        elif e == EV_CHANNEL_RUNTIME and len(v) >= 44:
+            b = bytearray(v)
+            struct.pack_into("<II", b, 36, maxf[0] + 1, maxf[1] + 1)
+            v = bytes(b)
+        out.append([e, v])
+    if not has_sample:
+        out.append([EV_SAMPLE_PATH, _enc(sample, pr.uni)])
+    if not has_route and pr.version[0] < 25:
+        out.insert(1, [EV_ROUTE, bytes([insert])])
+    return out
+
+
 def build_project(template, wav, out_path, bpm=None, title=None):
     """Écrit le projet de la prod. Renvoie un petit résumé (texte)."""
-    t = inspect_template(template)
-    if not t["ok"]:
-        raise FlpError(t["msg"])
-    fmt, nchan, ppq, events = read_flp(Path(template).read_bytes())
-    uni = _unicode(events)
-    chan = t["channel"]
+    pr = Project(Path(template).read_bytes())
+    ev = pr.events
     done = []
-    tempo = bpm if bpm and 40 <= float(bpm) <= 300 else (t["tempo"] or 140)
-    if bpm:
-        for ev in events:
-            if ev[0] == EV_TEMPO:
-                ev[1] = struct.pack("<I", int(round(float(bpm) * 1000)))
-            elif ev[0] == EV_TEMPO_COARSE:
-                ev[1] = struct.pack("<H", int(float(bpm)))
-            elif ev[0] == EV_TEMPO_FINE_OLD:
-                ev[1] = struct.pack("<H", 0)
+    wav = Path(wav).resolve()
+    sample = str(wav)
+    tempo = float(bpm) if bpm and 40 <= float(bpm) <= 300 else None
+    # 1) Tempo : remplacé, ou ajouté en fin de fichier s'il manque (FL ne l'écrit pas
+    #    quand il vaut la valeur par défaut ; le dernier lu l'emporte).
+    if tempo:
+        found = False
+        for e in ev:
+            if e[0] == EV_TEMPO:
+                e[1] = struct.pack("<I", int(round(tempo * 1000)))
+                found = True
+            elif e[0] == EV_TEMPO_COARSE:
+                e[1] = struct.pack("<H", int(tempo))
+            elif e[0] == EV_TEMPO_FINE_OLD:
+                e[1] = struct.pack("<H", 0)
+        if not found:
+            ev.append([EV_TEMPO, struct.pack("<I", int(round(tempo * 1000)))])
         done.append(f"{bpm} BPM")
-    # Le son de l'instru
-    cur = None
-    for ev in events:
-        if ev[0] == EV_CHANNEL_NEW:
-            cur = struct.unpack("<H", ev[1])[0]
-        elif ev[0] == EV_SAMPLE_PATH and cur == chan:
-            ev[1] = _enc(str(Path(wav).resolve()), uni)
-            break
-    done.append("instru")
-    # Longueur du clip de l'instru dans la playlist (le clip suit la durée de la prod)
+    else:
+        tempo = next((struct.unpack("<I", v)[0] / 1000 for e, v in ev if e == EV_TEMPO), 140.0)
     try:
-        ticks = max(1, int(round(wav_seconds(wav) * float(tempo) / 60 * ppq)))
+        ticks = max(1, int(round(wav_seconds(wav) * tempo / 60 * pr.ppq)))
     except (OSError, FlpError, ValueError):
-        ticks = None
-    if ticks:
-        for ev in events:
-            if ev[0] != EV_PLAYLIST:
-                continue
-            size, n = _items(ev[1])
-            buf = bytearray(ev[1])
-            for k in range(n):
-                o = k * size
-                base, idx = struct.unpack_from("<HH", buf, o + 4)
-                if base != PATTERN_BASE or idx != chan:
-                    continue
-                old = struct.unpack_from("<I", buf, o + 8)[0]
-                struct.pack_into("<I", buf, o + 8, ticks)
-                start, end = struct.unpack_from("<ff", buf, o + 24)
-                if old and start >= 0 and end > start:  # même unité que la longueur d'origine
-                    struct.pack_into("<f", buf, o + 28, start + (end - start) * ticks / old)
-            ev[1] = bytes(buf)
+        ticks = pr.ppq * 4 * 64  # 64 mesures si la durée est illisible
+    # 2) L'instru sur la piste INSTRU
+    track, tname = pr.instru_track()
+    size, blob, clips = pr.clips()
+    chans = pr.channels()
+    mine = next((c for c in clips if c["track"] == track and c["item"] < PATTERN_BASE and chans.get(c["item"], {}).get("sample")), None)
+    if mine:  # le modèle a déjà un son sur cette piste : on le remplace par l'instru
+        ch = chans[mine["item"]]
+        for i in range(ch["start"], ch["end"]):
+            if ev[i][0] == EV_SAMPLE_PATH:
+                ev[i][1] = _enc(sample, pr.uni)
+            elif ev[i][0] == EV_NAME:
+                ev[i][1] = _enc(wav.stem[:120], pr.uni)
+        rec = bytearray(blob[mine["at"]:mine["at"] + size])
+        struct.pack_into("<II", rec, 0, 0, PATTERN_BASE | (mine["item"] << 16))
+        struct.pack_into("<I", rec, 8, ticks)
+        struct.pack_into("<ff", rec, 24, -1.0, -1.0)
+        new_blob = blob[:mine["at"]] + bytes(rec) + blob[mine["at"] + size:]
+        _, _, pl, _ = pr.arrangement()
+        ev[pl][1] = new_blob
+    else:  # nouveau canal « clip audio » + clip au début de la piste
+        iid = max(chans) + 1 if chans else 0
+        scope = _new_channel_scope(pr, iid, wav.stem[:120], sample)
+        arr = next(i for i, (e, _) in enumerate(ev) if e == EV_ARRANGEMENT)
+        ev[arr:arr] = scope
+        pr.nchan += 1
+        start, end, pl, _ = pr.arrangement()
+        ids = [struct.unpack_from("<I", blob, k + 32)[0] for k in range(0, len(blob), size)] if size >= 36 else []
+        rec = _clip_record(size, 0, iid, ticks, TRACK_TOP + 1 - track, max(ids, default=0) + 1, blob[:size] if blob else None)
+        if pl is not None:
+            ev[pl][1] = rec + blob
+        else:
+            at = next((i for i in range(start, end) if ev[i][0] == EV_TRACK_DATA), end)
+            ev[at:at] = [[EV_PLAYLIST, rec]]
+    done.append(f"instru sur la piste {track}" + (f" « {tname} »" if tname else ""))
     if title:
-        for ev in events:
-            if ev[0] == EV_TITLE:
-                ev[1] = _enc(title[:120], uni)
-    data = write_flp(fmt, nchan, ppq, events)
-    read_flp(data)  # contrôle : le fichier écrit se relit
+        for e in ev:
+            if e[0] == EV_TITLE:
+                e[1] = _enc(title[:120], pr.uni)
+    data = write_flp(pr.fmt, pr.nchan, pr.ppq, ev)
+    check = Project(data)  # contrôle : le fichier écrit se relit, l'instru est en place
+    if not any(c["track"] == track and c["item"] < PATTERN_BASE and check.channels().get(c["item"], {}).get("sample") == sample
+               for c in check.clips()[2]):
+        raise FlpError("contrôle raté : l'instru n'est pas dans le projet écrit")
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_suffix(".flp.tmp")
@@ -528,12 +704,13 @@ def split_key(key):
 
 
 def project_path(folder, name):
+    """« Dossier/Nom de la prod/Nom de la prod.flp », comme une sauvegarde FL."""
     folder = Path(folder)
-    p = folder / f"{name}.flp"
-    i = 2
-    while p.exists():
-        p = folder / f"{name} ({i}).flp"
+    sub, i = name, 2
+    while (folder / sub).exists():
+        sub = f"{name} ({i})"
         i += 1
+    p = folder / sub / f"{sub}.flp"
     if not C.inside(p, folder) or p.suffix.lower() != ".flp":
         raise FlpError("nom de projet refusé")
     return p
@@ -577,7 +754,7 @@ def open_in_fl(flp, key=None, bpm=None, cfg=None):
 def recent_projects(cfg=None, n=15):
     folder = Path(settings(cfg)["dossier"])
     try:
-        files = [p for p in folder.glob("*.flp") if p.is_file()]
+        files = [p for p in [*folder.glob("*/*.flp"), *folder.glob("*.flp")] if p.is_file()]
     except OSError:
         return []
     return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:n]

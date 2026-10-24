@@ -345,9 +345,10 @@ def manager_window(selftest=False):
             "1. Dans FL Studio : Fichier → Nouveau.\n"
             "2. Mixer, insert 2 : charge ton preset de voix (glisse ton fichier .fst sur l'insert 2), avec Graillon dedans. "
             "En haut à droite du mixer, choisis ton micro comme entrée de l'insert 2.\n"
-            "3. Glisse n'importe quel .wav au début de la piste 1 de la playlist, et envoie ce son vers l'insert 1 "
-            "(réglages du son → FX / Insert 1). C'est lui que FLmake remplace par l'instru.\n"
-            "4. Fichier → Enregistrer sous… (ex. « Modèle FLmake.flp »), puis choisis ce fichier ici."), parent=root)
+            "3. Playlist : nomme la piste du haut « INSTRU » et relie-la à l'insert 1 ; la piste « VOICE » à l'insert 2. "
+            "FLmake pose l'instru tout seul au début de la piste INSTRU (sans nom, il prend la piste du haut).\n"
+            "4. Fichier → Enregistrer sous… (ex. « MODEL FL.flp »), puis choisis ce fichier ici.\n\n"
+            "Chaque projet est ensuite enregistré dans son propre dossier, au nom de la prod."), parent=root)
     ttk.Button(r, text="Choisir…", command=pick_tpl).pack(side="left", padx=(8, 0))
     ttk.Button(r, text="Comment le créer ?", command=help_tpl).pack(side="left", padx=(8, 0))
     ttk.Label(cf2, textvariable=tpl_state, style="CardMuted.TLabel", wraplength=700).pack(anchor="w", pady=(6, 0))
@@ -455,7 +456,13 @@ def manager_window(selftest=False):
         if sel and projs.exists(sel[0]):
             projs.selection_set(sel[0])
         res = FM.last_result()
-        last_var.set(f"Dernier passage du script dans FL : {'✓' if res[1] else '✗'} {res[2]}" if res else "")
+        if res:
+            last_var.set(f"Dernier passage du script dans FL : {'✓' if res[1] else '✗'} {res[2]}")
+        elif FM.script_installed():
+            last_var.set("Le script n'a encore jamais tourné dans FL : sans lui, la clé de Graillon n'est pas réglée. "
+                         "Active-le une fois (« Comment l'activer ? » : loopMIDI + Controller type « Melofinds FLmake »).")
+        else:
+            last_var.set("")
     check_tpl()
 
     # --- Dossier & réglages
