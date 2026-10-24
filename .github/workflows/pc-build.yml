@@ -60,7 +60,7 @@ jobs:
         run: |
           pyinstaller --noconfirm --onedir --noconsole --noupx --name MelofindsPC `
             --icon pc/assets/melofinds.ico --version-file build/version_info.txt `
-            --paths pc --hidden-import mf_gui --hidden-import mf_flmake pc/melofinds_pc.py
+            --paths pc --hidden-import mf_gui --hidden-import mf_flmake --hidden-import mf_library pc/melofinds_pc.py
           Get-ChildItem dist\MelofindsPC | Select-Object Name, Length
 
       - name: Outils inclus (yt-dlp, ffmpeg, Deno), empreintes vérifiées

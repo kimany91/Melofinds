@@ -2596,6 +2596,9 @@ function listenPc() {
     const id = String(m.v || '');
     if (!/^[\w-]{11}$/.test(id)) return;
     const cur = pc.queue[id] || { t: id, at: (d.time || 0) * 1000 };
+    // Réponse à un envoi plus ancien (relue au rechargement de la page) : on l'ignore,
+    // sinon une vieille réponse « téléchargée » validerait un nouvel envoi pas encore fait.
+    if (cur.lastSent && (d.time || 0) * 1000 < cur.lastSent - 5000) return;
     if (cur.state === 'done' && !m.ok) return;
     const was = cur.state;
     pc.queue[id] = { ...cur, state: m.ok ? 'done' : 'error', file: m.file ? String(m.file) : cur.file, err: m.err ? String(m.err) : null };
@@ -2604,7 +2607,8 @@ function listenPc() {
     savePc();
     syncPcUi();
     if (fresh && was !== pc.queue[id].state) {
-      toast(m.ok ? `Sur ton PC : ${displayTitle(cur.t)}` : `Le PC n’a pas pu télécharger : ${String(m.err || '').slice(0, 80)}`);
+      toast(m.ok ? (m.deja ? `Déjà sur ton PC : ${String(m.file || displayTitle(cur.t)).slice(0, 80)}` : `Sur ton PC : ${displayTitle(cur.t)}`)
+        : `Le PC n’a pas pu télécharger : ${String(m.err || '').slice(0, 80)}`);
     }
   };
   es.onerror = () => { /* EventSource se reconnecte tout seul */ };
@@ -2620,7 +2624,7 @@ async function sendToPc(item) {
   // Le PC nomme le fichier « Titre [Clé, BPM].wav » (sans « free ») ; il relit aussi la description.
   // Licence → étiquette du fichier sur le PC : [FFP], [F] ou [FFP, UPTO 5000]
   const msg = { v: id, t: String(item.title || '').slice(0, 200), bpm: r?.bpm || null, key: r?.key || null, lic: r?.license?.category || null, limit: r?.license?.limit || null, force: pc.queue[id]?.state === 'error' || undefined };
-  pc.queue[id] = { t: item.title || id, at: Date.now(), state: 'sending', msg };
+  pc.queue[id] = { t: item.title || id, at: Date.now(), lastSent: Date.now(), state: 'sending', msg };
   syncPcUi();
   try {
     await ntfyPublish(msg);

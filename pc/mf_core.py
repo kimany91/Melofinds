@@ -31,7 +31,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.3.1"
+VERSION = "3.4.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -91,6 +91,7 @@ class Paths:
         self.config, self.state, self.log = b / "config.json", b / "state.json", b / "melofinds.log"
         self.heartbeat, self.lock, self.pid, self.stop = b / "heartbeat", b / "worker.lock", b / "worker.pid", b / "stop"
         self.tools = b / "tools"
+        self.progress = b / "progress.json"  # téléchargement en cours (affiché par le panneau)
         return self
 
 
@@ -210,6 +211,21 @@ def load_state():
     st.setdefault("history", [])
     st.setdefault("devices", {})
     return st
+
+
+def received_file(st, cfg, vid, root):
+    """Fichier .wav déjà reçu pour cette vidéo, s'il est encore dans le dossier (en suivant
+    les renommages faits depuis le panneau). None sinon : il faut la retélécharger."""
+    name = (st.get("files") or {}).get(vid)
+    renamed = cfg.get("renamed") or {}
+    for _ in range(50):
+        if not name:
+            return None
+        p = Path(root) / name
+        if p.is_file():
+            return p
+        name = renamed.get(name)
+    return None
 
 
 def save_state(st):
@@ -511,6 +527,30 @@ def run_tool(args, timeout):
                           creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
 
 
+def stream_tool(args, timeout, on_line):
+    """Lance un outil et passe chaque ligne de sortie à on_line (progression en direct).
+    Renvoie (code de sortie, dernières lignes)."""
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=tool_env(),
+                            creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
+    timer = threading.Timer(timeout, proc.kill)
+    timer.start()
+    tail = []
+    try:
+        for raw in iter(proc.stdout.readline, b""):
+            line = decode(raw).strip()
+            if not line:
+                continue
+            on_line(line)
+            if "MFPCT" not in line:
+                tail = (tail + [line])[-20:]
+        proc.wait()
+    finally:
+        timer.cancel()
+        if proc.poll() is None:
+            proc.kill()
+    return proc.returncode, tail
+
+
 def update_ytdlp():
     exe = P.tools / "yt-dlp.exe"
     if exe.exists():
@@ -562,7 +602,10 @@ def last_line(b):
     return (lines[-1] if lines else "erreur inconnue")[:200]
 
 
-def download(video_id, root, info, out=None):
+def download(video_id, root, info, out=None, progress=None):
+    """Télécharge la prod en .wav dans root. progress(étape, pourcentage) : « info »,
+    « download » (0-100), « convert »."""
+    step = progress or (lambda *_: None)
     ytdlp = tool_path("yt-dlp.exe")
     ffmpeg = tool_path("ffmpeg.exe")
     if not ytdlp:
@@ -570,6 +613,7 @@ def download(video_id, root, info, out=None):
     if not ffmpeg:
         return False, "ffmpeg manquant : impossible de faire un WAV"
     url = f"https://www.youtube.com/watch?v={video_id}"
+    step("info", None)
 
     # 1) Infos : on refuse les vidéos trop longues et les directs.
     try:
@@ -593,17 +637,28 @@ def download(video_id, root, info, out=None):
 
     # 2) Téléchargement + conversion dans un dossier temporaire, hors de ton dossier.
     with tempfile.TemporaryDirectory(prefix="melofinds-") as tmp:
-        args = [ytdlp, "--no-playlist", "--no-warnings", "--no-progress", "--no-mtime",
+        args = [ytdlp, "--no-playlist", "--no-warnings", "--progress", "--newline", "--no-mtime",
+                "--progress-template", "download:MFPCT %(progress._percent_str)s",
                 "-f", "bestaudio/best", "-x", "--audio-format", "wav",
                 "--ffmpeg-location", str(Path(ffmpeg).parent),
                 "--max-filesize", "200M", "-P", f"home:{tmp}", "-P", f"temp:{tmp}",
                 "-o", "audio.%(ext)s", url]
+        step("download", 0)
+
+        def on_line(line):
+            m = re.search(r"MFPCT\s*([\d.]+)%", line)
+            if m:
+                step("download", min(100.0, float(m.group(1))))
+            elif "[ExtractAudio]" in line or "Destination:" in line and line.endswith(".wav"):
+                step("convert", None)
         try:
-            r = run_tool(args, 900)
+            code, tail = stream_tool(args, 900, on_line)
         except (OSError, subprocess.SubprocessError) as e:
             return False, f"yt-dlp : {e}"
-        if r.returncode != 0:
-            return False, last_line(r.stderr)
+        if code != 0:
+            errs = [l for l in tail if "ERROR" in l]
+            return False, ((errs or tail or ["erreur inconnue"])[-1])[:200]
+        step("convert", None)
         wavs = [p for p in Path(tmp).iterdir() if p.suffix.lower() == ".wav" and is_wav(p)]
         if not wavs:
             return False, "la conversion en WAV a échoué"

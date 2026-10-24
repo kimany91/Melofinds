@@ -31,6 +31,27 @@ def _sleep(seconds):
         time.sleep(0.5)
 
 
+_last_progress = {"at": 0.0, "stage": None}
+
+
+def show_progress(p):
+    """Téléchargement en cours → progress.json (lu par le panneau). None = terminé.
+    Au plus ~4 écritures par seconde (sauf changement d'étape)."""
+    now = time.time()
+    if p is not None and p.get("stage") == _last_progress["stage"] and now - _last_progress["at"] < 0.25:
+        return
+    _last_progress.update(at=now, stage=p and p.get("stage"))
+    try:
+        if p is None:
+            P.progress.unlink(missing_ok=True)
+            return
+        tmp = P.progress.with_suffix(".tmp")
+        tmp.write_text(json.dumps({**p, "at": time.time()}, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(P.progress)
+    except OSError:
+        pass
+
+
 def _write_pid():
     try:
         P.pid.write_text(str(os.getpid()), encoding="utf-8")
@@ -137,8 +158,9 @@ def worker(once=False):
                     vid = str(msg.get("v") or "")
                     if not C.VIDEO_ID.match(vid):
                         continue
-                    if vid in done and not msg.get("force"):
-                        C.reply(code, {"v": vid, "ok": True, "deja": True})
+                    have = C.received_file(st, cfg, vid, root)
+                    if have and not msg.get("force"):
+                        C.reply(code, {"v": vid, "ok": True, "deja": True, "file": have.name})
                         continue
                     recent = [t for t in recent if t > time.time() - 3600]
                     if len(recent) >= C.MAX_PER_HOUR:
@@ -147,18 +169,29 @@ def worker(once=False):
                     recent.append(time.time())
                     log(f"Téléchargement ({d.get('name', '?')}) : {msg.get('t') or vid}")
                     got = {}
-                    ok, detail = C.download(vid, root, msg, got)
+                    title = C.clean_title(msg.get("t") or vid)
+                    left = sum(1 for e in events[events.index(ev) + 1:] if re.search(r'\\?"v\\?"\s*:', e.get("message") or ""))
+
+                    def progress(stage, pct, _t=title, _left=left):
+                        show_progress({"t": _t, "stage": stage, "pct": pct, "queue": _left})
+                    ok, detail = C.download(vid, root, msg, got, progress)
                     log(f"  {'OK' if ok else 'Erreur'} : {detail}")
                     flp = None
                     if ok:
                         done.add(vid)
+                        st.setdefault("files", {})[vid] = Path(got.get("path") or detail).name
+                        if len(st["files"]) > 3000:
+                            st["files"] = dict(list(st["files"].items())[-3000:])
                         # FLmake : projet FL prêt (BPM, instru, preset de voix) ; FL s'ouvre après le lot
+                        if FM.settings(cfg)["on"]:
+                            show_progress({"t": title, "stage": "flp", "pct": None, "queue": left})
                         out, flp = FM.maybe_make(got.get("path"), got.get("key"), got.get("bpm"), got.get("title"), cfg)
                         if out:
                             fl_last = (out, got.get("key"), got.get("bpm"))
                     st["history"].insert(0, {"t": C.clean_title(msg.get("t") or vid), "ok": ok, "detail": detail,
                                              "at": int(time.time()), "device": d.get("name", ""), **({"flp": flp} if flp else {})})
                     st["history"] = st["history"][:50]
+                    show_progress(None)
                     C.reply(code, {"v": vid, "ok": ok, "file" if ok else "err": detail})
                     if P.stop.exists():
                         break
@@ -177,7 +210,7 @@ def worker(once=False):
         for d in C.load_config()["devices"]:
             if d["code"] in announced:
                 C.reply(d["code"], {"pc": "offline", "version": C.VERSION})
-        for f in (P.heartbeat, P.pid, P.stop):
+        for f in (P.heartbeat, P.pid, P.stop, P.progress):
             try:
                 f.unlink(missing_ok=True)
             except OSError:

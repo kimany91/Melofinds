@@ -141,6 +141,24 @@ ouvre le site dans Chrome) :
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
+## Le panneau Melofinds PC
+
+Même style que Melofinds Web, avec un menu à gauche :
+
+- **Accueil** : en ligne / hors ligne, et la **barre de téléchargement** de la prod qui
+  arrive (recherche, téléchargement en %, conversion en WAV, projet FL, prods en attente),
+  puis les dernières prods reçues.
+- **Mes prods** : toutes les prods du dossier, avec leur projet FL, clé, BPM, licence et
+  date ; recherche, filtres (favoris, avec / sans projet FL), **favoris ★**, **ouvrir dans
+  FL** (crée le projet FLmake s'il manque), écouter, ouvrir le dossier, et **renommer** :
+  le .wav, le dossier du projet FL et tout ce qu'il contient prennent le nouveau nom, et
+  les chemins enregistrés dans les projets FL suivent (tout ou rien : en cas de problème,
+  tout est remis comme avant). Le PC ne retélécharge pas une prod renommée.
+- **FLmake**, **Appareils**, **Réglages**.
+
+Une prod déjà reçue n'est « déjà sur ton PC » que si son fichier y est encore : supprimée
+ou déplacée, elle est retéléchargée quand tu la renvoies.
+
 ## FLmake : un projet FL Studio prêt pour chaque prod (Melofinds PC)
 
 Onglet **FLmake** du panneau Melofinds PC. Une fois activé, pour chaque prod reçue :
