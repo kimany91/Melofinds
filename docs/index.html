@@ -205,6 +205,14 @@ select { height: 36px; border-radius: 11px; border: 1px solid var(--line); backg
 .bpm-pop { flex-basis: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; color: var(--muted); animation: rise .3s var(--ease) both; }
 .bpm-pop input { width: 74px; height: 34px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--panel); text-align: center; font: 700 14px var(--f-mono); outline: none; }
 .bpm-pop input:focus { border-color: var(--accent); }
+.dur-pop .tool-pill { height: 32px; }
+.dur-pop input.bad { border-color: var(--paid); }
+/* Valeurs trouvées avec Tunebat : en bleu */
+.tb { color: var(--fnp) !important; }
+.cover-bpm.tb { color: #93c5fd !important; text-shadow: 0 1px 8px rgba(37, 99, 235, .55); }
+.cover-meta small.tb { color: #93c5fd !important; }
+.fact.tb { border-color: color-mix(in srgb, var(--fnp) 55%, transparent); background: color-mix(in srgb, var(--fnp) 12%, var(--panel)); }
+.fact.tb small { color: var(--fnp); font-weight: 600; }
 .count { margin: 2px 0 16px; font-size: 13px; color: var(--faint); }
 
 /* ============ Grille de prods ============ */
@@ -780,9 +788,21 @@ body.mobile .mini-rec { padding: 9px; }
             <option value="pertinence">Pertinence</option>
             <option value="bpm-asc">BPM croissant</option>
             <option value="bpm-desc">BPM décroissant</option>
+            <option value="duree-desc">Plus longues</option>
+            <option value="duree-asc">Plus courtes</option>
           </select>
           <button type="button" class="tool-pill" id="verifiedPill" aria-pressed="false" title="Cacher les prods dont la description n’a pas pu être lue">Vérifiées seulement</button>
           <button type="button" class="tool-pill" id="bpmPill" aria-expanded="false">BPM</button>
+          <button type="button" class="tool-pill" id="durPill" aria-expanded="false" title="Durée minimum">Durée</button>
+        </div>
+        <div class="bpm-pop dur-pop" id="durPop" hidden>
+          <span>Au moins</span>
+          <button type="button" class="tool-pill" data-dur="60">1:00+</button>
+          <button type="button" class="tool-pill" data-dur="120">2:00+</button>
+          <button type="button" class="tool-pill" data-dur="180">3:00+</button>
+          <span>ou</span>
+          <input type="text" id="durMin" inputmode="numeric" placeholder="2:20" aria-label="Durée minimum (minutes:secondes)">
+          <button type="button" class="link" id="durClear">Retirer</button>
         </div>
         <div class="bpm-pop" id="bpmPop" hidden>
           <span>Garder entre</span>
@@ -2899,6 +2919,92 @@ function displayTitle(title) {
 }
 
 
+// ===== src/core/tunebat.js =====
+// Tunebat : clé et BPM d'un morceau sorti sur Spotify. Beaucoup de beatmakers y sortent
+// aussi leurs prods (« NEMZZZ TYPE BEAT » par Nemzzz…). On ne garde un résultat que s'il
+// correspond vraiment à la vidéo : même beatmaker et titre proche, ou titre proche et
+// même durée (à 4 s près). Sinon rien : mieux vaut « BPM ? » qu'un faux BPM.
+
+const TB_SEARCH = 'https://api.tunebat.com/api/tracks/search?term=';
+
+const tbNorm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  .replace(/\$/g, 's').replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** Ressemblance de deux textes (coefficient de Dice sur les paires de lettres), 0 à 1. */
+function similarity(a, b) {
+  a = tbNorm(a).replace(/ /g, '');
+  b = tbNorm(b).replace(/ /g, '');
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  const pairs = new Map();
+  for (let i = 0; i < a.length - 1; i++) { const p = a.slice(i, i + 2); pairs.set(p, (pairs.get(p) || 0) + 1); }
+  let hit = 0;
+  for (let i = 0; i < b.length - 1; i++) {
+    const p = b.slice(i, i + 2);
+    const n = pairs.get(p) || 0;
+    if (n > 0) { pairs.set(p, n - 1); hit++; }
+  }
+  return (2 * hit) / (a.length + b.length - 2);
+}
+
+const NOISE = /\b(free|for profit|ffp|type beat|typebeat|instrumental|instru|beat|prod(?:uced)? by|prod\.?|\d{4}|hard|sad|dark|melodic|new|x)\b/gi;
+
+/** Nom de la prod : le texte entre guillemets (« "HAZE" »), sinon le titre nettoyé. */
+function beatName(title) {
+  const t = String(title || '');
+  const q = t.match(/["“”«»]([^"“”«»]{2,60})["“”«»]/) || t.match(/(?:^|\W)'([^']{2,40})'(?!\w)/);
+  if (q) return q[1].trim();
+  return t.replace(/[\[(【][^\])】]*[\])】]/g, ' ').replace(NOISE, ' ').replace(/[|\-–—:]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+/** Recherches à faire sur Tunebat (2 au plus : Tunebat limite le nombre de requêtes). */
+function tbQueries({ title, channel }) {
+  const name = beatName(title);
+  const ch = String(channel || '').replace(/\s*(beats?|prod|music|- topic)$/i, '').trim();
+  const out = [];
+  for (const q of [name && ch ? `${name} ${ch}` : '', name, String(title || '').replace(/[\[(【][^\])】]*[\])】]/g, ' ').trim()]) {
+    const k = tbNorm(q);
+    if (k.length >= 3 && !out.some((x) => tbNorm(x) === k)) out.push(q.trim());
+  }
+  return out.slice(0, 2);
+}
+
+/** Clé Tunebat (« A♯ minor », « D Major », « Bb minor ») → « A# min » / « D maj ». */
+function tbKey(k) {
+  const m = String(k || '').replace(/♯/g, '#').replace(/♭/g, 'b').match(/^\s*([A-Ga-g])\s*(#|b)?\s*(major|minor|maj|min)/i);
+  if (!m) return null;
+  return `${m[1].toUpperCase()}${m[2] || ''} ${m[3].toLowerCase().startsWith('maj') ? 'maj' : 'min'}`;
+}
+
+/** Choisit le résultat Tunebat qui correspond à la vidéo, ou null. */
+function tbPick(items, { title, channel, duration }) {
+  const name = beatName(title);
+  const ch = tbNorm(channel);
+  let best = null;
+  for (const it of Array.isArray(items) ? items : []) {
+    if (!it || typeof it !== 'object') continue;
+    const n = String(it.n || '');
+    const artists = Array.isArray(it.as) ? it.as.map(String) : [];
+    const nameScore = Math.max(similarity(n, name), similarity(n, title), name && tbNorm(n).includes(tbNorm(name)) && tbNorm(name).length >= 4 ? 0.8 : 0);
+    const artistOk = !!ch && artists.some((a) => {
+      const an = tbNorm(a);
+      return an.length >= 3 && (similarity(an, ch) >= 0.8 || ch.includes(an) || an.includes(ch));
+    });
+    const d = Number(it.d) / 1000;
+    const durOk = Number(duration) > 0 && d > 0 && Math.abs(d - Number(duration)) <= 4;
+    const ok = (artistOk && nameScore >= 0.6) || (durOk && nameScore >= 0.5) || (artistOk && durOk);
+    if (!ok) continue;
+    const bpm = Math.round(Number(it.b));
+    const key = tbKey(it.k);
+    if (!(bpm >= 50 && bpm <= 220) && !key) continue;
+    const score = nameScore + (artistOk ? 1 : 0) + (durOk ? 1 : 0);
+    if (!best || score > best.score) best = { score, bpm: bpm >= 50 && bpm <= 220 ? bpm : null, key, name: n, artists };
+  }
+  return best && { bpm: best.bpm, key: best.key, name: best.name, artists: best.artists };
+}
+
+
 // ===== src/youtube/demo.js =====
 // Source « démo » : prods FICTIVES pour essayer l'interface sans accès à
 // YouTube (pas de clé, réseau bloqué…). Les descriptions reprennent les
@@ -3207,10 +3313,52 @@ async function copyText(text) {
 }
 
 // Analyse (avec cache par prod)
+// Tunebat : BPM / clé manquants, cherchés sur Tunebat (morceaux sortis sur Spotify).
+// Ce qui vient de Tunebat s'affiche en bleu. Résultats gardés dans ce navigateur.
+const tbCache = (() => { const c = local.get('tbCache', {}); return c && typeof c === 'object' ? c : {}; })();
+function tbFor(id) {
+  const t = tbCache[id];
+  return t && (t.bpm || t.key) ? t : null;
+}
+function tbStore(id, t) {
+  tbCache[id] = t;
+  const ids = Object.keys(tbCache);
+  if (ids.length > 800) for (const k of ids.slice(0, ids.length - 800)) delete tbCache[k];
+  local.set('tbCache', tbCache);
+}
+async function tbLookup(item) {
+  if (!WEB || !item?.id || tbCache[item.id] || tbLookup.busy?.has(item.id)) return;
+  (tbLookup.busy ||= new Set()).add(item.id);
+  try {
+    for (const q of tbQueries({ title: item.title, channel: item.channel })) {
+      const res = await fetch(TB_SEARCH + encodeURIComponent(q), { headers: { accept: 'application/json' } });
+      if (!res.ok) throw new Error(`tunebat ${res.status}`);
+      const pick = tbPick((await res.json())?.data?.items, { title: item.title, channel: item.channel, duration: item.duration });
+      if (pick) {
+        tbStore(item.id, { bpm: pick.bpm, key: pick.key, at: Date.now() });
+        refreshItem(item);
+        return;
+      }
+    }
+    tbStore(item.id, { none: true, at: Date.now() });
+  } catch {
+    tbStore(item.id, { fail: true, at: Date.now() }); // Tunebat injoignable d'ici : le PC essaiera au téléchargement
+  } finally { tbLookup.busy.delete(item.id); }
+}
+function refreshItem(item) {
+  if (session?.items?.has(item.id)) renderResults();
+  if ($('#drawer').classList.contains('open') && $('#drawer').dataset.item === item.id) openBeat(item, session?.plan || null);
+}
+
 function analyzed(item, plan) {
-  const key = `${(item.description || '').length}|${item.title}|${plan ? 1 : 0}`;
+  const tb = tbFor(item.id);
+  const key = `${(item.description || '').length}|${item.title}|${plan ? 1 : 0}|${tb ? `${tb.bpm}/${tb.key}` : ''}`;
   if (item._r && item._key === key) return item._r;
   const r = analyzeVideo({ id: item.id, title: item.title, description: item.description || '', foundBy: item.foundBy }, plan || null);
+  if (tb) {
+    if (!r.bpm && tb.bpm) { r.bpm = tb.bpm; r.bpmTb = true; }
+    if (!r.key && tb.key) { r.key = tb.key; r.keyTb = true; }
+  }
   Object.defineProperty(item, '_r', { value: r, writable: true, enumerable: false, configurable: true });
   Object.defineProperty(item, '_key', { value: key, writable: true, enumerable: false, configurable: true });
   return r;
@@ -3263,15 +3411,15 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
     h('span', { class: 'lic-chip' }, chipLabel(L)),
     item.status === 'unread' ? h('span', { class: 'unread-chip' }, 'non vérifiée') : null,
     h('span', { class: 'play' }, icon('play'), icon('pause'), h('span', { class: 'eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'))),
-    h('span', { class: 'cover-meta' }, style, r.key ? h('small', {}, r.key) : null),
-    r.bpm ? h('span', { class: 'cover-bpm' }, r.bpm, h('small', {}, 'BPM')) : h('span', { class: 'cover-bpm none' }, 'BPM ?')));
+    h('span', { class: 'cover-meta' }, style, r.key ? h('small', { class: r.keyTb ? 'tb' : null, title: r.keyTb ? 'Trouvé avec Tunebat' : null }, r.key) : null),
+    r.bpm ? h('span', { class: `cover-bpm${r.bpmTb ? ' tb' : ''}`, title: r.bpmTb ? 'Trouvé avec Tunebat' : null }, r.bpm, h('small', {}, r.bpmTb ? 'BPM · TB' : 'BPM')) : h('span', { class: 'cover-bpm none' }, 'BPM ?')));
   const heart = h('button', { type: 'button', class: `heart${isSaved(item.id) ? ' on' : ''}`, 'data-id': item.id, 'aria-label': 'Ajouter aux favoris', 'aria-pressed': String(isSaved(item.id)) }, icon('heart'));
   heart.addEventListener('click', (e) => { e.stopPropagation(); toggleSaved(item); });
   card.append(heart);
   const line = cardLine(item, r);
   const ratio = ratioOf(item);
   const tier = ratio == null ? '' : ratio >= 5 ? ' hi' : ratio >= 2.5 ? ' mid' : ' lo';
-  const meta = [item.views ? `${item.views} vues` : null, item.age].filter(Boolean).join(' · ');
+  const meta = [item.duration > 0 ? fmtTime(item.duration) : null, item.views ? `${item.views} vues` : null, item.age].filter(Boolean).join(' · ');
   const main = h('div', { class: 'card-main', role: 'button', tabindex: '0', 'aria-label': `Détails de ${item.title}` },
     h('h3', { class: 'title', title: item.title }, displayTitle(item.title)),
     line.text ? h('p', { class: `line${line.warn ? ' warn' : ''}` }, line.text) : null,
@@ -4352,6 +4500,7 @@ let drawerOnClose = null; // nettoyage du panneau ouvert (ex. arrêter un enregi
 function runDrawerCleanup() { const f = drawerOnClose; drawerOnClose = null; try { f?.(); } catch (e) { console.error(e); } }
 function openDrawer(title, nodes) {
   runDrawerCleanup();
+  delete $('#drawer').dataset.item;
   lastFocus = document.activeElement;
   $('#drawerTitle').textContent = title;
   $('#drawerBody').replaceChildren(...nodes.filter(Boolean));
@@ -4379,8 +4528,9 @@ function verdictBox(L, unread) {
 function beatDetails(item, r, terms = []) {
   const L = r.license;
   const facts = [
-    r.bpm ? h('span', { class: 'fact mono' }, `${r.bpm} BPM`) : null,
-    r.key ? h('span', { class: 'fact mono' }, r.key) : null,
+    r.bpm ? h('span', { class: `fact mono${r.bpmTb ? ' tb' : ''}`, title: r.bpmTb ? 'Trouvé avec Tunebat' : null }, `${r.bpm} BPM`, r.bpmTb ? h('small', {}, ' · Tunebat') : null) : null,
+    r.key ? h('span', { class: `fact mono${r.keyTb ? ' tb' : ''}`, title: r.keyTb ? 'Trouvé avec Tunebat' : null }, r.key, r.keyTb ? h('small', {}, ' · Tunebat') : null) : null,
+    item.duration > 0 ? h('span', { class: 'fact mono' }, fmtTime(item.duration)) : null,
     L.creditRequired ? h('span', { class: 'fact' }, 'Crédit obligatoire') : null,
     ...(r.styles || []).map((s) => h('span', { class: 'fact' }, s.label)),
   ].filter(Boolean);
@@ -4393,6 +4543,7 @@ function beatDetails(item, r, terms = []) {
 }
 function openBeat(item, plan) {
   const r = analyzed(item, plan);
+  if (!r.bpm || !r.key) tbLookup(item);
   const saveBtn = h('button', { type: 'button', class: `ghost${isSaved(item.id) ? ' on' : ''}` }, icon('heart'), isSaved(item.id) ? 'Dans tes favoris' : 'Ajouter aux favoris');
   saveBtn.addEventListener('click', () => {
     const on = toggleSaved(item);
@@ -4415,6 +4566,7 @@ function openBeat(item, plan) {
     ...beatDetails(item, r, findTerms()),
     claude,
   ]);
+  $('#drawer').dataset.item = item.id; // pour l'actualiser quand Tunebat répond
 }
 
 // ---------------------------------------------------------------------------
@@ -4537,6 +4689,21 @@ function ageFrom(iso) {
   return `il y a ${y} an${y > 1 ? 's' : ''}`;
 }
 
+// « PT2M20S » → 140 (secondes)
+function isoDuration(s) {
+  const m = String(s || '').match(/^P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+  return m ? (+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0) : 0;
+}
+// « 2:20 », « 2m20 », « 140 » (secondes si > 10, sinon minutes) → secondes
+function parseMinDur(text) {
+  const t = String(text || '').trim().toLowerCase().replace(',', '.');
+  let m = t.match(/^(\d{1,2})\s*[:mh']\s*(\d{1,2})?\s*s?$/);
+  if (m) return Math.min(3600, +m[1] * 60 + (+m[2] || 0));
+  m = t.match(/^(\d+(?:\.\d+)?)$/);
+  if (m) { const v = +m[1]; return Math.round(v > 10 ? v : v * 60); }
+  return null;
+}
+
 async function webSearch(queries, add, before) {
   // Sans clé : Piped. Avec une clé YouTube : l'API officielle (description complète + likes).
   if (!ytKey()) return pipedSearch(queries, add, before);
@@ -4564,7 +4731,7 @@ async function webSearch(queries, add, before) {
   await pool(chunk(pending, 50), 4, async (batch) => {
     let found = new Map();
     try {
-      const b = await ytApi('videos', { part: 'snippet,statistics', id: batch.map((i) => i.id).join(','), maxResults: '50' });
+      const b = await ytApi('videos', { part: 'snippet,statistics,contentDetails', id: batch.map((i) => i.id).join(','), maxResults: '50' });
       found = new Map((b.items || []).map((v) => [v.id, v]));
     } catch (e) { if (errorKind(e)) throw e; }
     for (const item of batch) {
@@ -4574,6 +4741,9 @@ async function webSearch(queries, add, before) {
         item.description = String(v.snippet?.description || '').slice(0, DESC_MAX);
         applyStats(item, { views: parseCount(v.statistics?.viewCount), likes: parseCount(v.statistics?.likeCount) });
         item.age = ageFrom(v.snippet?.publishedAt);
+        const dur = isoDuration(v.contentDetails?.duration);
+        if (dur > 0) item.duration = dur;
+        if (v.snippet?.channelTitle) item.channel = String(v.snippet.channelTitle).slice(0, 80);
         item.status = 'done';
       } else item.status = 'unread';
       read++;
@@ -4698,6 +4868,8 @@ async function pipedSearch(queries, add, before) {
           if (!id || it.type !== 'stream' || it.isShort) continue;
           add({ id, title: it.title || '', views: it.views }, q, it.shortDescription || '');
           const cur = session.items.get(id);
+          if (cur && it.duration > 0) cur.duration = it.duration;
+          if (cur && it.uploaderName) cur.channel = String(it.uploaderName).slice(0, 80);
           if (cur && cur.status === 'pending') {
             if (it.views >= 0) { cur.viewCount = it.views; cur.views = fmtViews(it.views); }
             if (it.uploaded > 0) cur.age = ageFrom(new Date(it.uploaded).toISOString());
@@ -5164,6 +5336,10 @@ function sortRows(rows, how) {
     const key = (r) => { const x = ratioOf(r._item); const v = r._item.viewCount ?? parseCount(r._item.views) ?? 0; return x == null ? -2 : v < 300 ? -1 + x / 1000 : x; };
     return [...rows].sort((a, b) => key(b) - key(a) || b.score - a.score);
   }
+  if (how === 'duree-desc' || how === 'duree-asc') {
+    const d = (r) => (r._item.duration > 0 ? r._item.duration : null);
+    return [...rows].sort((a, b) => (d(a) == null) - (d(b) == null) || (how === 'duree-desc' ? d(b) - d(a) : d(a) - d(b)) || b.score - a.score);
+  }
   if (how === 'vues') {
     const v = (r) => r._item.viewCount ?? parseCount(r._item.views) ?? -1;
     return [...rows].sort((a, b) => v(b) - v(a) || b.score - a.score);
@@ -5197,7 +5373,9 @@ function renderResults() {
     text,
     bpm: bpm ? { enabled: true, min: bpm.min, max: bpm.max, requireBpm: false } : undefined,
   });
-  const shown = searchPrefs.verifiedOnly ? filtered.filter((r) => r._item.status !== 'unread') : filtered;
+  const minDur = Number(searchPrefs.minDur) || 0;
+  const byDur = minDur ? filtered.filter((r) => !(r._item.duration > 0) || r._item.duration >= minDur) : filtered;
+  const shown = searchPrefs.verifiedOnly ? byDur.filter((r) => r._item.status !== 'unread') : byDur;
   const sorted = sortRows(shown, $('#sort').value);
   const pendingN = [...session.items.values()].filter((i) => i.status === 'pending').length;
   const hiddenN = rows.length - sorted.length;
@@ -5255,6 +5433,38 @@ $('#bpmPill').addEventListener('click', () => {
   searchPrefs.bpm = { min: Number($('#bpmMin').value) || null, max: Number($('#bpmMax').value) || null };
   local.set('searchPrefs', searchPrefs); syncBpmPill(); renderResults();
 }));
+// Durée minimum : 1:00+, 2:00+, 3:00+ ou une durée libre (« 2:20 »)
+function syncDurPill() {
+  const v = Number(searchPrefs.minDur) || 0;
+  $('#durPill').classList.toggle('on', !!v);
+  $('#durPill').textContent = v ? `${fmtTime(v)}+` : 'Durée';
+  $$('#durPop [data-dur]').forEach((b) => b.classList.toggle('on', Number(b.dataset.dur) === v));
+}
+function setMinDur(v) {
+  searchPrefs.minDur = v > 0 ? v : null;
+  local.set('searchPrefs', searchPrefs);
+  syncDurPill();
+  renderResults();
+}
+$('#durPill').addEventListener('click', () => {
+  const pop = $('#durPop');
+  pop.hidden = !pop.hidden;
+  $('#durPill').setAttribute('aria-expanded', String(!pop.hidden));
+  if (!pop.hidden) $('#durMin').value = searchPrefs.minDur ? fmtTime(searchPrefs.minDur) : '';
+});
+$$('#durPop [data-dur]').forEach((b) => b.addEventListener('click', () => { $('#durMin').value = fmtTime(Number(b.dataset.dur)); setMinDur(Number(b.dataset.dur)); }));
+$('#durMin').addEventListener('input', () => {
+  const v = parseMinDur($('#durMin').value);
+  $('#durMin').classList.toggle('bad', !!$('#durMin').value.trim() && v == null);
+  if (v != null || !$('#durMin').value.trim()) setMinDur(v || 0);
+});
+$('#durClear').addEventListener('click', () => {
+  $('#durPop').hidden = true;
+  $('#durPill').setAttribute('aria-expanded', 'false');
+  setMinDur(0);
+});
+syncDurPill();
+
 $('#bpmClear').addEventListener('click', () => {
   searchPrefs.bpm = null;
   $('#bpmPop').hidden = true;
@@ -5605,6 +5815,16 @@ function listenPc() {
     if (cur.lastSent && (d.time || 0) * 1000 < cur.lastSent - 5000) return;
     if (cur.state === 'done' && !m.ok) return;
     const was = cur.state;
+    // Ce que le PC a trouvé sur Tunebat (affiché en bleu dans l'app)
+    if (m.ok && m.tb && typeof m.tb === 'object') {
+      const bpm = Number(m.tb.bpm) >= 50 && Number(m.tb.bpm) <= 220 ? Math.round(Number(m.tb.bpm)) : null;
+      const key = /^[A-G][#b]? (min|maj)$/.test(String(m.tb.key || '')) ? String(m.tb.key) : null;
+      if (bpm || key) {
+        tbStore(id, { ...(tbFor(id) || {}), ...(bpm ? { bpm } : {}), ...(key ? { key } : {}), at: Date.now() });
+        const it = session?.items?.get(id);
+        if (it) refreshItem(it);
+      }
+    }
     pc.queue[id] = { ...cur, state: m.ok ? 'done' : 'error', file: m.file ? String(m.file) : cur.file, err: m.err ? String(m.err) : null };
     pc.info = { ...(pc.info || {}), at: Math.max(pc.info?.at || 0, (d.time || 0) * 1000) };
     local.set('pcInfo', pc.info);
@@ -5627,7 +5847,8 @@ async function sendToPc(item) {
   try { r = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
   // Le PC nomme le fichier « Titre [Clé, BPM].wav » (sans « free ») ; il relit aussi la description.
   // Licence → étiquette du fichier sur le PC : [FFP], [F] ou [FFP, UPTO 5000]
-  const msg = { v: id, t: String(item.title || '').slice(0, 200), bpm: r?.bpm || null, key: r?.key || null, lic: r?.license?.category || null, limit: r?.license?.limit || null, force: pc.queue[id]?.state === 'error' || undefined };
+  const msg = { v: id, t: String(item.title || '').slice(0, 200), bpm: r?.bpm || null, key: r?.key || null, tbBpm: r?.bpmTb || undefined, tbKey: r?.keyTb || undefined,
+    lic: r?.license?.category || null, limit: r?.license?.limit || null, force: pc.queue[id]?.state === 'error' || undefined };
   pc.queue[id] = { t: item.title || id, at: Date.now(), lastSent: Date.now(), state: 'sending', msg };
   syncPcUi();
   try {

@@ -69,6 +69,8 @@ def selftest(out):
             ok, detail = C.download(vid, d, {}, None, lambda st, pct: seen.update({st: max(seen.get(st) or 0, pct or 0)}))
             res["download"] = {"ok": ok, "detail": detail, "progress": seen,
                                "files": [str(x.relative_to(d)) for x in Path(d).rglob("*")]}
+    # Tunebat (informatif) : une prod connue, sortie sur Spotify par son beatmaker
+    res["tunebat"] = C.tunebat_lookup("NEMZZZ TYPE BEAT", "Nemzzz", 173) or "rien / injoignable"
     res["glyphs_missing"] = missing_glyphs()
     try:
         import mf_gui as G

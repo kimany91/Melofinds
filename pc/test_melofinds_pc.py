@@ -511,3 +511,64 @@ class StyleDesProjets(MesProjetsFL):
         it = self.project()
         self.assertIn(it.extra["color"], L.PALETTE)
         self.assertEqual(it.extra["icon"], L.ICONS[0])
+
+
+class Tunebat(unittest.TestCase):
+    """Clé / BPM trouvés avec Tunebat : bon morceau seulement, marqués [TB …] dans le nom."""
+    ITEMS = [
+        {"n": "COLD", "as": ["Nemzzz"], "d": 160000, "k": "A♯ minor", "b": 142},
+        {"n": "NEMZZZ TYPE BEAT", "as": ["Nemzzz"], "d": 173000, "k": "D major", "b": 145},
+        {"n": "Haze", "as": ["Kxvi Beats"], "d": 151000, "k": "C♯ Minor", "b": 150.2},
+        {"n": "Haze", "as": ["Someone Else"], "d": 200000, "k": "E minor", "b": 90},
+    ]
+
+    def test_meme_choix_que_l_app_web(self):
+        self.assertEqual(mpc.beat_name('[FREE] Lucki Type Beat "Haze" | Free For Profit'), "Haze")
+        self.assertEqual(mpc.beat_name("Don't Stop Type Beat 'Nuit'"), "Nuit")
+        self.assertEqual(mpc.tb_queries('[FREE] Lucki Type Beat "Haze"', "Kxvi Beats"), ["Haze Kxvi", "Haze"])
+        self.assertEqual([mpc.tb_key("A♯ minor"), mpc.tb_key("D Major"), mpc.tb_key("B♭ minor"), mpc.tb_key("???")],
+                         ["A# min", "D maj", "Bb min", None])
+        p = mpc.tb_pick(self.ITEMS, 'Lucki Type Beat "Haze"', "Kxvi Beats", 152)
+        self.assertEqual((p["key"], p["bpm"]), ("C# min", 150))
+        self.assertIsNone(mpc.tb_pick([self.ITEMS[3]], 'Lucki Type Beat "Haze"', "Kxvi Beats", 152))
+        self.assertEqual(mpc.tb_pick(self.ITEMS, "NEMZZZ TYPE BEAT", "", 175)["bpm"], 145)
+        self.assertIsNone(mpc.tb_pick(self.ITEMS, 'Pop Smoke Type Beat "Dior"', "Random", 120))
+        self.assertIsNone(mpc.tb_pick("pas une liste", "x", "", 0))
+        # valeurs bizarres renvoyées par le site : ignorées
+        self.assertIsNone(mpc.tb_pick([{"n": "Haze", "as": ["Kxvi"], "d": 151000, "k": "<script>", "b": "abc"}], '"Haze"', "Kxvi", 151))
+
+    def test_nom_avec_tb(self):
+        t = '[FREE] Lucki Type Beat "Haze"'
+        self.assertEqual(mpc.build_name(t, "C# min", 150, "ffp", tb_key=True, tb_bpm=True), "Lucki Type Beat 'Haze' [TB C# min, 150 BPM] [FFP]")
+        self.assertEqual(mpc.build_name(t, "C# min", 150, tb_bpm=True), "Lucki Type Beat 'Haze' [C# min] [TB 150 BPM]")
+        self.assertEqual(mpc.build_name(t, "C# min", None, tb_key=True), "Lucki Type Beat 'Haze' [TB C# min]")
+        self.assertEqual(mpc.build_name(t, "C# min", 150), "Lucki Type Beat 'Haze' [C# min, 150 BPM]")
+        self.assertNotIn("free", mpc.build_name(t, "C# min", 150, "fnp", tb_key=True).lower())
+
+    def test_priorite(self):
+        self.assertEqual(mpc.pick_value("C min", False, "D min"), ("C min", False))   # précisée dans l'app
+        self.assertEqual(mpc.pick_value("C min", True, "D min"), ("D min", False))    # description > Tunebat
+        self.assertEqual(mpc.pick_value("C min", True, None), ("C min", True))        # Tunebat (téléphone)
+        self.assertEqual(mpc.pick_value(None, True, None), (None, False))
+
+    def test_lecture_du_nom(self):
+        r = L.parse_name_tb("Haze [C# min] [TB 150 BPM] [FFP]")
+        self.assertEqual(r, ("Haze", "[C# min] [TB 150 BPM] [FFP]", "C# min", 150, "FFP", {"bpm"}))
+        self.assertEqual(L.parse_name_tb("Haze [TB C# min, 150 BPM]")[5], {"key", "bpm"})
+        self.assertEqual(L.parse_name("Haze [TB C# min, 150 BPM] [F]"), ("Haze", "[TB C# min, 150 BPM] [F]", "C# min", 150, "F"))
+        self.assertEqual(L.parse_name_tb("Haze [TB toto]")[:2], ("Haze [TB toto]", ""))
+
+    def test_renommer_garde_le_tb(self):
+        d = Path(tempfile.mkdtemp(prefix="mf-tb-"))
+        mpc.P.set(d / "prog")
+        root = d / "Projets FL"
+        root.mkdir()
+        mpc.save_config({"dossier": str(root), "devices": [], "flmake": {"on": False, "dossier": str(root)}})
+        name = "Haze [TB C# min, 150 BPM]"
+        wav = mpc.unique_project(root, name)
+        wav.parent.mkdir()
+        wav.write_bytes(fake_wav(1))
+        it = next(x for x in L.scan_projects() if x.name == name)
+        self.assertEqual((it.key, it.bpm, it.extra["tb"]), ("C# min", 150, {"key", "bpm"}))
+        self.assertEqual(L.rename(it, "Brume"), "Brume [TB C# min, 150 BPM]")
+        self.assertTrue((root / "Brume [TB C# min, 150 BPM]" / "Brume [TB C# min, 150 BPM].wav").exists())

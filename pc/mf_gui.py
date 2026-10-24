@@ -24,6 +24,7 @@ from mf_core import P
 BG, BG2, PANEL, PANEL2, PANEL3 = "#0b0c10", "#101217", "#15171d", "#1b1e26", "#242833"
 LINE, LINE2 = "#23262f", "#323745"
 FG, MUTED, FAINT = "#f3f4f7", "#a0a6b6", "#6e7487"
+TB_BLUE = "#60a5fa"  # clé / BPM trouvés avec Tunebat (comme dans l'app web)
 ACCENT, ACCENT2, PINK = "#a78bfa", "#8b5cf6", "#ec4899"
 GREEN, AMBER, RED, BLUE = "#34d399", "#fbbf24", "#f87171", "#60a5fa"
 FONT = "Segoe UI" if C.WINDOWS else "DejaVu Sans"
@@ -115,7 +116,7 @@ def read_progress():
 
 
 STAGES = {"info": "Recherche de la vidéo…", "download": "Téléchargement", "convert": "Conversion en WAV…",
-          "flp": "Création du projet FL…"}
+          "tunebat": "Clé / BPM manquants : recherche sur Tunebat…", "flp": "Création du projet FL…"}
 
 
 # ---------------------------------------------------------------------------
@@ -585,7 +586,9 @@ def manager_window(selftest=False):
                  wraplength=CARD_W - 34, justify="left", anchor="w").pack(fill="x", pady=(10, 6))
         chips = tk.Frame(inner, bg=bgc)
         chips.pack(fill="x")
-        for txt, col in ((it.key, FG), (f"{it.bpm} BPM" if it.bpm else "", FG), (it.lic, LIC_COLORS.get(it.lic.split(",")[0], AMBER) if it.lic else FG)):
+        tb = it.extra.get("tb") or ()
+        for txt, col in ((it.key, TB_BLUE if "key" in tb else FG), (f"{it.bpm} BPM" if it.bpm else "", TB_BLUE if "bpm" in tb else FG),
+                         (it.lic, LIC_COLORS.get(it.lic.split(",")[0], AMBER) if it.lic else FG)):
             if txt:
                 tk.Label(chips, text=txt, bg=PANEL3 if not on else blend(color, PANEL3, 0.18), fg=col, font=(MONO, 8, "bold"),
                          padx=7, pady=2).pack(side="left", padx=(0, 6))

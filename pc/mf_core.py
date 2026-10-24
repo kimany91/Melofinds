@@ -31,7 +31,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.6.0"
+VERSION = "3.7.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -378,16 +378,144 @@ def licence_tag(lic, limit=None):
     return None  # payant / inconnu : pas d'étiquette
 
 
-def build_name(title, key=None, bpm=None, lic=None, limit=None):
-    tags = [x for x in (key, f"{bpm} BPM" if bpm else None) if x]
+def build_name(title, key=None, bpm=None, lic=None, limit=None, tb_key=False, tb_bpm=False):
+    """« Titre [C# min, 150 BPM] [FFP] ». Ce que Tunebat a trouvé va dans son propre groupe :
+    « Titre [C# min] [TB 150 BPM] », « Titre [TB C# min, 150 BPM] »."""
+    own = [x for x, tb in ((key, tb_key), (f"{bpm} BPM" if bpm else None, tb_bpm)) if x and not tb]
+    found = [x for x, tb in ((key, tb_key), (f"{bpm} BPM" if bpm else None, tb_bpm)) if x and tb]
     base = clean_title(title)[:110].rstrip(" -,.")
-    name = f"{base} [{', '.join(tags)}]" if tags else base
+    name = f"{base} [{', '.join(own)}]" if own else base
+    if found:
+        name = f"{name} [TB {', '.join(found)}]"
     lt = licence_tag(lic, limit)
     if lt:
         name = f"{name} [{lt}]"
     if re.fullmatch(r"(?i)(con|prn|aux|nul|com\d|lpt\d)(\s.*)?", name):
         name = f"Prod {name}"
     return name.rstrip(" .") or "Prod"
+
+
+# ---------------------------------------------------------------------------
+# Tunebat : clé et BPM des prods sorties sur Spotify (même logique que l'app web,
+# src/core/tunebat.js). On ne garde un résultat que s'il correspond vraiment à la vidéo.
+
+TB_SEARCH = "https://api.tunebat.com/api/tracks/search?term="
+
+
+def tb_norm(s):
+    s = unicodedata.normalize("NFD", str(s or ""))
+    s = "".join(c for c in s if not unicodedata.combining(c)).lower().replace("$", "s")
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()
+
+
+def similarity(a, b):
+    """Ressemblance de deux textes (coefficient de Dice sur les paires de lettres), 0 à 1."""
+    a, b = tb_norm(a).replace(" ", ""), tb_norm(b).replace(" ", "")
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    if len(a) < 2 or len(b) < 2:
+        return 0.0
+    pairs = {}
+    for i in range(len(a) - 1):
+        pairs[a[i:i + 2]] = pairs.get(a[i:i + 2], 0) + 1
+    hit = 0
+    for i in range(len(b) - 1):
+        p = b[i:i + 2]
+        if pairs.get(p, 0) > 0:
+            pairs[p] -= 1
+            hit += 1
+    return 2 * hit / (len(a) + len(b) - 2)
+
+
+_TB_NOISE = re.compile(r"\b(free|for profit|ffp|type beat|typebeat|instrumental|instru|beat|prod(?:uced)? by|prod\.?|\d{4}|hard|sad|dark|melodic|new|x)\b", re.I)
+_TB_BRACKETS = re.compile(r"[\[(【][^\])】]*[\])】]")
+
+
+def beat_name(title):
+    """Nom de la prod : le texte entre guillemets (« "HAZE" »), sinon le titre nettoyé."""
+    t = str(title or "")
+    m = re.search(r'["“”«»]([^"“”«»]{2,60})["“”«»]', t) or re.search(r"(?:^|\W)'([^']{2,40})'(?!\w)", t)
+    if m:
+        return m.group(1).strip()
+    t = _TB_NOISE.sub(" ", _TB_BRACKETS.sub(" ", t))
+    return re.sub(r"\s{2,}", " ", re.sub(r"[|\-–—:]+", " ", t)).strip()
+
+
+def tb_queries(title, channel):
+    """Recherches à faire sur Tunebat (2 au plus : Tunebat limite le nombre de requêtes)."""
+    name = beat_name(title)
+    ch = re.sub(r"(?i)\s*(beats?|prod|music|- topic)$", "", str(channel or "")).strip()
+    out = []
+    for q in (f"{name} {ch}" if name and ch else "", name, _TB_BRACKETS.sub(" ", str(title or "")).strip()):
+        k = tb_norm(q)
+        if len(k) >= 3 and all(tb_norm(x) != k for x in out):
+            out.append(q.strip())
+    return out[:2]
+
+
+def tb_key(k):
+    """Clé Tunebat (« A♯ minor », « D Major ») → « A# min » / « D maj »."""
+    m = re.match(r"^\s*([A-Ga-g])\s*(#|b)?\s*(major|minor|maj|min)", str(k or "").replace("♯", "#").replace("♭", "b"), re.I)
+    if not m:
+        return None
+    return f"{m.group(1).upper()}{m.group(2) or ''} {'maj' if m.group(3).lower().startswith('maj') else 'min'}"
+
+
+def tb_pick(items, title, channel, duration):
+    """Choisit le résultat Tunebat qui correspond à la vidéo, ou None (jamais de faux BPM)."""
+    name, ch = beat_name(title), tb_norm(channel)
+    try:
+        dur = float(duration or 0)
+    except (TypeError, ValueError):
+        dur = 0.0
+    best = None
+    for it in items if isinstance(items, list) else []:
+        if not isinstance(it, dict):
+            continue
+        n = str(it.get("n") or "")
+        artists = [str(a) for a in it.get("as")] if isinstance(it.get("as"), list) else []
+        contains = 0.8 if name and len(tb_norm(name)) >= 4 and tb_norm(name) in tb_norm(n) else 0
+        score_name = max(similarity(n, name), similarity(n, title), contains)
+        artist_ok = bool(ch) and any(len(tb_norm(a)) >= 3 and (similarity(a, ch) >= 0.8 or tb_norm(a) in ch or ch in tb_norm(a)) for a in artists)
+        try:
+            d = float(it.get("d") or 0) / 1000
+        except (TypeError, ValueError):
+            d = 0.0
+        dur_ok = dur > 0 and d > 0 and abs(d - dur) <= 4
+        if not ((artist_ok and score_name >= 0.6) or (dur_ok and score_name >= 0.5) or (artist_ok and dur_ok)):
+            continue
+        try:
+            bpm = valid_bpm(round(float(it.get("b"))))
+        except (TypeError, ValueError, OverflowError):
+            bpm = None
+        key = valid_key(tb_key(it.get("k")))
+        if not bpm and not key:
+            continue
+        score = score_name + artist_ok + dur_ok
+        if not best or score > best[0]:
+            best = (score, {"bpm": bpm, "key": key, "name": n, "artists": artists})
+    return best[1] if best else None
+
+
+def tunebat_lookup(title, channel, duration, timeout=10):
+    """Cherche la clé et le BPM sur Tunebat. Renvoie {"bpm", "key"} ou None (rien / hors ligne)."""
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36",
+               "Accept": "application/json", "Origin": "https://tunebat.com", "Referer": "https://tunebat.com/"}
+    for q in tb_queries(title, channel):
+        try:
+            req = urllib.request.Request(TB_SEARCH + urllib.parse.quote(q), headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                data = json.loads(res.read(2_000_000).decode("utf-8", "replace"))
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            log(f"Tunebat injoignable ({str(e)[:80]}).")
+            return None
+        items = (data.get("data") or {}).get("items") if isinstance(data, dict) else None
+        hit = tb_pick(items, title, channel, duration)
+        if hit:
+            return {"bpm": hit["bpm"], "key": hit["key"]}
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -645,6 +773,16 @@ def last_line(b):
     return (lines[-1] if lines else "erreur inconnue")[:200]
 
 
+def pick_value(sent, sent_tb, desc):
+    """Valeur à garder → (valeur, trouvée avec Tunebat ?). Priorité : ce que l'app a envoyé
+    (sauf si ça vient de Tunebat), puis la description complète, puis Tunebat."""
+    if sent and not sent_tb:
+        return sent, False
+    if desc:
+        return desc, False
+    return sent, bool(sent)
+
+
 def download(video_id, root, info, out=None, progress=None):
     """Télécharge la prod en .wav dans root. progress(étape, pourcentage) : « info »,
     « download » (0-100), « convert »."""
@@ -672,10 +810,19 @@ def download(video_id, root, info, out=None, progress=None):
     if meta.get("is_live") or (meta.get("duration") or 0) > MAX_DURATION:
         return False, "vidéo trop longue ou en direct (15 min max)"
     desc = meta.get("description") or ""
-    key = valid_key(info.get("key")) or find_key(meta.get("title") or "", desc)
-    bpm = valid_bpm(info.get("bpm")) or find_bpm(meta.get("title") or "", desc)
+    vt = meta.get("title") or ""
+    # Clé / BPM : ceux que tu as donnés, sinon la description, sinon Tunebat (marqués [TB …]).
+    key, tb_k = pick_value(valid_key(info.get("key")), bool(info.get("tbKey")), find_key(vt, desc))
+    bpm, tb_b = pick_value(valid_bpm(info.get("bpm")), bool(info.get("tbBpm")), find_bpm(vt, desc))
+    if not key or not bpm:
+        step("tunebat", None)
+        hit = tunebat_lookup(vt or info.get("t") or "", meta.get("uploader") or meta.get("channel") or "", meta.get("duration"))
+        if hit and not key and hit.get("key"):
+            key, tb_k = hit["key"], True
+        if hit and not bpm and hit.get("bpm"):
+            bpm, tb_b = hit["bpm"], True
     # Chaque prod arrive dans son propre dossier de projet : « Nom/Nom.wav »
-    final = unique_project(root, build_name(meta.get("title") or info.get("t") or video_id, key, bpm, info.get("lic"), info.get("limit")))
+    final = unique_project(root, build_name(vt or info.get("t") or video_id, key, bpm, info.get("lic"), info.get("limit"), tb_k, tb_b))
     if not inside(final, root) or final.suffix.lower() != ".wav" or final.parent.parent.resolve() != Path(root).resolve():
         return False, "nom de fichier refusé"
 
@@ -717,7 +864,8 @@ def download(video_id, root, info, out=None, progress=None):
             pass
         return False, "fichier non WAV supprimé"
     if out is not None:  # pour FLmake
-        out.update(path=str(final), key=key, bpm=bpm, title=clean_title(meta.get("title") or info.get("t") or video_id))
+        out.update(path=str(final), key=key, bpm=bpm, title=clean_title(meta.get("title") or info.get("t") or video_id),
+                   tb={k: v for k, v in (("key", key if tb_k else None), ("bpm", bpm if tb_b else None)) if v})
     return True, final.name
 
 

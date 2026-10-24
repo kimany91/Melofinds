@@ -192,7 +192,7 @@ def worker(once=False):
                                              "at": int(time.time()), "device": d.get("name", ""), **({"flp": flp} if flp else {})})
                     st["history"] = st["history"][:50]
                     show_progress(None)
-                    C.reply(code, {"v": vid, "ok": ok, "file" if ok else "err": detail})
+                    C.reply(code, {"v": vid, "ok": ok, "file" if ok else "err": detail, **({"tb": got["tb"]} if ok and got.get("tb") else {})})
                     if P.stop.exists():
                         break
             if fl_last:

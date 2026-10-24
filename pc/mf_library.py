@@ -54,7 +54,12 @@ class Prod:
 
 def parse_name(name):
     """« Titre [C# min, 150 BPM] [FFP] (2) » → (titre, suffixe, clé, bpm, licence)."""
-    rest, groups = name, []
+    return parse_name_tb(name)[:5]
+
+
+def parse_name_tb(name):
+    """Comme parse_name, plus ce qui a été trouvé avec Tunebat (« [TB 150 BPM] ») : {"key", "bpm"}."""
+    rest, groups, tb = name, [], set()
     while True:
         m = TAIL_RE.search(rest)
         if not m or m.start() == 0:
@@ -70,17 +75,24 @@ def parse_name(name):
             lic = inner
             keep.append(g)
             continue
-        parts = [p.strip() for p in inner.split(",")]
+        found = inner[:3] == "TB "
+        parts = [p.strip() for p in (inner[3:] if found else inner).split(",")]
         if parts and all(KEY_RE.match(p) or BPM_RE.match(p) for p in parts):
             for p in parts:
                 if BPM_RE.match(p):
                     bpm = int(BPM_RE.match(p).group(1))
+                    tb.discard("bpm")
+                    if found:
+                        tb.add("bpm")
                 else:
                     key = p
+                    tb.discard("key")
+                    if found:
+                        tb.add("key")
             keep.append(g)
         else:
             rest = f"{rest} {g}"  # crochets qui font partie du titre
-    return rest.strip(), " ".join(keep), key, bpm, lic
+    return rest.strip(), " ".join(keep), key, bpm, lic, tb
 
 
 def clean_new_title(text):
@@ -140,8 +152,9 @@ def scan(cfg=None):
     items = {}
 
     def make(name):
-        title, suffix, key, bpm, lic = parse_name(name)
-        return Prod(id=name.lower(), name=name, title=title or name, suffix=suffix, key=key, bpm=bpm, lic=lic)
+        title, suffix, key, bpm, lic, tb = parse_name_tb(name)
+        return Prod(id=name.lower(), name=name, title=title or name, suffix=suffix, key=key, bpm=bpm, lic=lic,
+                    extra={"tb": tb} if tb else {})
 
     try:
         wavs = [p for p in root.glob("*.wav") if p.is_file()]
@@ -231,9 +244,9 @@ def scan_projects(cfg=None):
                 continue
         except OSError:
             continue
-        title, suffix, key, bpm, lic = parse_name(name)
+        title, suffix, key, bpm, lic, tb = parse_name_tb(name)
         it = Prod(id=f"p:{name.lower()}", name=name, title=title or name, suffix=suffix, key=key, bpm=bpm, lic=lic,
-                  flp=flp, folder=sub, kind="project")
+                  flp=flp, folder=sub, kind="project", extra={"tb": tb} if tb else {})
         try:
             files = [p for p in sub.rglob("*") if p.is_file()] if sub else [flp]
             it.date = max((p.stat().st_mtime for p in files), default=0.0)

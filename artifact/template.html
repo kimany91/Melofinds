@@ -74,9 +74,21 @@
             <option value="pertinence">Pertinence</option>
             <option value="bpm-asc">BPM croissant</option>
             <option value="bpm-desc">BPM décroissant</option>
+            <option value="duree-desc">Plus longues</option>
+            <option value="duree-asc">Plus courtes</option>
           </select>
           <button type="button" class="tool-pill" id="verifiedPill" aria-pressed="false" title="Cacher les prods dont la description n’a pas pu être lue">Vérifiées seulement</button>
           <button type="button" class="tool-pill" id="bpmPill" aria-expanded="false">BPM</button>
+          <button type="button" class="tool-pill" id="durPill" aria-expanded="false" title="Durée minimum">Durée</button>
+        </div>
+        <div class="bpm-pop dur-pop" id="durPop" hidden>
+          <span>Au moins</span>
+          <button type="button" class="tool-pill" data-dur="60">1:00+</button>
+          <button type="button" class="tool-pill" data-dur="120">2:00+</button>
+          <button type="button" class="tool-pill" data-dur="180">3:00+</button>
+          <span>ou</span>
+          <input type="text" id="durMin" inputmode="numeric" placeholder="2:20" aria-label="Durée minimum (minutes:secondes)">
+          <button type="button" class="link" id="durClear">Retirer</button>
         </div>
         <div class="bpm-pop" id="bpmPop" hidden>
           <span>Garder entre</span>

@@ -36,6 +36,12 @@ si tu peux vraiment sortir ton son sur Spotify sans payer.
 4. **Range et filtre** : cases de licences, limite « Up to » minimum, crédit
    obligatoire, tri/filtre **BPM** (à activer), style de rap, et **recherche dans
    les descriptions** (`spotify`, `wav`, `"free for profit"`, `-lease` pour exclure).
+   **Durée minimum** (bouton « Durée ») : 1:00+, 2:00+, 3:00+ ou ta propre durée (`2:20`) ;
+   tri « Plus longues » / « Plus courtes ».
+   **Tunebat** : quand une prod n'a pas de BPM ou de clé, l'app les cherche sur
+   [Tunebat](https://tunebat.com) (prods sorties sur Spotify par leur beatmaker) et
+   les affiche **en bleu** (« · Tunebat » / « BPM · TB »). Un résultat n'est gardé que
+   s'il colle vraiment (même beatmaker, titre proche ou même durée) : jamais de faux BPM.
 5. **S'adapte à l'appareil** : sur mobile, recherche plus légère (moins de requêtes
    et de données), mise en page compacte, ouverture dans l'appli YouTube. Sur PC,
    recherche plus complète, grille de cartes et lecteur intégré.
@@ -128,6 +134,10 @@ ouvre le site dans Chrome) :
 - Nom du fichier : `Titre [Clé, BPM] [Licence].wav`, avec la licence lue par l'app :
   `[FFP]` (free for profit), `[F]` (free) ou `[FFP, UPTO 5000]` ; le titre YouTube est
   nettoyé de ses « FREE », « free for profit », « FFP »…
+- Clé ou BPM manquants : le PC les cherche sur Tunebat et les range à part dans le nom :
+  `Titre [C# min] [TB 150 BPM] [FFP].wav`, `Titre [TB C# min, 150 BPM].wav`. Ce que tu as
+  précisé ou ce que dit la description passe toujours avant Tunebat. FLmake utilise aussi
+  ces valeurs (BPM du projet, clé de Graillon) et le panneau les affiche en bleu.
 - Sécurité : envois signés (HMAC-SHA256, clé qui ne passe jamais par ntfy) ; un envoi ne
   contient qu'un identifiant de vidéo ; seul un vrai .wav entre dans l'unique dossier
   choisi sur le PC ; 15 min max par vidéo, 40 par heure, envois de plus de 48 h refusés.
@@ -233,6 +243,7 @@ src/core/license.js    lecture des descriptions → catégorie de licence, titre
 src/core/planner.js    description → ambiances → courants → artistes → requêtes
 src/core/genres.js     base de connaissances (courants, artistes US, BPM)
 src/core/bpm.js        BPM et tonalité
+src/core/tunebat.js    clé / BPM manquants via Tunebat (choix strict du bon morceau)
 src/core/filter.js     filtres, tris, recherche dans les descriptions
 src/search.js          orchestration de la recherche
 src/youtube/           sources : API officielle, pages YouTube, démo

@@ -1,0 +1,83 @@
+// Tunebat : clé et BPM d'un morceau sorti sur Spotify. Beaucoup de beatmakers y sortent
+// aussi leurs prods (« NEMZZZ TYPE BEAT » par Nemzzz…). On ne garde un résultat que s'il
+// correspond vraiment à la vidéo : même beatmaker et titre proche, ou titre proche et
+// même durée (à 4 s près). Sinon rien : mieux vaut « BPM ? » qu'un faux BPM.
+
+export const TB_SEARCH = 'https://api.tunebat.com/api/tracks/search?term=';
+
+export const tbNorm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  .replace(/\$/g, 's').replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** Ressemblance de deux textes (coefficient de Dice sur les paires de lettres), 0 à 1. */
+export function similarity(a, b) {
+  a = tbNorm(a).replace(/ /g, '');
+  b = tbNorm(b).replace(/ /g, '');
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  const pairs = new Map();
+  for (let i = 0; i < a.length - 1; i++) { const p = a.slice(i, i + 2); pairs.set(p, (pairs.get(p) || 0) + 1); }
+  let hit = 0;
+  for (let i = 0; i < b.length - 1; i++) {
+    const p = b.slice(i, i + 2);
+    const n = pairs.get(p) || 0;
+    if (n > 0) { pairs.set(p, n - 1); hit++; }
+  }
+  return (2 * hit) / (a.length + b.length - 2);
+}
+
+const NOISE = /\b(free|for profit|ffp|type beat|typebeat|instrumental|instru|beat|prod(?:uced)? by|prod\.?|\d{4}|hard|sad|dark|melodic|new|x)\b/gi;
+
+/** Nom de la prod : le texte entre guillemets (« "HAZE" »), sinon le titre nettoyé. */
+export function beatName(title) {
+  const t = String(title || '');
+  const q = t.match(/["“”«»]([^"“”«»]{2,60})["“”«»]/) || t.match(/(?:^|\W)'([^']{2,40})'(?!\w)/);
+  if (q) return q[1].trim();
+  return t.replace(/[\[(【][^\])】]*[\])】]/g, ' ').replace(NOISE, ' ').replace(/[|\-–—:]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+/** Recherches à faire sur Tunebat (2 au plus : Tunebat limite le nombre de requêtes). */
+export function tbQueries({ title, channel }) {
+  const name = beatName(title);
+  const ch = String(channel || '').replace(/\s*(beats?|prod|music|- topic)$/i, '').trim();
+  const out = [];
+  for (const q of [name && ch ? `${name} ${ch}` : '', name, String(title || '').replace(/[\[(【][^\])】]*[\])】]/g, ' ').trim()]) {
+    const k = tbNorm(q);
+    if (k.length >= 3 && !out.some((x) => tbNorm(x) === k)) out.push(q.trim());
+  }
+  return out.slice(0, 2);
+}
+
+/** Clé Tunebat (« A♯ minor », « D Major », « Bb minor ») → « A# min » / « D maj ». */
+export function tbKey(k) {
+  const m = String(k || '').replace(/♯/g, '#').replace(/♭/g, 'b').match(/^\s*([A-Ga-g])\s*(#|b)?\s*(major|minor|maj|min)/i);
+  if (!m) return null;
+  return `${m[1].toUpperCase()}${m[2] || ''} ${m[3].toLowerCase().startsWith('maj') ? 'maj' : 'min'}`;
+}
+
+/** Choisit le résultat Tunebat qui correspond à la vidéo, ou null. */
+export function tbPick(items, { title, channel, duration }) {
+  const name = beatName(title);
+  const ch = tbNorm(channel);
+  let best = null;
+  for (const it of Array.isArray(items) ? items : []) {
+    if (!it || typeof it !== 'object') continue;
+    const n = String(it.n || '');
+    const artists = Array.isArray(it.as) ? it.as.map(String) : [];
+    const nameScore = Math.max(similarity(n, name), similarity(n, title), name && tbNorm(n).includes(tbNorm(name)) && tbNorm(name).length >= 4 ? 0.8 : 0);
+    const artistOk = !!ch && artists.some((a) => {
+      const an = tbNorm(a);
+      return an.length >= 3 && (similarity(an, ch) >= 0.8 || ch.includes(an) || an.includes(ch));
+    });
+    const d = Number(it.d) / 1000;
+    const durOk = Number(duration) > 0 && d > 0 && Math.abs(d - Number(duration)) <= 4;
+    const ok = (artistOk && nameScore >= 0.6) || (durOk && nameScore >= 0.5) || (artistOk && durOk);
+    if (!ok) continue;
+    const bpm = Math.round(Number(it.b));
+    const key = tbKey(it.k);
+    if (!(bpm >= 50 && bpm <= 220) && !key) continue;
+    const score = nameScore + (artistOk ? 1 : 0) + (durOk ? 1 : 0);
+    if (!best || score > best.score) best = { score, bpm: bpm >= 50 && bpm <= 220 ? bpm : null, key, name: n, artists };
+  }
+  return best && { bpm: best.bpm, key: best.key, name: best.name, artists: best.artists };
+}
