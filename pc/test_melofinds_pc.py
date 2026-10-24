@@ -451,3 +451,39 @@ class MesProds(unittest.TestCase):
         self.wav.unlink()
         self.assertIsNone(mpc.received_file(st, self.cfg, "jNQXAC9IVRw", self.beats))
         self.assertIsNone(mpc.received_file({}, self.cfg, "jNQXAC9IVRw", self.beats))
+
+
+class MesProjetsFL(MesProds):
+    """La page « Mes projets FL » : les projets du dossier des projets, pas les prods."""
+
+    def test_liste_des_projets(self):
+        perso = self.d / "Projets FL" / "Mon son perso"
+        perso.mkdir()
+        (perso / "Mon son perso.flp").write_bytes(fake_flp())
+        (self.d / "Projets FL" / "Vieux projet.flp").write_bytes(fake_flp())
+        items = L.scan_projects()
+        self.assertEqual(sorted(i.name for i in items), sorted([self.name, "Mon son perso", "Vieux projet"]))
+        it = next(i for i in items if i.name == self.name)
+        self.assertEqual((it.kind, it.key, it.bpm, it.extra["instru"], it.extra["files"]), ("project", "C# min", 150, "Lucki Type Beat - 'Haze'", 3))
+        self.assertIsNone(it.wav)  # la prod n'appartient pas au projet : jamais renommée avec lui
+        self.assertIsNone(next(i for i in items if i.name == "Vieux projet").folder)
+
+    def test_favori_projet(self):
+        it = L.scan_projects()[0]
+        L.toggle_fav(it)
+        self.assertTrue(L.scan_projects()[0].fav)
+        self.assertEqual(mpc.load_config().get("fav_projects"), [it.id])
+        self.assertFalse(any(i.fav for i in L.scan()))  # favoris des prods séparés
+
+    def test_renommer_projet_garde_la_prod(self):
+        it = L.scan_projects()[0]
+        L.toggle_fav(it)
+        new = L.rename(L.scan_projects()[0], "Session Haze")
+        self.assertEqual(new, "Session Haze [C# min, 150 BPM] [FFP]")
+        folder = self.d / "Projets FL" / new
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), sorted([f"{new}.flp", f"{new} (autosave).flp", f"{new}.mp3"]))
+        self.assertTrue(self.wav.exists())  # le .wav de la prod ne bouge pas
+        for f in folder.glob("*.flp"):
+            self.assertIn(str(self.wav.resolve()), L._flp_samples(f))
+        it2 = L.scan_projects()[0]
+        self.assertEqual((it2.name, it2.fav), (new, True))

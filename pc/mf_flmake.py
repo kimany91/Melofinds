@@ -741,9 +741,10 @@ def open_in_fl(flp, key=None, bpm=None, cfg=None):
         key, bpm = C.find_key(flp.stem), C.find_bpm(flp.stem)
     note, mode = split_key(C.valid_key(key))
     d, job, _ = job_files()
-    d.mkdir(parents=True, exist_ok=True)
-    job.write_text(f"id={int(time.time() * 1000):x}\ncreated={time.time():.0f}\nflp={flp}\nnote={note}\nmode={mode}\nbpm={C.valid_bpm(bpm) or ''}\n",
-                   encoding="utf-8")
+    if note:  # le script FL règle Graillon (et sauvegarde) seulement quand on connaît la clé
+        d.mkdir(parents=True, exist_ok=True)
+        job.write_text(f"id={int(time.time() * 1000):x}\ncreated={time.time():.0f}\nflp={flp}\nnote={note}\nmode={mode}\nbpm={C.valid_bpm(bpm) or ''}\n",
+                       encoding="utf-8")
     exe = fl_exe(fm)
     if not exe:
         raise FlpError("FL Studio introuvable : choisis FL64.exe dans Melofinds PC → FLmake")

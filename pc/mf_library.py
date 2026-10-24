@@ -43,7 +43,12 @@ class Prod:
     folder: Path | None = None   # dossier du projet FL (None pour un .flp seul)
     date: float = 0.0
     fav: bool = False
+    kind: str = "prod"           # « prod » (dossier des prods) ou « project » (projet FL)
     extra: dict = field(default_factory=dict)
+
+    @property
+    def fav_key(self):
+        return "fav_projects" if self.kind == "project" else "favs"
 
 
 def parse_name(name):
@@ -170,12 +175,44 @@ def scan(cfg=None):
     return sorted(items.values(), key=lambda i: i.date, reverse=True)
 
 
+AUDIO = (".wav", ".mp3", ".flac", ".ogg", ".aif", ".aiff", ".m4a")
+
+
+def scan_projects(cfg=None):
+    """Mes projets FL : chaque projet (dossier avec un .flp, ou .flp seul) du dossier des
+    projets choisi, les plus récemment modifiés d'abord."""
+    cfg = cfg if cfg is not None else C.load_config()
+    folder = Path(FM.settings(cfg)["dossier"])
+    favs = set(cfg.get("fav_projects") or [])
+    beats = str(Path(cfg.get("dossier") or C.default_folder()).resolve()).lower()
+    out = []
+    for flp, sub in _project_flps(folder):
+        name = sub.name if sub else flp.stem
+        title, suffix, key, bpm, lic = parse_name(name)
+        it = Prod(id=f"p:{name.lower()}", name=name, title=title or name, suffix=suffix, key=key, bpm=bpm, lic=lic,
+                  flp=flp, folder=sub, kind="project")
+        try:
+            flps = [p for p in sub.glob("*.flp")] if sub else [flp]
+            it.date = max(p.stat().st_mtime for p in flps)
+            it.extra["files"] = sum(1 for p in sub.rglob("*") if p.is_file()) if sub else 1
+        except (OSError, ValueError):
+            it.date = 0.0
+        sounds = [s for s in _flp_samples(flp) if s and not s.startswith("%") and s.lower().endswith(AUDIO)]
+        sounds.sort(key=lambda s: str(Path(s).parent).lower() != beats)  # l'instru (dossier des prods) d'abord
+        if sounds:
+            it.extra["instru"] = parse_name(Path(sounds[0]).stem)[0] or Path(sounds[0]).stem
+            it.extra["instru_path"] = Path(sounds[0])
+        it.fav = it.id in favs
+        out.append(it)
+    return sorted(out, key=lambda i: i.date, reverse=True)
+
+
 def toggle_fav(item, cfg=None):
     cfg = cfg if cfg is not None else C.load_config()
-    favs = [f for f in (cfg.get("favs") or []) if f != item.id]
+    favs = [f for f in (cfg.get(item.fav_key) or []) if f != item.id]
     if not item.fav:
         favs.insert(0, item.id)
-    cfg["favs"] = favs[:2000]
+    cfg[item.fav_key] = favs[:2000]
     C.save_config(cfg)
     item.fav = not item.fav
     return item.fav
@@ -357,9 +394,10 @@ def rename(item, new_title, cfg=None):
                 pass
         raise LibError(f"renommage annulé : {e}") from e
     # Favori, suivi des fichiers reçus (le PC ne retélécharge pas une prod renommée)
-    favs = cfg.get("favs") or []
+    favs = cfg.get(item.fav_key) or []
     if item.id in favs:
-        cfg["favs"] = [new.lower() if f == item.id else f for f in favs]
+        new_id = f"p:{new.lower()}" if item.kind == "project" else new.lower()
+        cfg[item.fav_key] = [new_id if f == item.id else f for f in favs]
     if plan["wav"]:
         ren = cfg.get("renamed") or {}
         ren[plan["wav"][0].name] = plan["wav"][1].name

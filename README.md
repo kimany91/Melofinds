@@ -148,12 +148,13 @@ Même style que Melofinds Web, avec un menu à gauche :
 - **Accueil** : en ligne / hors ligne, et la **barre de téléchargement** de la prod qui
   arrive (recherche, téléchargement en %, conversion en WAV, projet FL, prods en attente),
   puis les dernières prods reçues.
-- **Mes prods** : toutes les prods du dossier, avec leur projet FL, clé, BPM, licence et
-  date ; recherche, filtres (favoris, avec / sans projet FL), **favoris ★**, **ouvrir dans
-  FL** (crée le projet FLmake s'il manque), écouter, ouvrir le dossier, et **renommer** :
-  le .wav, le dossier du projet FL et tout ce qu'il contient prennent le nouveau nom, et
-  les chemins enregistrés dans les projets FL suivent (tout ou rien : en cas de problème,
-  tout est remis comme avant). Le PC ne retélécharge pas une prod renommée.
+- **Mes projets FL** : tous les projets FL du dossier des projets choisi (ceux de FLmake
+  et ceux que tu enregistres toi-même), avec clé, BPM, instru et date de modification ;
+  recherche, **favoris ★**, **ouvrir dans FL**, écouter l'instru, ouvrir le dossier, et
+  **renommer** : le dossier du projet et tous les fichiers qui portent son nom (projet,
+  sauvegardes, exports) prennent le nouveau nom, et les chemins enregistrés dans les projets
+  FL suivent (tout ou rien : en cas de problème, tout est remis comme avant). La prod
+  (.wav) n'est pas touchée.
 - **FLmake**, **Appareils**, **Réglages**.
 
 Une prod déjà reçue n'est « déjà sur ton PC » que si son fichier y est encore : supprimée

@@ -1,7 +1,7 @@
 """Melofinds PC — panneau de gestion (l'installation est faite par MelofindsSetup.exe).
 
 Même identité que Melofinds Web : anthracite profond, accent violet, chiffres en mono.
-Menu à gauche : Accueil (en ligne, téléchargement en cours), Mes prods, FLmake,
+Menu à gauche : Accueil (en ligne, téléchargement en cours), Mes projets FL, FLmake,
 Appareils, Réglages.
 """
 
@@ -344,7 +344,7 @@ def manager_window(selftest=False):
         t.configure(fg=FG if on else MUTED)
         g.configure(fg=ACCENT if on else FAINT)
 
-    for k, txt, gl in (("home", "Accueil", ""), ("prods", "Mes prods", ""), ("flmake", "FLmake", ""),
+    for k, txt, gl in (("home", "Accueil", ""), ("prods", "Mes projets FL", ""), ("flmake", "FLmake", ""),
                        ("devices", "Appareils", ""), ("settings", "Réglages", "")):
         nav_item(k, txt, gl)
 
@@ -437,7 +437,7 @@ def manager_window(selftest=False):
     rh = tk.Frame(recent, bg=PANEL)
     rh.pack(fill="x", pady=(0, 6))
     label(rh, "Dernières prods reçues", 11, bold=True).pack(side="left")
-    Btn(rh, "Voir toutes mes prods →", kind="subtle", command=lambda: show("prods"), padx=0).pack(side="right")
+    Btn(rh, "Voir mes projets FL →", kind="subtle", command=lambda: show("prods"), padx=0).pack(side="right")
     hist = ttk.Treeview(recent, columns=("ok", "prod", "quand"), show="", height=7, selectmode="none")
     hist.column("ok", width=34, anchor="center", stretch=False)
     hist.column("prod", width=560)
@@ -446,8 +446,31 @@ def manager_window(selftest=False):
     hist.tag_configure("ok", foreground=FG)
     hist.pack(fill="both", expand=True)
 
-    # ================= Mes prods
-    prods = page("prods", "Mes prods", "Toutes les prods de ton dossier, avec leur projet FL. Double-clic pour ouvrir dans FL.")
+    fdir_var = tk.StringVar()
+
+    # ================= Mes projets FL
+    prods = page("prods", "Mes projets FL", "Tous les projets FL de ton dossier des projets (FLmake et ceux que tu enregistres). "
+                                            "Double-clic pour ouvrir dans FL.")
+    fold = tk.Frame(prods, bg=BG)
+    fold.pack(fill="x", pady=(0, 10))
+    fold_lbl = label(fold, "", 9, FAINT, mono=True)
+    fold_lbl.pack(side="left")
+
+    def change_proj_dir():
+        cur = FM.settings()["dossier"]
+        p = filedialog.askdirectory(title="Dossier de tes projets FL", initialdir=cur, parent=root)
+        if p:
+            cfg = C.load_config()
+            fm = FM.settings(cfg)
+            fm["dossier"] = str(Path(p))
+            cfg["flmake"] = fm
+            C.save_config(cfg)
+            fdir_var.set(str(Path(p)))
+            load_prods(force=True)
+            toast("Dossier des projets FL changé")
+    Btn(fold, "Changer…", change_proj_dir, kind="subtle", padx=8, pady=0).pack(side="left", padx=(8, 0))
+    Btn(fold, "Ouvrir", lambda: _open_path(FM.settings()["dossier"]), kind="subtle", padx=0, pady=0).pack(side="left")
+
     bar = tk.Frame(prods, bg=BG)
     bar.pack(fill="x", pady=(0, 12))
     q_var = tk.StringVar()
@@ -458,8 +481,8 @@ def manager_window(selftest=False):
     seg = tk.Frame(bar, bg=PANEL2, padx=3, pady=3)
     seg.pack(side="left", padx=12)
     seg_btns = {}
-    for k, txt in (("all", "Toutes"), ("fav", "★ Favoris"), ("flp", "Avec projet FL"), ("noflp", "Sans projet")):
-        b = tk.Label(seg, text=txt, bg=PANEL2, fg=MUTED, font=(FONT, 9, "bold"), padx=10, pady=5, cursor="hand2")
+    for k, txt in (("all", "Tous"), ("fav", "★ Favoris")):
+        b = tk.Label(seg, text=txt, bg=PANEL2, fg=MUTED, font=(FONT, 9, "bold"), padx=12, pady=5, cursor="hand2")
         b.pack(side="left")
         b.bind("<Button-1>", lambda e, k=k: (filt.update(v=k), paint_seg(), fill_prods()))
         seg_btns[k] = b
@@ -473,13 +496,12 @@ def manager_window(selftest=False):
 
     listc = card(prods, padx=2, pady=2)
     listc.pack(fill="both", expand=True)
-    cols = (("fav", "", 34, "center"), ("name", "PROD", 220, "w"), ("key", "CLÉ", 70, "w"), ("bpm", "BPM", 52, "e"),
-            ("lic", "LICENCE", 118, "w"), ("flp", "PROJET FL", 78, "center"), ("date", "REÇUE", 100, "e"))
+    cols = (("fav", "", 34, "center"), ("name", "PROJET", 250, "w"), ("key", "CLÉ", 70, "w"), ("bpm", "BPM", 52, "e"),
+            ("instru", "INSTRU", 170, "w"), ("date", "MODIFIÉ", 100, "e"))
     tree = ttk.Treeview(listc, columns=[c[0] for c in cols], show="headings", selectmode="browse")
     for cid, txt, w, anchor in cols:
         tree.heading(cid, text=txt, anchor=anchor)
-        tree.column(cid, width=w, anchor=anchor, stretch=cid == "name")
-    tree.tag_configure("fav", foreground=FG)
+        tree.column(cid, width=w, anchor=anchor, stretch=cid in ("name", "instru"))
     tsb = ttk.Scrollbar(listc, orient="vertical", command=tree.yview, style="Dark.Vertical.TScrollbar")
     tree.configure(yscrollcommand=tsb.set)
     tsb.pack(side="right", fill="y")
@@ -488,13 +510,13 @@ def manager_window(selftest=False):
 
     acts = tk.Frame(prods, bg=BG)
     acts.pack(fill="x", pady=(12, 0))
-    sel_lbl = label(acts, "Choisis une prod dans la liste.", 10, MUTED)
+    sel_lbl = label(acts, "Choisis un projet dans la liste.", 10, MUTED)
     sel_lbl.pack(side="left")
     a_open = Btn(acts, "Ouvrir dans FL", kind="primary")
     a_ren = Btn(acts, "Renommer…")
     a_fav = Btn(acts, "☆ Favori")
     a_dir = Btn(acts, "Dossier")
-    a_play = Btn(acts, "▶ Écouter")
+    a_play = Btn(acts, "▶ Instru")
     for b in (a_play, a_dir, a_fav, a_ren, a_open):
         b.pack(side="right", padx=(8, 0))
 
@@ -507,24 +529,23 @@ def manager_window(selftest=False):
     def fill_prods():
         text = q_var.get().strip().lower()
         items = lib["items"]
-        f = filt["v"]
-        shown = [i for i in items if (not text or text in i.name.lower())
-                 and (f == "all" or (f == "fav" and i.fav) or (f == "flp" and i.flp) or (f == "noflp" and not i.flp))]
+        shown = [i for i in items if (not text or text in i.name.lower() or text in i.extra.get("instru", "").lower())
+                 and (filt["v"] == "all" or i.fav)]
         sel = tree.selection()
         tree.delete(*tree.get_children())
         for i in shown:
-            tree.insert("", "end", iid=i.id, tags=("fav",) if i.fav else (),
-                        values=("★" if i.fav else "☆", i.title, i.key or "—", i.bpm or "—", i.lic or "—",
-                                "✓" if i.flp else "—", _ago(i.date)))
+            tree.insert("", "end", iid=i.id, values=("★" if i.fav else "☆", i.title, i.key or "—", i.bpm or "—",
+                                                     i.extra.get("instru") or "—", _ago(i.date)))
         if sel and tree.exists(sel[0]):
             tree.selection_set(sel[0])
         n_fav = sum(1 for i in items if i.fav)
-        count_lbl.configure(text=f"{len(shown)} / {len(items)} prods · {n_fav} favori{'s' if n_fav > 1 else ''}")
+        count_lbl.configure(text=f"{len(shown)} / {len(items)} projet{'s' if len(items) > 1 else ''} · {n_fav} favori{'s' if n_fav > 1 else ''}")
         if not items:
-            empty_lbl.configure(text="Aucune prod pour l'instant. Envoie une prod depuis Melofinds Web (bouton ⬇ « Mon PC »).")
+            empty_lbl.configure(text="Aucun projet FL dans ce dossier pour l'instant. Active FLmake (un projet par prod reçue) "
+                                     "ou enregistre tes projets FL dans ce dossier.")
             empty_lbl.place(relx=0.5, rely=0.45, anchor="center")
         elif not shown:
-            empty_lbl.configure(text="Aucune prod ne correspond.")
+            empty_lbl.configure(text="Aucun projet ne correspond.")
             empty_lbl.place(relx=0.5, rely=0.45, anchor="center")
         else:
             empty_lbl.place_forget()
@@ -532,11 +553,12 @@ def manager_window(selftest=False):
         nav_items["prods"][4].configure(text=str(len(items)) if items else "")
 
     def load_prods(force=False):
+        fold_lbl.configure(text=f"Dossier : {FM.settings()['dossier']}")
         try:
-            items = L.scan()
+            items = L.scan_projects()
         except OSError:
             items = []
-        sig = [(i.id, i.name, i.fav, bool(i.flp), int(i.date)) for i in items]
+        sig = [(i.id, i.name, i.fav, int(i.date), i.extra.get("instru")) for i in items]
         if force or sig != lib["sig"]:
             lib.update(items=items, by_id={i.id: i for i in items}, sig=sig)
             fill_prods()
@@ -546,22 +568,22 @@ def manager_window(selftest=False):
         for b in (a_open, a_ren, a_fav, a_dir, a_play):
             b.set(enabled=bool(it))
         if not it:
-            sel_lbl.configure(text="Choisis une prod dans la liste.")
+            sel_lbl.configure(text="Choisis un projet dans la liste.")
             return
         a_fav.set(text="★ Favori" if it.fav else "☆ Favori")
-        a_open.set(text="Ouvrir dans FL" if it.flp else ("Créer le projet FL" if FM.settings()["template"] else "Ouvrir"))
-        a_play.set(enabled=bool(it.wav))
-        sel_lbl.configure(text=it.title[:60])
+        ip = it.extra.get("instru_path")
+        a_play.set(enabled=bool(ip and ip.is_file()))
+        files = it.extra.get("files")
+        sel_lbl.configure(text=f"{it.title[:48]}" + (f"  ·  {files} fichier{'s' if files > 1 else ''}" if files else ""))
 
     def do_open(it=None):
         it = it or selected()
         if not it:
             return
         try:
-            toast(L.open_item(it))
-        except (OSError, L.LibError, FM.FlpError) as e:
+            toast(FM.open_in_fl(it.flp, it.key or None, it.bpm))
+        except (OSError, FM.FlpError) as e:
             toast(f"Impossible d'ouvrir : {e}")
-        load_prods(force=True)
 
     def do_fav(it=None):
         it = it or selected()
@@ -572,26 +594,27 @@ def manager_window(selftest=False):
     def do_dir():
         it = selected()
         if it:
-            _open_path(it.folder or (it.flp.parent if it.flp else it.wav.parent))
+            _open_path(it.folder or it.flp.parent)
 
     def do_play():
         it = selected()
-        if it and it.wav:
-            _open_path(it.wav)
+        ip = it and it.extra.get("instru_path")
+        if ip and ip.is_file():
+            _open_path(ip)
 
     def do_rename():
         it = selected()
         if not it:
             return
         dlg = tk.Toplevel(root, bg=PANEL)
-        dlg.title("Renommer la prod")
+        dlg.title("Renommer le projet")
         dlg.transient(root)
         dlg.resizable(False, False)
         f = tk.Frame(dlg, bg=PANEL, padx=24, pady=20)
         f.pack(fill="both", expand=True)
-        label(f, "Renommer la prod", 14, bold=True).pack(anchor="w")
-        label(f, "Le .wav, le dossier du projet FL et tout ce qu'il contient prennent le nouveau nom ; "
-                 "les chemins enregistrés dans les projets FL suivent. La clé, le BPM et la licence restent.", 9, MUTED, wrap=460).pack(anchor="w", pady=(4, 14))
+        label(f, "Renommer le projet FL", 14, bold=True).pack(anchor="w")
+        label(f, "Le dossier du projet et tous les fichiers qui portent son nom (projet, sauvegardes, exports) prennent le "
+                 "nouveau nom ; les chemins enregistrés dans les projets FL suivent. La clé et le BPM restent.", 9, MUTED, wrap=460).pack(anchor="w", pady=(4, 14))
         v = tk.StringVar(value=it.title)
         e = entry(f, v, width=56)
         e.pack(fill="x", ipady=7)
@@ -610,14 +633,8 @@ def manager_window(selftest=False):
                 what.configure(text=str(ex))
                 return
             preview.configure(text=plan["new"])
-            parts = []
-            if plan["wav"]:
-                parts.append("le .wav")
-            if plan["folder"]:
-                parts.append(f"le dossier FL et {len(plan['files'])} fichier{'s' if len(plan['files']) > 1 else ''}")
-            elif plan["flp"]:
-                parts.append("le projet FL")
-            what.configure(text="Renommé : " + ", ".join(parts) if parts else "")
+            n = len(plan["files"])
+            what.configure(text=f"Renommé : le dossier et {n} fichier{'s' if n > 1 else ''}" if plan["folder"] else "Renommé : le projet")
         v.trace_add("write", upd)
         upd()
         row = tk.Frame(f, bg=PANEL)
@@ -630,11 +647,12 @@ def manager_window(selftest=False):
                 err.configure(text=str(ex))
                 return
             dlg.destroy()
-            toast(f"Renommée : {new}")
+            toast(f"Projet renommé : {new}")
             load_prods(force=True)
-            if tree.exists(new.lower()):
-                tree.selection_set(new.lower())
-                tree.see(new.lower())
+            nid = f"p:{new.lower()}"
+            if tree.exists(nid):
+                tree.selection_set(nid)
+                tree.see(nid)
         Btn(row, "Renommer", ok, kind="primary").pack(side="right")
         Btn(row, "Annuler", dlg.destroy).pack(side="right", padx=8)
         e.focus_set()
@@ -660,7 +678,7 @@ def manager_window(selftest=False):
     menu.add_command(label="Renommer…", command=do_rename)
     menu.add_command(label="Favori", command=do_fav)
     menu.add_separator()
-    menu.add_command(label="Écouter", command=do_play)
+    menu.add_command(label="Écouter l'instru", command=do_play)
     menu.add_command(label="Ouvrir le dossier", command=do_dir)
 
     def popup(e):
@@ -675,7 +693,7 @@ def manager_window(selftest=False):
         if q_var.get() or root.focus_get() == q:
             q_hint.place_forget()
         else:
-            q_hint.configure(text="Rechercher une prod…", bg=PANEL2)
+            q_hint.configure(text="Rechercher un projet…", bg=PANEL2)
             q_hint.place(x=8, rely=0.5, anchor="w")
     q.bind("<FocusIn>", q_placeholder)
     q.bind("<FocusOut>", q_placeholder)
@@ -762,7 +780,7 @@ def manager_window(selftest=False):
         tpl_state.configure(text=t["msg"], fg=GREEN if t["ok"] else RED)
     check_tpl()
 
-    fdir_var = tk.StringVar(value=fm0["dossier"])
+    fdir_var.set(fm0["dossier"])
 
     def pick_fdir():
         p = filedialog.askdirectory(title="Où enregistrer les projets FL ?", initialdir=fdir_var.get(), parent=root)
