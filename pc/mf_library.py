@@ -12,6 +12,7 @@
 import os
 import re
 import struct
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -177,6 +178,33 @@ def scan(cfg=None):
 
 AUDIO = (".wav", ".mp3", ".flac", ".ogg", ".aif", ".aiff", ".m4a")
 
+# Couleurs et icônes des projets (symboles simples, présents dans les polices Windows)
+PALETTE = ["#8b5cf6", "#ec4899", "#f87171", "#fb923c", "#fbbf24", "#a3e635",
+           "#34d399", "#2dd4bf", "#22d3ee", "#60a5fa", "#818cf8", "#9aa1b2"]
+ICONS = ["♪", "♫", "★", "♥", "⚡", "☀", "☾", "✦", "✿", "♛", "☁", "♠", "♦", "⚑", "☯", "☠", "⚔", "✈"]
+
+
+def style_of(item, cfg):
+    """Couleur et icône du projet : choisies dans le panneau, sinon une couleur tirée du nom
+    (toujours la même pour un projet) et la note ♪."""
+    st = (cfg.get("project_style") or {}).get(item.id) or {}
+    color = st.get("color") if st.get("color") in PALETTE else PALETTE[zlib.crc32(item.title.lower().encode()) % len(PALETTE)]
+    icon = st.get("icon") if st.get("icon") in ICONS else ICONS[0]
+    return color, icon, bool(st)
+
+
+def set_style(item, color=None, icon=None, cfg=None):
+    """Choisit (ou remet par défaut, avec None/None) la couleur et l'icône du projet."""
+    cfg = cfg if cfg is not None else C.load_config()
+    styles = dict(cfg.get("project_style") or {})
+    if color is None and icon is None:
+        styles.pop(item.id, None)
+    else:
+        styles[item.id] = {k: v for k, v in (("color", color), ("icon", icon)) if v}
+    cfg["project_style"] = dict(list(styles.items())[-3000:])
+    C.save_config(cfg)
+    item.extra["color"], item.extra["icon"], item.extra["styled"] = style_of(item, cfg)
+
 
 def scan_projects(cfg=None):
     """Mes projets FL : chaque dossier de projet du dossier des projets (projet FL et/ou
@@ -220,6 +248,7 @@ def scan_projects(cfg=None):
             it.extra["instru"] = parse_name(sounds[0].stem)[0] or sounds[0].stem
             it.extra["instru_path"] = sounds[0]
         it.fav = it.id in favs
+        it.extra["color"], it.extra["icon"], it.extra["styled"] = style_of(it, cfg)
         out.append(it)
     return sorted(out, key=lambda i: i.date, reverse=True)
 
@@ -413,10 +442,14 @@ def rename(item, new_title, cfg=None):
                 pass
         raise LibError(f"renommage annulé : {e}") from e
     # Favori, suivi des fichiers reçus (le PC ne retélécharge pas une prod renommée)
+    new_id = f"p:{new.lower()}" if item.kind == "project" else new.lower()
     favs = cfg.get(item.fav_key) or []
     if item.id in favs:
-        new_id = f"p:{new.lower()}" if item.kind == "project" else new.lower()
         cfg[item.fav_key] = [new_id if f == item.id else f for f in favs]
+    styles = cfg.get("project_style") or {}
+    if item.id in styles:  # l'icône et la couleur suivent le projet
+        styles[new_id] = styles.pop(item.id)
+        cfg["project_style"] = styles
     # Suivi des fichiers reçus : le PC ne retélécharge pas une prod renommée (ou déplacée
     # avec son dossier de projet)
     ren = cfg.get("renamed") or {}

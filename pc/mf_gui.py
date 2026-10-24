@@ -27,10 +27,18 @@ FG, MUTED, FAINT = "#f3f4f7", "#a0a6b6", "#6e7487"
 ACCENT, ACCENT2, PINK = "#a78bfa", "#8b5cf6", "#ec4899"
 GREEN, AMBER, RED, BLUE = "#34d399", "#fbbf24", "#f87171", "#60a5fa"
 FONT = "Segoe UI" if C.WINDOWS else "DejaVu Sans"
+SYMB = "Segoe UI Symbol" if C.WINDOWS else "DejaVu Sans"  # icônes ♪ ★ ⚡ …
 MONO = "Consolas" if C.WINDOWS else "DejaVu Sans Mono"
 LIC_COLORS = {"FFP": GREEN, "F": BLUE}
 
 SITE_URL = "https://kimany91.github.io/Melofinds/"
+
+
+def blend(color, base, t):
+    """Mélange color (proportion t) avec base : teinte douce d'une couleur sur le fond."""
+    a = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(base[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x * t + y * (1 - t)):02x}" for x, y in zip(a, b))
 
 
 def _ago(ts):
@@ -112,6 +120,9 @@ STAGES = {"info": "Recherche de la vidéo…", "download": "Téléchargement", "
 
 # ---------------------------------------------------------------------------
 # Petits composants (Tk) au style de Melofinds Web
+
+SCROLLERS = {}
+
 
 def _ui():
     import tkinter as tk
@@ -230,16 +241,26 @@ def _ui():
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
+        SCROLLERS[str(canvas)] = (canvas, body)
+        if not SCROLLERS.get("_bound"):
+            SCROLLERS["_bound"] = True
 
-        def wheel(e):
-            if body.winfo_height() <= canvas.winfo_height():
-                return
-            step = -1 if getattr(e, "num", 0) == 4 or getattr(e, "delta", 0) > 0 else 1
-            canvas.yview_scroll(step * 3, "units")
-        canvas.bind("<Enter>", lambda e: (canvas.bind_all("<MouseWheel>", wheel), canvas.bind_all("<Button-4>", wheel), canvas.bind_all("<Button-5>", wheel)))
-        canvas.bind("<Leave>", lambda e: (canvas.unbind_all("<MouseWheel>"), canvas.unbind_all("<Button-4>"), canvas.unbind_all("<Button-5>")))
+            def wheel(e):
+                w = e.widget.winfo_containing(e.x_root, e.y_root) if hasattr(e.widget, "winfo_containing") else None
+                path = str(w) if w else ""
+                for key, val in SCROLLERS.items():
+                    if key == "_bound":
+                        continue
+                    cv, bd = val
+                    if path.startswith(key) and bd.winfo_height() > cv.winfo_height():
+                        step = -1 if getattr(e, "num", 0) == 4 or getattr(e, "delta", 0) > 0 else 1
+                        cv.yview_scroll(step * 3, "units")
+                        return
+            for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                canvas.bind_all(ev, wheel, add="+")
         return body
 
+    SCROLLERS.clear()
     return tk, ttk, Btn, Switch, Bar, card, label, entry, scroll_area
 
 
@@ -496,59 +517,139 @@ def manager_window(selftest=False):
     count_lbl = label(bar, "", 9, FAINT)
     count_lbl.pack(side="right")
 
-    listc = card(prods, padx=2, pady=2)
-    listc.pack(fill="both", expand=True)
-    cols = (("fav", "", 34, "center"), ("name", "PROJET", 250, "w"), ("key", "CLÉ", 70, "w"), ("bpm", "BPM", 52, "e"),
-            ("instru", "INSTRU", 170, "w"), ("date", "MODIFIÉ", 100, "e"))
-    tree = ttk.Treeview(listc, columns=[c[0] for c in cols], show="headings", selectmode="browse")
-    for cid, txt, w, anchor in cols:
-        tree.heading(cid, text=txt, anchor=anchor)
-        tree.column(cid, width=w, anchor=anchor, stretch=cid in ("name", "instru"))
-    tsb = ttk.Scrollbar(listc, orient="vertical", command=tree.yview, style="Dark.Vertical.TScrollbar")
-    tree.configure(yscrollcommand=tsb.set)
-    tsb.pack(side="right", fill="y")
-    tree.pack(fill="both", expand=True)
-    empty_lbl = label(listc, "", 10, MUTED, wrap=600)
+    gridwrap = tk.Frame(prods, bg=BG)
+    gridwrap.pack(fill="both", expand=True)
+    gbody = scroll_area(gridwrap)
+    grid = tk.Frame(gbody, bg=BG)
+    grid.pack(fill="both", expand=True)
+    empty_lbl = label(gridwrap, "", 10, MUTED, wrap=600)
 
     acts = tk.Frame(prods, bg=BG)
     acts.pack(fill="x", pady=(12, 0))
-    sel_lbl = label(acts, "Choisis un projet dans la liste.", 10, MUTED)
+    sel_lbl = label(acts, "Choisis un projet.", 10, MUTED)
     sel_lbl.pack(side="left")
     a_open = Btn(acts, "Ouvrir dans FL", kind="primary")
     a_ren = Btn(acts, "Renommer…")
-    a_fav = Btn(acts, "☆ Favori")
+    a_style = Btn(acts, "Icône et couleur…")
     a_dir = Btn(acts, "Dossier")
     a_play = Btn(acts, "▶ Instru")
-    for b in (a_play, a_dir, a_fav, a_ren, a_open):
+    for b in (a_play, a_dir, a_style, a_ren, a_open):
         b.pack(side="right", padx=(8, 0))
 
-    lib = {"items": [], "by_id": {}, "sig": None}
+    lib = {"items": [], "by_id": {}, "sig": None, "shown": []}
+    sel = {"id": None}
+    cards = {}
+    lay = {"cols": 0}
+    CARD_W = 218
 
     def selected():
-        s = tree.selection()
-        return lib["by_id"].get(s[0]) if s else None
+        return lib["by_id"].get(sel["id"])
+
+    def ncols():
+        w = gbody.winfo_width() or grid.winfo_width() or 760
+        return max(1, (w - 8) // (CARD_W + 14))
+
+    def icon_tile(parent, color, icon, size=42, bg=PANEL):
+        cv = tk.Canvas(parent, width=size, height=size, bg=bg, highlightthickness=0)
+        r = size // 4
+        tint = blend(color, bg, 0.24)
+        cv.create_rectangle(r, 0, size - r, size, fill=tint, outline="")
+        cv.create_rectangle(0, r, size, size - r, fill=tint, outline="")
+        for x, y in ((0, 0), (size - 2 * r, 0), (0, size - 2 * r), (size - 2 * r, size - 2 * r)):
+            cv.create_oval(x, y, x + 2 * r, y + 2 * r, fill=tint, outline="")
+        cv.create_text(size / 2, size / 2 + 1, text=icon, fill=color, font=(SYMB, int(size * 0.42)))
+        return cv
+
+    def bind_all_children(w, it):
+        w.bind("<Button-1>", lambda e, i=it: select(i.id), add="+")
+        w.bind("<Double-1>", lambda e, i=it: do_open(i))
+        w.bind("<Button-3>", lambda e, i=it: (select(i.id), menu.tk_popup(e.x_root, e.y_root)))
+        for ch in w.winfo_children():
+            bind_all_children(ch, it)
+
+    def make_card(it):
+        color, icon = it.extra.get("color", ACCENT2), it.extra.get("icon", "♪")
+        on = sel["id"] == it.id
+        bgc = blend(color, PANEL, 0.10) if on else PANEL
+        c = tk.Frame(grid, bg=bgc, highlightthickness=2, highlightbackground=color if on else blend(color, PANEL, 0.55),
+                     cursor="hand2", width=CARD_W)
+        tk.Frame(c, bg=color, height=5).pack(fill="x")
+        inner = tk.Frame(c, bg=bgc, padx=14, pady=12)
+        inner.pack(fill="both", expand=True)
+        top = tk.Frame(inner, bg=bgc)
+        top.pack(fill="x")
+        icon_tile(top, color, icon, 44, bgc).pack(side="left")
+        star = tk.Label(top, text="★" if it.fav else "☆", bg=bgc, fg=AMBER if it.fav else FAINT, font=(SYMB, 14), cursor="hand2")
+        star.pack(side="right", anchor="n")
+        tk.Label(inner, text=it.title if len(it.title) <= 64 else it.title[:62] + "…", bg=bgc, fg=FG, font=(FONT, 11, "bold"),
+                 wraplength=CARD_W - 34, justify="left", anchor="w").pack(fill="x", pady=(10, 6))
+        chips = tk.Frame(inner, bg=bgc)
+        chips.pack(fill="x")
+        for txt, col in ((it.key, FG), (f"{it.bpm} BPM" if it.bpm else "", FG), (it.lic, LIC_COLORS.get(it.lic.split(",")[0], AMBER) if it.lic else FG)):
+            if txt:
+                tk.Label(chips, text=txt, bg=PANEL3 if not on else blend(color, PANEL3, 0.18), fg=col, font=(MONO, 8, "bold"),
+                         padx=7, pady=2).pack(side="left", padx=(0, 6))
+        if not (it.key or it.bpm or it.lic):
+            tk.Label(chips, text="—", bg=bgc, fg=FAINT, font=(MONO, 8)).pack(side="left")
+        ins = it.extra.get("instru") or ""
+        tk.Label(inner, text=f"♪ {ins}" if ins else "Pas d'instru", bg=bgc, fg=MUTED, font=(FONT, 9), anchor="w",
+                 wraplength=CARD_W - 34, justify="left").pack(fill="x", pady=(10, 0))
+        foot = tk.Frame(inner, bg=bgc)
+        foot.pack(fill="x", pady=(6, 0))
+        tk.Label(foot, text="Projet FL" if it.flp else "Prod seule", bg=bgc, fg=GREEN if it.flp else AMBER, font=(FONT, 8, "bold")).pack(side="left")
+        tk.Label(foot, text=_ago(it.date), bg=bgc, fg=FAINT, font=(FONT, 8)).pack(side="right")
+        bind_all_children(c, it)
+        star.bind("<Button-1>", lambda e, i=it: (do_fav(i), "break")[1])
+        return c
+
+    def place(cid, idx):
+        cols = lay["cols"]
+        cards[cid].grid(row=idx // cols, column=idx % cols, padx=6, pady=6, sticky="nsew")
+
+    def relayout(force=False):
+        cols = ncols()
+        if cols == lay["cols"] and not force:
+            return
+        lay["cols"] = cols
+        for i in range(12):
+            grid.columnconfigure(i, weight=1 if i < cols else 0, uniform="c" if i < cols else "")
+        for idx, cid in enumerate(lib["shown"]):
+            place(cid, idx)
+    gbody.bind("<Configure>", lambda e: relayout(), add="+")
+
+    def select(cid):
+        old = sel["id"]
+        sel["id"] = cid
+        for x in {old, cid}:
+            if x in cards and x in lib["by_id"]:
+                cards[x].destroy()
+                cards[x] = make_card(lib["by_id"][x])
+                if x in lib["shown"]:
+                    place(x, lib["shown"].index(x))
+        update_actions()
 
     def fill_prods():
         text = q_var.get().strip().lower()
         items = lib["items"]
         shown = [i for i in items if (not text or text in i.name.lower() or text in i.extra.get("instru", "").lower())
                  and (filt["v"] == "all" or i.fav)]
-        sel = tree.selection()
-        tree.delete(*tree.get_children())
+        for c in cards.values():
+            c.destroy()
+        cards.clear()
+        lib["shown"] = [i.id for i in shown]
+        if sel["id"] not in lib["by_id"]:
+            sel["id"] = None
         for i in shown:
-            tree.insert("", "end", iid=i.id, values=("★" if i.fav else "☆", i.title, i.key or "—", i.bpm or "—",
-                                                     i.extra.get("instru") or "—", _ago(i.date)))
-        if sel and tree.exists(sel[0]):
-            tree.selection_set(sel[0])
+            cards[i.id] = make_card(i)
+        relayout(force=True)
         n_fav = sum(1 for i in items if i.fav)
         count_lbl.configure(text=f"{len(shown)} / {len(items)} projet{'s' if len(items) > 1 else ''} · {n_fav} favori{'s' if n_fav > 1 else ''}")
         if not items:
-            empty_lbl.configure(text="Aucun projet FL dans ce dossier pour l'instant. Active FLmake (un projet par prod reçue) "
-                                     "ou enregistre tes projets FL dans ce dossier.")
-            empty_lbl.place(relx=0.5, rely=0.45, anchor="center")
+            empty_lbl.configure(text="Aucun projet pour l'instant. Chaque prod envoyée depuis ton téléphone arrivera ici, dans son dossier de projet.")
+            empty_lbl.place(relx=0.5, rely=0.4, anchor="center")
         elif not shown:
             empty_lbl.configure(text="Aucun projet ne correspond.")
-            empty_lbl.place(relx=0.5, rely=0.45, anchor="center")
+            empty_lbl.place(relx=0.5, rely=0.4, anchor="center")
         else:
             empty_lbl.place_forget()
         update_actions()
@@ -560,24 +661,23 @@ def manager_window(selftest=False):
             items = L.scan_projects()
         except OSError:
             items = []
-        sig = [(i.id, i.name, i.fav, int(i.date), i.extra.get("instru")) for i in items]
+        sig = [(i.id, i.name, i.fav, int(i.date), i.extra.get("instru"), i.extra.get("color"), i.extra.get("icon"), bool(i.flp)) for i in items]
         if force or sig != lib["sig"]:
             lib.update(items=items, by_id={i.id: i for i in items}, sig=sig)
             fill_prods()
 
     def update_actions():
         it = selected()
-        for b in (a_open, a_ren, a_fav, a_dir, a_play):
+        for b in (a_open, a_ren, a_style, a_dir, a_play):
             b.set(enabled=bool(it))
         if not it:
-            sel_lbl.configure(text="Choisis un projet dans la liste.")
+            sel_lbl.configure(text="Clic : choisir · double-clic : ouvrir · clic droit : menu")
             return
-        a_fav.set(text="★ Favori" if it.fav else "☆ Favori")
         a_open.set(text="Ouvrir dans FL" if it.flp else ("Créer le projet FL" if FM.settings()["template"] else "Ouvrir la prod"))
         ip = it.extra.get("instru_path")
-        a_play.set(enabled=bool(ip and ip.is_file()))
+        a_play.set(enabled=bool(ip and Path(ip).is_file()))
         files = it.extra.get("files")
-        sel_lbl.configure(text=f"{it.title[:48]}" + (f"  ·  {files} fichier{'s' if files > 1 else ''}" if files else ""))
+        sel_lbl.configure(text=f"{it.title[:44]}" + (f"  ·  {files} fichier{'s' if files > 1 else ''}" if files else ""))
 
     def do_open(it=None):
         it = it or selected()
@@ -603,21 +703,92 @@ def manager_window(selftest=False):
     def do_play():
         it = selected()
         ip = it and it.extra.get("instru_path")
-        if ip and ip.is_file():
+        if ip and Path(ip).is_file():
             _open_path(ip)
+
+    def dialog(title):
+        dlg = tk.Toplevel(root, bg=PANEL)
+        dlg.title(title)
+        dlg.transient(root)
+        dlg.resizable(False, False)
+        f = tk.Frame(dlg, bg=PANEL, padx=24, pady=20)
+        f.pack(fill="both", expand=True)
+        return dlg, f
+
+    def show_dialog(dlg):
+        dlg.update_idletasks()
+        dlg.geometry(f"+{root.winfo_rootx() + 240}+{root.winfo_rooty() + 110}")
+        dlg.grab_set()
+
+    def do_style(it=None):
+        it = it or selected()
+        if not it:
+            return
+        dlg, f = dialog("Icône et couleur")
+        st = {"color": it.extra.get("color", L.PALETTE[0]), "icon": it.extra.get("icon", L.ICONS[0])}
+        head = tk.Frame(f, bg=PANEL)
+        head.pack(fill="x")
+        prev = tk.Frame(head, bg=PANEL)
+        prev.pack(side="left")
+        label(head, it.title[:50], 13, bold=True, wrap=360).pack(side="left", padx=14)
+        label(f, "COULEUR", 8, FAINT, bold=True).pack(anchor="w", pady=(18, 6))
+        sw = tk.Frame(f, bg=PANEL)
+        sw.pack(anchor="w")
+        label(f, "ICÔNE", 8, FAINT, bold=True).pack(anchor="w", pady=(16, 6))
+        ig = tk.Frame(f, bg=PANEL)
+        ig.pack(anchor="w")
+        swatches, icons = {}, {}
+
+        def redraw():
+            for w in prev.winfo_children():
+                w.destroy()
+            icon_tile(prev, st["color"], st["icon"], 58).pack()
+            for c, cv in swatches.items():
+                cv.delete("all")
+                if c == st["color"]:
+                    cv.create_oval(1, 1, 29, 29, outline=FG, width=2)
+                cv.create_oval(5, 5, 25, 25, fill=c, outline="")
+            for ic, lb in icons.items():
+                lb.configure(bg=blend(st["color"], PANEL, 0.28) if ic == st["icon"] else PANEL2,
+                             fg=st["color"] if ic == st["icon"] else MUTED)
+
+        for c in L.PALETTE:
+            cv = tk.Canvas(sw, width=30, height=30, bg=PANEL, highlightthickness=0, cursor="hand2")
+            cv.pack(side="left", padx=2)
+            cv.bind("<Button-1>", lambda e, c=c: (st.update(color=c), redraw()))
+            swatches[c] = cv
+        for n, ic in enumerate(L.ICONS):
+            lb = tk.Label(ig, text=ic, font=(SYMB, 15), width=2, bg=PANEL2, fg=MUTED, cursor="hand2", pady=4)
+            lb.grid(row=n // 9, column=n % 9, padx=2, pady=2)
+            lb.bind("<Button-1>", lambda e, ic=ic: (st.update(icon=ic), redraw()))
+            icons[ic] = lb
+        redraw()
+        row = tk.Frame(f, bg=PANEL)
+        row.pack(fill="x", pady=(20, 0))
+
+        def save():
+            L.set_style(it, st["color"], st["icon"])
+            dlg.destroy()
+            load_prods(force=True)
+
+        def reset():
+            L.set_style(it, None, None)
+            dlg.destroy()
+            load_prods(force=True)
+        Btn(row, "Enregistrer", save, kind="primary").pack(side="right")
+        Btn(row, "Annuler", dlg.destroy).pack(side="right", padx=8)
+        Btn(row, "Par défaut", reset, kind="subtle", padx=0).pack(side="left")
+        dlg.bind("<Escape>", lambda _e: dlg.destroy())
+        dlg.bind("<Return>", lambda _e: save())
+        show_dialog(dlg)
 
     def do_rename():
         it = selected()
         if not it:
             return
-        dlg = tk.Toplevel(root, bg=PANEL)
-        dlg.title("Renommer le projet")
-        dlg.transient(root)
-        dlg.resizable(False, False)
-        f = tk.Frame(dlg, bg=PANEL, padx=24, pady=20)
-        f.pack(fill="both", expand=True)
-        label(f, "Renommer le projet FL", 14, bold=True).pack(anchor="w")
-        label(f, "Le dossier du projet et tous les fichiers qui portent son nom (projet, sauvegardes, exports) prennent le "
+        dlg, f = dialog("Renommer le projet")
+        label(f, "Renommer le projet", 14, bold=True).pack(anchor="w")
+        label(f, "Le dossier du projet et tous les fichiers qui portent son nom (prod, projet, sauvegardes, exports) prennent le "
                  "nouveau nom ; les chemins enregistrés dans les projets FL suivent. La clé et le BPM restent.", 9, MUTED, wrap=460).pack(anchor="w", pady=(4, 14))
         v = tk.StringVar(value=it.title)
         e = entry(f, v, width=56)
@@ -652,45 +823,25 @@ def manager_window(selftest=False):
                 return
             dlg.destroy()
             toast(f"Projet renommé : {new}")
+            sel["id"] = f"p:{new.lower()}"
             load_prods(force=True)
-            nid = f"p:{new.lower()}"
-            if tree.exists(nid):
-                tree.selection_set(nid)
-                tree.see(nid)
         Btn(row, "Renommer", ok, kind="primary").pack(side="right")
         Btn(row, "Annuler", dlg.destroy).pack(side="right", padx=8)
         e.focus_set()
         e.select_range(0, "end")
         e.bind("<Return>", lambda _e: ok())
         e.bind("<Escape>", lambda _e: dlg.destroy())
-        dlg.update_idletasks()
-        dlg.geometry(f"+{root.winfo_rootx() + 220}+{root.winfo_rooty() + 140}")
-        dlg.grab_set()
+        show_dialog(dlg)
 
-    a_open.command, a_ren.command, a_fav.command, a_dir.command, a_play.command = do_open, do_rename, do_fav, do_dir, do_play
-    tree.bind("<<TreeviewSelect>>", lambda e: update_actions())
-    tree.bind("<Double-1>", lambda e: tree.identify_row(e.y) and do_open(lib["by_id"].get(tree.identify_row(e.y))))
-
-    def tree_click(e):
-        row = tree.identify_row(e.y)
-        if row and tree.identify_column(e.x) == "#1":
-            do_fav(lib["by_id"].get(row))
-            return "break"
-    tree.bind("<Button-1>", tree_click, add="+")
+    a_open.command, a_ren.command, a_style.command, a_dir.command, a_play.command = do_open, do_rename, do_style, do_dir, do_play
     menu = tk.Menu(root, tearoff=0, bg=PANEL2, fg=FG, activebackground=ACCENT2, activeforeground="#ffffff", bd=0, font=(FONT, 10))
     menu.add_command(label="Ouvrir dans FL", command=do_open)
     menu.add_command(label="Renommer…", command=do_rename)
-    menu.add_command(label="Favori", command=do_fav)
+    menu.add_command(label="Icône et couleur…", command=do_style)
+    menu.add_command(label="Favori ★", command=do_fav)
     menu.add_separator()
     menu.add_command(label="Écouter l'instru", command=do_play)
     menu.add_command(label="Ouvrir le dossier", command=do_dir)
-
-    def popup(e):
-        row = tree.identify_row(e.y)
-        if row:
-            tree.selection_set(row)
-            menu.tk_popup(e.x_root, e.y_root)
-    tree.bind("<Button-3>", popup)
     q_var.trace_add("write", lambda *_: fill_prods())
 
     def q_placeholder(*_):
@@ -1104,7 +1255,7 @@ def manager_window(selftest=False):
         finally:
             root.after(3000, tick)
 
-    root._show, root._tree = show, tree  # (tests : captures d'écran)
+    root._show, root._select, root._style = show, lambda cid: select(cid), lambda: do_style()  # (tests : captures d'écran)
     show("home" if C.load_config()["devices"] else "devices")
     tick()
     tick_progress()

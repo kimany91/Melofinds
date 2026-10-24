@@ -27,6 +27,28 @@ from mf_core import P, log  # noqa: E402
 from mf_worker import worker  # noqa: E402
 
 
+def missing_glyphs():
+    """Icônes du panneau absentes de la police Windows qui les dessine (contrôle du build)."""
+    if not C.WINDOWS:
+        return None
+    try:
+        import ctypes
+        import mf_library as L
+        text = "".join(L.ICONS) + "★☆▶✓✗"
+        gdi, user = ctypes.windll.gdi32, ctypes.windll.user32
+        hdc = user.GetDC(0)
+        font = gdi.CreateFontW(-20, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0, "Segoe UI Symbol")
+        old = gdi.SelectObject(hdc, font)
+        buf = (ctypes.c_ushort * len(text))()
+        gdi.GetGlyphIndicesW(hdc, text, len(text), buf, 1)  # 1 = marquer les absents (0xFFFF)
+        gdi.SelectObject(hdc, old)
+        gdi.DeleteObject(font)
+        user.ReleaseDC(0, hdc)
+        return [ch for ch, g in zip(text, buf) if g == 0xFFFF]
+    except Exception as e:
+        return f"contrôle impossible : {e}"
+
+
 def selftest(out):
     """Vérification automatique (construction sur GitHub, Windows) : outils, nom de fichier,
     fenêtre, et (si demandé) un vrai téléchargement."""
@@ -47,6 +69,7 @@ def selftest(out):
             ok, detail = C.download(vid, d, {}, None, lambda st, pct: seen.update({st: max(seen.get(st) or 0, pct or 0)}))
             res["download"] = {"ok": ok, "detail": detail, "progress": seen,
                                "files": [str(x.relative_to(d)) for x in Path(d).rglob("*")]}
+    res["glyphs_missing"] = missing_glyphs()
     try:
         import mf_gui as G
         G.manager_window(selftest=True)

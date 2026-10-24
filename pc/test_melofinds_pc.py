@@ -483,3 +483,31 @@ class MesProjetsFL(unittest.TestCase):
         old.mkdir()
         (old / "x.wav").write_bytes(fake_wav(1))
         self.assertEqual(mpc.received_file({"files": {"v": "x.wav"}}, self.cfg, "v", [self.root, old]), old / "x.wav")
+
+
+class StyleDesProjets(MesProjetsFL):
+    def test_couleur_auto_stable_puis_choisie(self):
+        it = self.project()
+        color, icon, styled = it.extra["color"], it.extra["icon"], it.extra["styled"]
+        self.assertIn(color, L.PALETTE)
+        self.assertEqual((icon, styled), (L.ICONS[0], False))
+        self.assertEqual(self.project().extra["color"], color)  # toujours la même couleur
+        L.set_style(it, "#ec4899", "☾")
+        it = self.project()
+        self.assertEqual((it.extra["color"], it.extra["icon"], it.extra["styled"]), ("#ec4899", "☾", True))
+        L.set_style(it, None, None)  # par défaut
+        self.assertEqual((self.project().extra["color"], self.project().extra["icon"]), (color, L.ICONS[0]))
+
+    def test_style_suit_le_renommage(self):
+        L.set_style(self.project(), "#22d3ee", "⚡")
+        new = L.rename(self.project(), "Autre nom")
+        it = self.project(new)
+        self.assertEqual((it.extra["color"], it.extra["icon"]), ("#22d3ee", "⚡"))
+
+    def test_style_inconnu_ignore(self):
+        cfg = mpc.load_config()
+        cfg["project_style"] = {self.project().id: {"color": "red; rm -rf", "icon": "<script>"}}
+        mpc.save_config(cfg)
+        it = self.project()
+        self.assertIn(it.extra["color"], L.PALETTE)
+        self.assertEqual(it.extra["icon"], L.ICONS[0])

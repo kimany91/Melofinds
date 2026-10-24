@@ -152,6 +152,9 @@ Même style que Melofinds Web, avec un menu à gauche :
   n'y a plus de dossier des prods à part). Chaque prod reçue y arrive dans son propre
   dossier, avec son projet FL :
   `Titre [C# min, 150 BPM] [FFP]/Titre [C# min, 150 BPM] [FFP].wav` et `….flp`.
+  Les projets sont des **cartes encadrées** dans leur couleur, avec leur icône : chaque
+  projet a une couleur automatique, et **« Icône et couleur… »** (clic droit) en choisit
+  une parmi 12 couleurs et 18 icônes (le style suit le projet quand on le renomme).
   Clé, BPM, instru, date ; recherche, **favoris ★**, **ouvrir dans FL** (crée le projet
   FLmake s'il n'y a encore que la prod), écouter l'instru, ouvrir le dossier, et
   **renommer** : le dossier du projet et tous les fichiers qui portent son nom (prod,
