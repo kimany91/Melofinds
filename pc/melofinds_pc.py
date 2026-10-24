@@ -87,7 +87,10 @@ def selftest(out):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Melofinds PC : reçoit les prods envoyées depuis Melofinds Web.")
     ap.add_argument("--background", action="store_true", help="être en ligne (reçoit les prods), sans fenêtre")
-    ap.add_argument("--stop", action="store_true", help="se mettre hors ligne (utilisé par l'installateur)")
+    ap.add_argument("--stop", action="store_true", help="arrêter le programme en ligne (installateur ; reviendra tout seul)")
+    ap.add_argument("--arret-maj", action="store_true", help=argparse.SUPPRESS)  # installateur : arrêt le temps d'une mise à jour
+    ap.add_argument("--en-ligne", action="store_true", help="se mettre en ligne (retenu)")
+    ap.add_argument("--hors-ligne", action="store_true", help="se mettre hors ligne (retenu, même après redémarrage)")
     ap.add_argument("--configure", action="store_true", help="réglages après installation (utilisé par l'installateur)")
     ap.add_argument("--start-if-configured", action="store_true", help="se remettre en ligne après une installation")
     ap.add_argument("--pair", help="ajouter un appareil avec son code d'appairage")
@@ -103,6 +106,16 @@ def main(argv=None):
     if args.stop:
         I.stop_worker()
         return 0
+    if args.arret_maj:
+        I.stop_worker(reason="update")
+        return 0
+    if args.hors_ligne:
+        I.go_offline()
+        return 0
+    if args.en_ligne:
+        I.migrate_old()
+        I.go_online()
+        return 0
     if args.configure or args.pair or args.dossier:
         try:
             I.configure(dossier=args.dossier, pairing=args.pair, device_name=args.nom)
@@ -115,6 +128,10 @@ def main(argv=None):
         return 0
     if args.background or args.une_fois:
         I.migrate_old()
+        if args.background and not I.wants_online():
+            # Démarrage de Windows : on reste hors ligne seulement si tu l'as choisi dans le panneau
+            log("Hors ligne (choisi dans le panneau, ou aucun appareil) : pas de mise en ligne.")
+            return 0
         return worker(once=args.une_fois)
     try:
         import tkinter  # noqa: F401

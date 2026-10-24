@@ -100,7 +100,7 @@ jobs:
           function Run-Wait($exe, $argv) { $p = Start-Process -FilePath $exe -ArgumentList $argv -PassThru; $p.WaitForExit(); return $p }
           $dir = Join-Path $env:RUNNER_TEMP 'MF Install'
           $prods = Join-Path $env:RUNNER_TEMP 'MF Prods'
-          $p = Run-Wait 'dist\MelofindsSetup.exe' @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=desktopicon,autostart')
+          $p = Run-Wait 'dist\MelofindsSetup.exe' @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=desktopicon')
           $r = [ordered]@{ setup_exit = $p.ExitCode }
           $r.exe = Test-Path "$dir\MelofindsPC.exe"
           $r.tools = (Test-Path "$dir\tools\yt-dlp.exe") -and (Test-Path "$dir\tools\ffmpeg.exe") -and (Test-Path "$dir\tools\deno.exe")
@@ -126,6 +126,87 @@ jobs:
           $r | ConvertTo-Json
           $bad = @($r.GetEnumerator() | Where-Object { $_.Key -ne 'setup_exit' -and $_.Value -ne $true })
           if ($r.setup_exit -ne 0 -or $bad.Count) { Write-Error "Test d'installation raté : $($bad.Key -join ', ')"; exit 1 }
+
+      - name: Test de mise à jour et de reconnexion
+        shell: pwsh
+        timeout-minutes: 12
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Comme chez toi : version publiée installée + en ligne + panneau ouvert, puis mise à
+          # jour lancée exactement comme le bouton du panneau (C.apply_update).
+          function Run-Wait($exe, $argv) { $p = Start-Process -FilePath $exe -ArgumentList $argv -PassThru; $p.WaitForExit(); return $p }
+          function Online-Since($t) { (Test-Path "$dir\heartbeat") -and ([double](Get-Content "$dir\heartbeat") -gt $t) }
+          function Now() { [double]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) / 1000 }
+          function Wait-Online($t, $sec) { for ($i = 0; $i -lt $sec * 2; $i++) { if (Online-Since $t) { return $true }; Start-Sleep -Milliseconds 500 }; return $false }
+          function Workers() { @(Get-CimInstance Win32_Process -Filter "Name='MelofindsPC.exe'" | Where-Object { $_.CommandLine -match '--background' }) }
+          function Panels() { @(Get-Process MelofindsPC -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 }) }
+          $dir = Join-Path $env:RUNNER_TEMP 'MF Maj'
+          $old = Join-Path $env:RUNNER_TEMP 'MelofindsSetup-ancien.exe'
+          gh release download --repo $env:GITHUB_REPOSITORY --pattern MelofindsSetup.exe --output $old
+          $r = [ordered]@{}
+          $p = Run-Wait $old @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"")
+          $r.old_installed = $p.ExitCode -eq 0
+          $r.old_version = (Get-Item "$dir\MelofindsPC.exe").VersionInfo.ProductVersion
+          $token = 'melofinds-' + [guid]::NewGuid().ToString('N') + '.' + [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
+          Run-Wait "$dir\MelofindsPC.exe" @('--configure', '--pair', $token) | Out-Null
+          $t0 = Now
+          Run-Wait "$dir\MelofindsPC.exe" @('--start-if-configured') | Out-Null
+          $r.old_online = Wait-Online $t0 30
+          Start-Process "$dir\MelofindsPC.exe" | Out-Null
+          for ($i = 0; $i -lt 40 -and (Panels).Count -eq 0; $i++) { Start-Sleep -Milliseconds 500 }
+          $r.panel_open = (Panels).Count -ge 1
+
+          # Mise à jour (mêmes options que le programme)
+          $t1 = Now
+          $log = Join-Path $env:RUNNER_TEMP 'maj-installation.log'
+          $p = Run-Wait 'dist\MelofindsSetup.exe' @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', "/DIR=`"$dir`"", "/LOG=`"$log`"", '/OUVRIR=1')
+          $r.update_exit = $p.ExitCode
+          $r.new_version = (Get-Item "$dir\MelofindsPC.exe").VersionInfo.ProductVersion
+          $r.version_ok = $r.new_version -like "$env:MF_VERSION*"
+          $r.online_after_update = Wait-Online $t1 60
+          Start-Sleep -Seconds 4
+          $r.log_new_version = [bool](Select-String -Path "$dir\melofinds.log" -Pattern "Melofinds PC $env:MF_VERSION en ligne" -SimpleMatch -Quiet)
+          for ($i = 0; $i -lt 40 -and (Panels).Count -eq 0; $i++) { Start-Sleep -Milliseconds 500 }
+          $r.panel_reopened = (Panels).Count -ge 1
+          $r.autostart = $null -ne (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name MelofindsPC -ErrorAction SilentlyContinue)
+
+          # Fermer le panneau : reste en ligne
+          Panels | ForEach-Object { $_.CloseMainWindow() | Out-Null }
+          for ($i = 0; $i -lt 20 -and (Panels).Count; $i++) { Start-Sleep -Milliseconds 500 }
+          $r.panel_closed = (Panels).Count -eq 0
+          $t2 = Now
+          Start-Sleep -Seconds 3
+          $r.online_after_close = (Workers).Count -ge 1 -and (Wait-Online $t2 40)
+
+          # Plantage / ordinateur éteint brutalement, puis démarrage de Windows (clé Run)
+          Workers | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+          Start-Sleep -Seconds 2
+          $t3 = Now
+          Start-Process "$dir\MelofindsPC.exe" -ArgumentList '--background' | Out-Null
+          $r.online_after_reboot = Wait-Online $t3 30
+
+          # « Mettre hors ligne » : retenu, même au démarrage suivant
+          Run-Wait "$dir\MelofindsPC.exe" @('--hors-ligne') | Out-Null
+          Start-Sleep -Seconds 2
+          $r.offline = (Workers).Count -eq 0
+          $p = Run-Wait "$dir\MelofindsPC.exe" @('--background')
+          Start-Sleep -Seconds 3
+          $r.stays_offline = (Workers).Count -eq 0
+          Run-Wait "$dir\MelofindsPC.exe" @('--en-ligne') | Out-Null
+          $r.back_online = Wait-Online (Now) 30
+
+          $u = Get-ChildItem "$dir\unins*.exe" | Select-Object -First 1
+          Run-Wait $u.FullName @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') | Out-Null
+          for ($i = 0; $i -lt 60 -and (Workers).Count; $i++) { Start-Sleep -Milliseconds 500 }
+          $r.uninstalled_offline = (Workers).Count -eq 0
+          $r | ConvertTo-Json
+          $bad = @($r.GetEnumerator() | Where-Object { $_.Key -notin 'old_version', 'new_version', 'update_exit' -and $_.Value -ne $true })
+          if ($r.update_exit -ne 0 -or $bad.Count) {
+            Write-Host "---- journal du programme"; if (Test-Path "$dir\melofinds.log") { Get-Content "$dir\melofinds.log" -Tail 80 }
+            Write-Host "---- journal de l'installateur"; if (Test-Path $log) { Get-Content $log -Tail 80 }
+            Write-Error "Test de mise à jour raté : $($bad.Key -join ', ')"; exit 1
+          }
 
       - name: Analyse Windows Defender
         shell: pwsh

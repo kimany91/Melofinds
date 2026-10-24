@@ -572,3 +572,122 @@ class Tunebat(unittest.TestCase):
         self.assertEqual((it.key, it.bpm, it.extra["tb"]), ("C# min", 150, {"key", "bpm"}))
         self.assertEqual(L.rename(it, "Brume"), "Brume [TB C# min, 150 BPM]")
         self.assertTrue((root / "Brume [TB C# min, 150 BPM]" / "Brume [TB C# min, 150 BPM].wav").exists())
+
+
+import http.client
+import threading
+from unittest import mock
+import mf_worker as W
+import melofinds_pc as MAIN
+
+
+class Reconnexion(unittest.TestCase):
+    """Le PC reste en ligne : plantages évités, réannonce, seul « Mettre hors ligne » l'arrête."""
+    CODE = "melofinds-" + "a" * 32
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp(prefix="mf-reco-"))
+        mpc.P.set(self.d)
+        self.cfg = {"dossier": str(self.d / "Prods"), "devices": [{"id": "d1", "name": "Tel", "code": self.CODE, "cle": "b" * 64}],
+                    "flmake": {"on": False, "dossier": str(self.d / "Projets")}}
+        mpc.save_config(self.cfg)
+        self.replies = []
+        self.patches = [mock.patch.object(mpc, "ensure_tools", lambda *a: []),
+                        mock.patch.object(mpc, "update_ytdlp", lambda: None),
+                        mock.patch.object(mpc, "resolve_install_dir", lambda: self.d),
+                        mock.patch.object(mpc, "reply", lambda code, p: self.replies.append(p) or True)]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+
+    def test_en_ligne_voulu(self):
+        self.assertTrue(inst.wants_online())
+        with mock.patch.object(inst, "stop_worker", lambda **k: True):
+            inst.go_offline()
+        self.assertFalse(inst.wants_online())
+        with mock.patch.object(inst, "start_worker", lambda: True):
+            inst.go_online()
+        self.assertTrue(inst.wants_online())
+        self.assertFalse(inst.wants_online({"devices": [], "online": True}))
+
+    def test_demarrage_windows_respecte_hors_ligne(self):
+        mpc.save_config({**mpc.load_config(), "online": False})
+        with mock.patch.object(MAIN, "worker", side_effect=AssertionError("ne doit pas se mettre en ligne")):
+            self.assertEqual(MAIN.main(["--background"]), 0)
+        mpc.save_config({**mpc.load_config(), "online": True})
+        with mock.patch.object(MAIN, "worker", return_value=0) as w:
+            MAIN.main(["--background"])
+            w.assert_called_once()
+
+    def test_ancien_reglage_autostart_oublie(self):
+        mpc.save_config({**mpc.load_config(), "autostart": False})
+        cfg = inst.configure()
+        self.assertNotIn("autostart", cfg)
+        self.assertTrue(inst.wants_online(cfg))
+
+    def test_erreurs_reseau_et_prod_qui_plante_sans_arret(self):
+        msg = {"mf": 2, "n": "f" * 16, "v": "jNQXAC9IVRw", "t": "Prod"}
+        calls = {"n": 0}
+
+        def poll(code, since):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise http.client.IncompleteRead(b"")  # réseau coupé en pleine réponse
+            return [{"id": "e1", "event": "message", "message": "x"}]
+        with mock.patch.object(mpc, "poll", poll), mock.patch.object(mpc, "verify", lambda raw, key: dict(msg)), \
+                mock.patch.object(mpc, "download", side_effect=RuntimeError("boum")):
+            self.assertEqual(W.worker(once=True), 0)  # 1er tour : coupure réseau
+            self.assertEqual(W.worker(once=True), 0)  # 2e tour : la prod plante
+        st = mpc.load_state()
+        self.assertIn("f" * 16, st["seen"])  # pas retentée en boucle
+        self.assertFalse(st["history"][0]["ok"])
+        self.assertTrue(any(p.get("v") == "jNQXAC9IVRw" and p.get("ok") is False for p in self.replies))
+
+    def test_reannonce_tant_que_le_reseau_ne_repond_pas(self):
+        tries = []
+
+        def reply(code, p):
+            if p.get("pc") == "online":
+                tries.append(1)
+                if len(tries) >= 3:
+                    mpc.P.stop.write_text("stop", encoding="utf-8")
+                return len(tries) >= 3
+            return True
+        with mock.patch.object(mpc, "reply", reply), mock.patch.object(mpc, "poll", lambda c, s: []), \
+                mock.patch.object(mpc, "POLL_SECONDS", 0):
+            t = threading.Thread(target=W.worker)
+            t.start()
+            t.join(20)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(len(tries), 3)
+
+    def test_mise_a_jour_ne_dit_pas_hors_ligne(self):
+        with mock.patch.object(mpc, "poll", lambda c, s: []), mock.patch.object(mpc, "POLL_SECONDS", 0):
+            t = threading.Thread(target=W.worker)
+            t.start()
+            for _ in range(100):
+                if mpc.lock_held():
+                    break
+                time.sleep(0.05)
+            self.assertTrue(mpc.running())
+            inst.stop_worker(timeout=10, reason="update")
+            t.join(10)
+        self.assertFalse(mpc.lock_held())
+        self.assertFalse(any(p.get("pc") == "offline" for p in self.replies))
+        self.assertTrue(inst.update_in_progress())  # le panneau ne le relance pas pendant la mise à jour
+        # arrêt normal (« Mettre hors ligne ») : le téléphone est prévenu
+        self.replies.clear()
+        with mock.patch.object(mpc, "poll", lambda c, s: []), mock.patch.object(mpc, "POLL_SECONDS", 0):
+            t = threading.Thread(target=W.worker)
+            t.start()
+            for _ in range(100):
+                if any(p.get("pc") == "online" for p in self.replies):
+                    break
+                time.sleep(0.05)
+            inst.stop_worker(timeout=10)
+            t.join(10)
+        self.assertTrue(any(p.get("pc") == "offline" for p in self.replies))
+        self.assertFalse(mpc.P.stop.exists())

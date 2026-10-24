@@ -37,7 +37,7 @@ UninstallDisplayName=Melofinds PC
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-CloseApplications=yes
+CloseApplications=force
 RestartApplications=no
 VersionInfoVersion={#AppVersion}
 VersionInfoCompany=Melofinds
@@ -50,7 +50,6 @@ Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Créer un raccourci « Melofinds PC » sur le bureau"; GroupDescription: "Raccourcis :"
-Name: "autostart"; Description: "Se mettre en ligne tout seul au démarrage de l'ordinateur"; GroupDescription: "Démarrage :"
 
 [Files]
 Source: "..\dist\MelofindsPC\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -61,17 +60,18 @@ Name: "{userprograms}\Melofinds PC"; Filename: "{app}\MelofindsPC.exe"; Comment:
 Name: "{userdesktop}\Melofinds PC"; Filename: "{app}\MelofindsPC.exe"; Comment: "Gérer Melofinds PC : en ligne, appareils, dossier des prods"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "MelofindsPC"; ValueData: """{app}\MelofindsPC.exe"" --background"; Tasks: autostart; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "MelofindsPC"; ValueData: """{app}\MelofindsPC.exe"" --background"; Flags: uninsdeletevalue
 
 [Run]
 ; Réglages choisis dans l'installateur (dossier des prods, code du téléphone) : pas en mise à jour silencieuse.
 Filename: "{app}\MelofindsPC.exe"; Parameters: "--configure --dossier ""{code:BeatsDir}"" {code:PairArg}"; Flags: runhidden waituntilterminated; StatusMsg: "Réglages…"; Check: not WizardSilent
-; Remise en ligne (installation et mise à jour).
-Filename: "{app}\MelofindsPC.exe"; Parameters: "--start-if-configured"; Flags: runhidden nowait
+; La remise en ligne est faite dans DeinitializeSetup (même si l'installation échoue).
 Filename: "{app}\MelofindsPC.exe"; Description: "Ouvrir Melofinds PC"; Flags: postinstall nowait skipifsilent
+; Mise à jour lancée depuis le panneau : il se rouvre à la fin.
+Filename: "{app}\MelofindsPC.exe"; Flags: nowait; Check: ReopenPanel
 
 [UninstallRun]
-Filename: "{app}\MelofindsPC.exe"; Parameters: "--stop"; Flags: runhidden waituntilterminated; RunOnceId: "StopMelofinds"
+Filename: "{app}\MelofindsPC.exe"; Parameters: "--hors-ligne"; Flags: runhidden waituntilterminated; RunOnceId: "StopMelofinds"
 
 [UninstallDelete]
 ; Fichiers créés par le programme lui-même (jamais les prods : elles sont dans leur propre dossier).
@@ -164,14 +164,39 @@ begin
     Result := '';
 end;
 
+function ReopenPanel: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:OUVRIR|0}') = '1');
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
-  { Mise à jour : on met d'abord le programme hors ligne proprement. }
+  { Mise à jour : le programme en ligne s'arrête le temps de remplacer ses fichiers, sans
+    dire « hors ligne » au téléphone, puis revient tout seul (DeinitializeSetup). }
   if FileExists(ExpandConstant('{app}\MelofindsPC.exe')) then
-    Exec(ExpandConstant('{app}\MelofindsPC.exe'), '--stop', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  begin
+    SaveStringToFile(ExpandConstant('{app}\stop'), 'update', False);
+    if not Exec(ExpandConstant('{app}\MelofindsPC.exe'), '--arret-maj', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+      Exec(ExpandConstant('{app}\MelofindsPC.exe'), '--stop', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);  { versions 3.7 et avant }
+  end;
   Result := '';
+end;
+
+procedure DeinitializeSetup;
+var
+  ResultCode: Integer;
+  Exe: String;
+begin
+  { Toujours, même si l'installation a échoué ou a été annulée : le programme se remet
+    en ligne (sauf si tu l'as mis hors ligne dans le panneau). }
+  try
+    Exe := ExpandConstant('{app}\MelofindsPC.exe');
+    if FileExists(Exe) then
+      Exec(Exe, '--start-if-configured', '', SW_HIDE, ewNoWait, ResultCode);
+  except
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

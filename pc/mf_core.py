@@ -14,6 +14,7 @@ Sécurité :
 
 import hashlib
 import hmac
+import http.client
 import json
 import os
 import re
@@ -31,7 +32,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.7.0"
+VERSION = "3.8.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -508,7 +509,7 @@ def tunebat_lookup(title, channel, duration, timeout=10):
             req = urllib.request.Request(TB_SEARCH + urllib.parse.quote(q), headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as res:
                 data = json.loads(res.read(2_000_000).decode("utf-8", "replace"))
-        except (urllib.error.URLError, OSError, ValueError) as e:
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
             log(f"Tunebat injoignable ({str(e)[:80]}).")
             return None
         items = (data.get("data") or {}).get("items") if isinstance(data, dict) else None
@@ -562,8 +563,10 @@ def reply(code, payload):
     """Prévient l'app (sujet <code>-ok)."""
     try:
         http_post(f"{NTFY}/{code}-ok", json.dumps(payload, ensure_ascii=False).encode("utf-8"))
-    except (urllib.error.URLError, OSError) as e:
+        return True
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as e:
         log(f"Impossible de prévenir l'app : {e}")
+        return False
 
 
 def poll(code, since):
@@ -885,7 +888,7 @@ def check_update():
     return ver, url, sha
 
 
-def apply_update(progress=None):
+def apply_update(progress=None, reopen=False):
     """Télécharge le nouvel installateur officiel, vérifie son empreinte et le lance en
     mode silencieux dans le même dossier : il arrête proprement le programme, remplace
     les fichiers et le remet en ligne. Renvoie un message."""
@@ -903,34 +906,95 @@ def apply_update(progress=None):
         setup.unlink(missing_ok=True)
         raise ValueError("empreinte SHA-256 incorrecte : mise à jour refusée")
     app_dir = Path(sys.executable).resolve().parent
-    subprocess.Popen([str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", f"/DIR={app_dir}"],
-                     creationflags=0x00000008, close_fds=True)
+    args = [str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", f"/DIR={app_dir}",
+            f"/LOG={folder / 'installation.log'}"]
+    if reopen:
+        args.append("/OUVRIR=1")  # rouvre le panneau après la mise à jour
+    for flags in (0x00000008 | 0x00000200 | 0x01000000, 0x00000008 | 0x00000200):  # indépendant du programme qui le lance
+        try:
+            subprocess.Popen(args, creationflags=flags, close_fds=True)
+            break
+        except OSError:
+            if flags == 0x00000008 | 0x00000200:
+                raise
     log(f"Mise à jour vers la version {ver} lancée")
     return f"Mise à jour vers la version {ver}…"
 
 
-class SingleInstance:
-    """Un seul programme en arrière-plan à la fois."""
+def _try_lock(f):
+    try:
+        if WINDOWS:
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
 
-    def __init__(self):
+
+def _unlock(f):
+    try:
+        if WINDOWS:
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
+class SingleInstance:
+    """Un seul programme en arrière-plan à la fois (verrou tenu tant qu'il tourne)."""
+
+    def __init__(self, tries=10):
         P.base.mkdir(parents=True, exist_ok=True)
         self.f = open(P.lock, "a+")
-        try:
-            if WINDOWS:
-                import msvcrt
-                msvcrt.locking(self.f.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(self.f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self.ok = True
-        except OSError:
-            self.ok = False
+        for i in range(tries):  # le panneau vérifie parfois le verrou une fraction de seconde
+            self.ok = _try_lock(self.f)
+            if self.ok:
+                break
+            time.sleep(0.3)
 
+    def release(self):
+        if self.ok:
+            _unlock(self.f)
+        self.f.close()
+        self.ok = False
+
+
+def beat():
+    """Battement de cœur : « je suis en ligne » (lu par le panneau)."""
+    try:
+        P.heartbeat.write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def lock_held():
+    """Le programme en ligne tourne-t-il ? (il garde le verrou tant qu'il est vivant,
+    même pendant un long téléchargement)."""
+    if not P.lock.exists():
+        return False
+    try:
+        with open(P.lock, "a+") as f:
+            if _try_lock(f):
+                _unlock(f)
+                return False
+            return True
+    except OSError:
+        return False
 
 
 def running():
     try:
-        return time.time() - float(P.heartbeat.read_text(encoding="utf-8")) < 45
+        if time.time() - float(P.heartbeat.read_text(encoding="utf-8")) < 45:
+            return True
     except (OSError, ValueError):
-        return False
+        pass
+    return lock_held()
 

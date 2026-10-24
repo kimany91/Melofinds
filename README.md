@@ -124,8 +124,7 @@ construction analyse l'installateur avec Windows Defender avant de le publier.
 
 Le raccourci ouvre le **panneau de gestion** (avec un bouton « Ouvrir Melofinds Web » qui
 ouvre le site dans Chrome) :
-- **Accueil** : « Mettre en ligne » / « Mettre hors ligne », démarrage automatique,
-  dernières prods reçues ;
+- **Accueil** : « Mettre en ligne » / « Mettre hors ligne », dernières prods reçues ;
 - **Appareils** : téléphones appairés (nom, type, dernière activité), ajouter avec le
   code d'appairage, renommer, retirer ;
 - **Dossier & réglages** : dossier des projets, emplacement du programme, journal,
@@ -141,11 +140,21 @@ ouvre le site dans Chrome) :
 - Sécurité : envois signés (HMAC-SHA256, clé qui ne passe jamais par ntfy) ; un envoi ne
   contient qu'un identifiant de vidéo ; seul un vrai .wav entre dans l'unique dossier
   choisi sur le PC ; 15 min max par vidéo, 40 par heure, envois de plus de 48 h refusés.
-- Mises à jour : bouton « Mettre à jour le PC » dans l'app (et vérification quotidienne).
+- **Reconnexion automatique** : le PC reste en ligne quand tu fermes le panneau, quand tu
+  redémarres l'ordinateur (lancement avec Windows, toujours inscrit), après une mise à jour
+  et après un souci réseau ou une coupure de veille (il se réannonce au téléphone). Il ne
+  reste hors ligne que si tu appuies sur « Mettre hors ligne » dans le panneau (retenu,
+  même après un redémarrage). Une erreur sur une prod ne l'arrête jamais.
+- Mises à jour : bouton « Mettre à jour le PC » dans l'app, « Vérifier maintenant » dans le
+  panneau (et vérification quotidienne). L'installateur arrête le programme le temps de
+  remplacer ses fichiers puis le remet en ligne, même si l'installation échoue ; lancée
+  depuis le panneau, celui-ci se rouvre tout seul. Journal : `updates/installation.log`.
   Le programme n'accepte que les versions publiées sur ce dépôt
   (`releases/latest/download/version.json`, empreinte SHA-256 vérifiée).
 - Construction : `.github/workflows/pc-build.yml` (Windows) teste, construit le programme
-  et l'installateur, fait une vraie installation + désinstallation, l'analyse avec Windows
+  et l'installateur, fait une vraie installation + désinstallation, une vraie **mise à jour**
+  depuis la dernière version publiée (panneau ouvert, puis fermeture du panneau, plantage,
+  redémarrage, « Mettre hors ligne »), l'analyse avec Windows
   Defender et publie la version `pc-v<VERSION>`. Pour publier une mise à jour : changer `VERSION` dans
   `pc/mf_core.py` et pousser.
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,

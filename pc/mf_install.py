@@ -41,11 +41,13 @@ def launcher(*args):
 
 
 # ---------------------------------------------------------------------------
-# Démarrage avec Windows (clé « Run » de l'utilisateur, comme les autres applis)
+# Démarrage avec Windows (clé « Run » de l'utilisateur, comme les autres applis).
+# Toujours inscrit : au démarrage, le programme se remet en ligne tout seul, sauf si
+# tu as choisi « Mettre hors ligne » dans le panneau (voir wants_online).
 
 def autostart_enabled():
     if not C.WINDOWS:
-        return bool(C.load_config().get("autostart"))
+        return True
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
@@ -55,22 +57,15 @@ def autostart_enabled():
         return False
 
 
-def set_autostart(on):
-    cfg = C.load_config()
-    cfg["autostart"] = bool(on)
-    C.save_config(cfg)
+def ensure_autostart():
     if not (C.WINDOWS and frozen()):
         return
     import winreg
-    if on:
+    try:
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
             winreg.SetValueEx(k, RUN_VALUE, 0, winreg.REG_SZ, f'"{app_exe()}" --background')
-    else:
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
-                winreg.DeleteValue(k, RUN_VALUE)
-        except OSError:
-            pass
+    except OSError as e:
+        log(f"Démarrage avec Windows impossible à inscrire : {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -120,9 +115,9 @@ def configure(dossier=None, pairing=None, device_name=""):
         log(f"Dossier des prods impossible à créer : {e}")
     if pairing:
         add_device(cfg, pairing, device_name or "Mon téléphone")
+    cfg.pop("autostart", None)  # ancien réglage (3.7 et avant) : remplacé par « online »
     C.save_config(cfg)
-    if "autostart" in cfg:  # le choix fait dans le panneau l'emporte
-        set_autostart(cfg["autostart"])
+    ensure_autostart()
     return cfg
 
 
@@ -153,6 +148,22 @@ def worker_running():
     return C.running()
 
 
+def wants_online(cfg=None):
+    """En ligne voulu : au moins un appareil, et pas mis « hors ligne » dans le panneau."""
+    cfg = cfg if cfg is not None else C.load_config()
+    return bool(cfg.get("devices")) and cfg.get("online", True) is not False
+
+
+def set_wanted(on):
+    cfg = C.load_config()
+    cfg["online"] = bool(on)
+    C.save_config(cfg)
+
+
+BREAKAWAY = 0x01000000  # hors du « groupe » du panneau : fermer le panneau ne l'arrête pas
+NEW_GROUP = 0x00000200
+
+
 def start_worker():
     if worker_running():
         return True
@@ -160,30 +171,61 @@ def start_worker():
         P.stop.unlink(missing_ok=True)
     except OSError:
         pass
-    flags = DETACHED if C.WINDOWS else 0
-    subprocess.Popen(launcher("--background"), creationflags=flags, close_fds=True,
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return True
+    kw = dict(close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not C.WINDOWS:
+        subprocess.Popen(launcher("--background"), start_new_session=True, **kw)
+        return True
+    for flags in (DETACHED | NEW_GROUP | BREAKAWAY, DETACHED | NEW_GROUP):
+        try:
+            subprocess.Popen(launcher("--background"), creationflags=flags, **kw)
+            return True
+        except OSError as e:  # sortie du groupe refusée par Windows : lancement normal
+            err = e
+    log(f"Mise en ligne impossible : {err}")
+    return False
 
 
-def stop_worker(timeout=20):
-    """Demande l'arrêt : le programme prévient les appareils puis s'arrête de lui-même."""
+def go_online():
+    """« Mettre en ligne » (panneau) : retenu, même après un redémarrage."""
+    set_wanted(True)
+    ensure_autostart()
+    return start_worker()
+
+
+def go_offline():
+    """« Mettre hors ligne » (panneau) : seul moyen de rester hors ligne."""
+    set_wanted(False)
+    return stop_worker()
+
+
+def update_in_progress():
+    """Une mise à jour remplace les fichiers : on ne relance pas le programme en attendant."""
+    try:
+        return P.stop.read_text(encoding="utf-8").strip() == "update" and time.time() - P.stop.stat().st_mtime < 300
+    except OSError:
+        return False
+
+
+def stop_worker(timeout=20, reason="stop"):
+    """Demande l'arrêt : le programme prévient les appareils (sauf pour une mise à jour)
+    puis s'arrête de lui-même. Le verrou qu'il tient dit s'il tourne encore."""
     try:
         P.base.mkdir(parents=True, exist_ok=True)
-        P.stop.write_text("stop", encoding="utf-8")
+        P.stop.write_text(reason, encoding="utf-8")
     except OSError:
         pass
     end = time.time() + timeout
     while time.time() < end:
-        if not P.pid.exists() and not worker_running():
-            return True
+        if not C.lock_held():
+            break
         time.sleep(0.5)
-    try:  # il ne répond pas : on termine son processus (identifié par son numéro)
-        pid = int(P.pid.read_text(encoding="utf-8"))
-        if pid != os.getpid():
-            os.kill(pid, signal.SIGTERM)
-    except (OSError, ValueError):
-        pass
+    else:  # il ne répond pas : on termine son processus (celui qui tient le verrou)
+        try:
+            pid = int(P.pid.read_text(encoding="utf-8"))
+            if pid != os.getpid():
+                os.kill(pid, signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
     for f in (P.pid, P.heartbeat):
         try:
             f.unlink(missing_ok=True)
@@ -193,9 +235,10 @@ def stop_worker(timeout=20):
 
 
 def start_if_configured():
-    """Après une installation ou une mise à jour : remet en ligne s'il y a un appareil."""
+    """Après une installation ou une mise à jour : remet en ligne (sauf si mis hors ligne
+    dans le panneau)."""
     cfg = configure()
-    if cfg["devices"]:
+    if wants_online(cfg):
         start_worker()
 
 

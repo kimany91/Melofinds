@@ -1053,9 +1053,8 @@ def manager_window(selftest=False):
                 return
             C.save_config(cfg)
             dlg.destroy()
+            I.go_online()
             refresh()
-            if not I.worker_running():
-                I.start_worker()
             toast("Appareil ajouté")
         row = tk.Frame(f, bg=PANEL)
         row.pack(fill="x", pady=(14, 0))
@@ -1106,8 +1105,10 @@ def manager_window(selftest=False):
               (("Changer…", change_proj_dir, "ghost"), ("Ouvrir", lambda: (Path(fdir_var.get()).mkdir(parents=True, exist_ok=True), _open_path(fdir_var.get())), "ghost")))
     sc = card(setp)
     sc.pack(fill="x", pady=(0, 14))
-    sw_auto = setting_row(sc, "Se mettre en ligne au démarrage de l'ordinateur", "Melofinds PC reçoit tes prods même si tu n'ouvres pas ce panneau.",
-                          lambda p: Switch(p, I.autostart_enabled(), lambda v: (I.set_autostart(v), refresh())))
+    label(sc, "Reconnexion automatique", 11, bold=True).pack(anchor="w")
+    label(sc, "Melofinds PC reste en ligne tout seul : quand tu fermes ce panneau, quand tu redémarres l'ordinateur "
+              "et après chaque mise à jour. Il ne se met hors ligne que si tu appuies sur « Mettre hors ligne ».",
+          9, MUTED, wrap=680).pack(anchor="w", pady=(2, 0))
     pc_ = card(setp)
     pc_.pack(fill="x", pady=(0, 14))
     label(pc_, "Emplacement du programme", 11, bold=True).pack(anchor="w")
@@ -1131,10 +1132,15 @@ def manager_window(selftest=False):
 
         def work():
             try:
-                r = C.apply_update(lambda s: root.after(0, toast, s))
+                r = C.apply_update(lambda s: root.after(0, toast, s), reopen=True)
             except Exception as ex:
                 r = f"Mise à jour impossible : {ex}"
             root.after(0, toast, r)
+            if r.startswith("Mise à jour vers"):
+                # le panneau se ferme pour laisser l'installateur remplacer ses fichiers ; il se rouvre ensuite
+                updating["v"] = True
+                root.after(0, toast, f"{r} Le panneau se rouvre tout seul dans un instant.")
+                root.after(2500, root.destroy)
         threading.Thread(target=work, daemon=True).start()
     Btn(ur, "Vérifier maintenant", upd, kind="primary").pack(side="right")
 
@@ -1149,6 +1155,8 @@ def manager_window(selftest=False):
 
     # ================= En ligne / hors ligne, rafraîchissement
     busy = {"v": False}
+    updating = {"v": False}
+    down = {"n": 0}
 
     def toggle_online():
         if busy["v"]:
@@ -1163,13 +1171,13 @@ def manager_window(selftest=False):
 
         def work():
             if going_online:
-                I.start_worker()
+                I.go_online()
                 for _ in range(30):
                     if I.worker_running():
                         break
                     time.sleep(0.5)
             else:
-                I.stop_worker()
+                I.go_offline()
             busy["v"] = False
             root.after(0, refresh)
         threading.Thread(target=work, daemon=True).start()
@@ -1188,12 +1196,24 @@ def manager_window(selftest=False):
                 status_sub.configure(text=f"Prêt à recevoir les prods de {n} appareil{'s' if n > 1 else ''}." if n else "Ajoute ton téléphone dans Appareils.")
                 dot.itemconfigure(dot_id, fill=GREEN)
                 toggle.set(text="Mettre hors ligne", kind="ghost", enabled=True)
-            else:
-                status_lbl.configure(text="Hors ligne")
-                status_sub.configure(text="Les prods envoyées t'attendent : elles arrivent dès que tu remets en ligne.")
+            elif I.wants_online(cfg):
+                status_lbl.configure(text="Reconnexion…")
+                status_sub.configure(text="Melofinds PC se remet en ligne tout seul.")
                 dot.itemconfigure(dot_id, fill=AMBER)
                 toggle.set(text="Mettre en ligne", kind="online", enabled=True)
-        sw_auto.set(I.autostart_enabled())
+            else:
+                status_lbl.configure(text="Hors ligne")
+                status_sub.configure(text="Tu l'as mis hors ligne. Les prods envoyées t'attendent : elles arrivent dès que tu remets en ligne.")
+                dot.itemconfigure(dot_id, fill=AMBER)
+                toggle.set(text="Mettre en ligne", kind="online", enabled=True)
+        # Reconnexion automatique : en ligne voulu mais programme arrêté (plantage, fermeture…)
+        if not busy["v"] and not updating["v"] and not on and I.wants_online(cfg) and not I.update_in_progress():
+            down["n"] += 1
+            if down["n"] >= 2:
+                down["n"] = 0
+                I.start_worker()
+        else:
+            down["n"] = 0
         sel = devs.selection()
         devs.delete(*devs.get_children())
         for d in cfg["devices"]:
@@ -1259,6 +1279,10 @@ def manager_window(selftest=False):
             root.after(3000, tick)
 
     root._show, root._select, root._style = show, lambda cid: select(cid), lambda: do_style()  # (tests : captures d'écran)
+    if not selftest:
+        I.ensure_autostart()
+        if I.wants_online() and not I.worker_running():
+            I.start_worker()  # ouvrir le panneau remet en ligne s'il le faut
     show("home" if C.load_config()["devices"] else "devices")
     tick()
     tick_progress()
