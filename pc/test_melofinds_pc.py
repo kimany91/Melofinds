@@ -691,3 +691,101 @@ class Reconnexion(unittest.TestCase):
             t.join(10)
         self.assertTrue(any(p.get("pc") == "offline" for p in self.replies))
         self.assertFalse(mpc.P.stop.exists())
+
+
+class EcouteEtGestionDepuisLApp(unittest.TestCase):
+    """Onglet « File d'attente » de l'app web : liste des projets, sons par version, commandes."""
+    CODE = "melofinds-" + "c" * 32
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp(prefix="mf-remote-"))
+        mpc.P.set(self.d / "prog")
+        self.root = self.d / "Projets FL"
+        self.root.mkdir()
+        mpc.save_config({"dossier": str(self.root), "devices": [{"id": "d1", "name": "Tel", "code": self.CODE, "cle": "b" * 64}],
+                         "flmake": {"on": False, "dossier": str(self.root)}})
+        self.name = "Haze [C# min, 150 BPM] [FFP]"
+        p = self.root / self.name
+        p.mkdir()
+        for n in (f"{self.name}.wav", "Haze 1.3.3.wav", "Haze 0.1.wav", "Haze v1.0 (mix).mp3", "Haze 0.2.wav", "voix brute.wav"):
+            (p / n).write_bytes(fake_wav(1))
+        (p / "notes.txt").write_text("x")
+        self.sent, self.files = [], []
+        self.patches = [mock.patch.object(mpc, "reply", lambda code, m: self.sent.append(m) or True),
+                        mock.patch.object(mpc, "publish_attachment", lambda code, data, fn, meta, timeout=60: self.files.append((fn, meta, len(data))) or True),
+                        mock.patch.object(mpc, "make_preview", lambda src, out: (Path(out).write_bytes(b"a" * 4_000_000), Path(out))[1])]
+        for x in self.patches:
+            x.start()
+
+    def tearDown(self):
+        for x in self.patches:
+            x.stop()
+
+    def project(self):
+        return next(i for i in L.scan_projects() if i.name == self.name)
+
+    def test_versions(self):
+        self.assertEqual([L.version_of(n) for n in ("Haze 1.3.3", "Haze v2", "Haze_v0.1 (mix)", "Haze [C# min, 150 BPM]", "Haze 140 bpm")],
+                         [(1, 3, 3), (2,), (0, 1), None, None])
+        files = L.audio_files(self.project())
+        self.assertEqual([f["name"] for f in files][:5], [self.name, "Haze 0.1", "Haze 0.2", "Haze v1.0 (mix)", "Haze 1.3.3"])
+        self.assertTrue(files[0]["instru"])
+        self.assertEqual([f["name"] for f in files if f.get("latest")], ["Haze 1.3.3"])
+        self.assertNotIn("notes", [f["name"] for f in files])
+
+    def test_liste_pour_l_app(self):
+        lib = L.library_index()
+        p = lib["projects"][0]
+        self.assertEqual((p["t"], p["k"], p["b"], p["lic"]), ("Haze", "C# min", 150, "FFP"))
+        self.assertEqual(p["files"][0]["i"], 1)
+        self.assertEqual(p["files"][4]["v"], "v1.3.3")
+        self.assertIn(p["c"], lib["palette"])
+        json.dumps(lib)  # envoyable tel quel
+        # un identifiant inconnu ne donne jamais de chemin
+        self.assertEqual(L.find_audio("deadbeef0000"), (None, None))
+
+    def test_commandes(self):
+        r = W.Remote(mpc.load_state())
+        cfg = mpc.load_config()
+        pid = self.project().id
+        r.command(self.CODE, {"cmd": "fav", "p": pid, "on": True}, cfg)
+        self.assertTrue(self.project().fav)
+        r.command(self.CODE, {"cmd": "style", "p": pid, "c": "#bad", "i": "x"}, mpc.load_config())
+        self.assertFalse(self.sent[-1]["ok"])
+        r.command(self.CODE, {"cmd": "style", "p": pid, "c": L.PALETTE[3], "i": L.ICONS[5]}, mpc.load_config())
+        self.assertEqual((self.project().extra["color"], self.project().extra["icon"]), (L.PALETTE[3], L.ICONS[5]))
+        r.command(self.CODE, {"cmd": "ren", "p": pid, "t": "Brume / ../.."}, mpc.load_config())
+        self.assertTrue(self.sent[-1]["ok"], self.sent[-1])
+        new = self.sent[-1]["new"]
+        self.assertTrue((self.root / new / f"{new}.wav").exists())
+        self.assertTrue((self.root / new / "Haze 1.3.3.wav").exists())  # les versions restent
+        it = next(i for i in L.scan_projects() if i.name == new)
+        self.assertTrue(it.fav)
+        self.assertEqual(it.extra["color"], L.PALETTE[3])
+        r.command(self.CODE, {"cmd": "ren", "p": "p:inconnu"}, mpc.load_config())
+        self.assertFalse(self.sent[-1]["ok"])
+        # la liste part à l'appareil qui l'a demandée
+        r.tick(mpc.load_config()["devices"], mpc.load_config())
+        self.assertEqual(self.files[-1][0], "projets.json")
+        self.assertEqual(self.files[-1][1]["lib"], 1)
+
+    def test_copie_d_ecoute_decoupee_et_limitee(self):
+        r = W.Remote(mpc.load_state())
+        f = L.audio_files(self.project())[4]
+        r.command(self.CODE, {"cmd": "play", "f": f["id"]}, mpc.load_config())
+        parts = [m for _, m, _ in self.files]
+        self.assertEqual([(m["i"], m["of"]) for m in parts], [(0, 3), (1, 3), (2, 3)])  # 4 Mo → 3 pièces de 1,9 Mo max
+        self.assertTrue(all(n <= mpc.ATTACH_MAX for _, _, n in self.files))
+        self.assertEqual((parts[0]["aud"], parts[0]["v"], parts[0]["len"]), (f["id"], "v1.3.3", 4_000_000))
+        for _ in range(5):  # 17 Mo max par 3 h (ntfy.sh : 20 Mo)
+            r.command(self.CODE, {"cmd": "play", "f": f["id"]}, mpc.load_config())
+        self.assertIn("limite", self.sent[-1]["err"])
+        r.command(self.CODE, {"cmd": "play", "f": "../../etc"}, mpc.load_config())
+        self.assertIn("introuvable", self.sent[-1]["err"])
+
+    def test_desactive_sur_le_pc(self):
+        mpc.save_config({**mpc.load_config(), "remote": False})
+        r = W.Remote(mpc.load_state())
+        r.command(self.CODE, {"cmd": "fav", "p": self.project().id, "on": True}, mpc.load_config())
+        self.assertFalse(self.sent[-1]["ok"])
+        self.assertFalse(self.project().fav)

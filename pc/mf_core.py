@@ -32,7 +32,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.8.0"
+VERSION = "3.9.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -567,6 +567,47 @@ def reply(code, payload):
     except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as e:
         log(f"Impossible de prévenir l'app : {e}")
         return False
+
+
+# ---------------------------------------------------------------------------
+# Écoute et gestion depuis l'app web : la liste des projets et des copies d'écoute
+# (AAC, ~2 Mo par morceau) passent en pièces jointes ntfy sur le sujet <code>-ok.
+# ntfy.sh : 2 Mo max par pièce jointe (on découpe), 20 Mo en tout gardés 3 h, ~250 envois
+# par jour : on n'envoie que ce qui est demandé, plus les dernières prods reçues.
+
+ATTACH_MAX = 1_900_000
+PREVIEW_MAX_SECONDS = 6 * 60
+
+
+def publish_attachment(code, data, filename, meta, timeout=60):
+    """Envoie un fichier (pièce jointe) à l'app, avec un petit message JSON. Renvoie True/False."""
+    headers = {"User-Agent": f"melofinds-pc/{VERSION}", "Filename": re.sub(r"[^\w.\-]", "_", filename)[:80],
+               "X-Message": json.dumps(meta, ensure_ascii=True, separators=(",", ":"))}
+    try:
+        req = urllib.request.Request(f"{NTFY}/{code}-ok", data=data, headers=headers, method="PUT")
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            res.read()
+        return True
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as e:
+        log(f"Envoi d'un fichier à l'app impossible : {e}")
+        return False
+
+
+def make_preview(src, out):
+    """Copie d'écoute légère du son (AAC 96 kb/s, 6 min max) pour l'app web."""
+    ffmpeg = tool_path("ffmpeg.exe")
+    if not ffmpeg:
+        raise OSError("ffmpeg manquant")
+    r = run_tool([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), "-vn", "-map", "0:a:0",
+                  "-t", str(PREVIEW_MAX_SECONDS), "-ac", "2", "-ar", "44100", "-c:a", "aac", "-b:a", "96k",
+                  "-movflags", "+faststart", "-f", "mp4", str(out)], 180)
+    if r.returncode != 0 or not Path(out).is_file():
+        raise OSError(last_line(r.stderr))
+    return Path(out)
+
+
+def chunks(data, size=ATTACH_MAX):
+    return [data[i:i + size] for i in range(0, len(data), size)] or [b""]
 
 
 def poll(code, since):

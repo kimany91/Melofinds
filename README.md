@@ -160,13 +160,34 @@ ouvre le site dans Chrome) :
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
+## Onglet « File d'attente » (version web)
+
+- **En cours** : la prod que le PC télécharge en ce moment ; **En attente** : celles qui
+  attendent leur tour (ou que le PC recevra en se rallumant) ; **Dernières arrivées**.
+- **Sur ton PC** : tous les projets du dossier des projets, en cartes à leur couleur et
+  avec leur icône. Clé / BPM (en bleu si trouvés avec Tunebat), licence, favori ★.
+  **Renommer** (tout le projet, comme dans le panneau du PC), **Icône et couleur**.
+- **Écouter** l'instru et tous les sons du projet. Les noms avec une version (`0.1`,
+  `v2`, `1.3.3`…) sont triés par version, la plus récente est marquée « dernière ».
+  Le PC envoie une copie d'écoute légère (AAC 96 kb/s, ~2 Mo pour 3 min), découpée en
+  pièces jointes ntfy.sh de 1,9 Mo.
+- **PC éteint** : la liste des projets et les sons déjà écoutés (60 au plus), plus la
+  dernière prod reçue, que le PC envoie toute seule, restent sur le téléphone : tout se
+  voit et s'écoute. Un renommage, un style ou un favori fait PC éteint part dès qu'il se
+  rallume.
+- Limites de ntfy.sh (gratuit) : pièces jointes gardées 3 h, 20 Mo par 3 h et ~250
+  envois par jour pour le PC ; le PC envoie donc au plus 25 copies d'écoute par heure
+  (17 Mo par 3 h), la liste seulement quand elle change (toutes les 10 min au plus) ou
+  quand l'app la demande, et se signale toutes les 50 min.
+- À désactiver dans Melofinds PC → Réglages → « Écouter et gérer depuis l'app web ».
+
 ## Le panneau Melofinds PC
 
 Même style que Melofinds Web, avec un menu à gauche :
 
-- **Accueil** : en ligne / hors ligne, et la **barre de téléchargement** de la prod qui
-  arrive (recherche, téléchargement en %, conversion en WAV, projet FL, prods en attente),
-  puis les dernières prods reçues.
+- **File d'attente** : en ligne / hors ligne, la **barre de téléchargement** de la prod
+  qui arrive (recherche, téléchargement en %, conversion en WAV, projet FL), la liste des
+  prods **en attente**, puis les dernières prods reçues.
 - **Mes projets FL** : tous les projets du **dossier des projets** (un seul dossier : il
   n'y a plus de dossier des prods à part). Chaque prod reçue y arrive dans son propre
   dossier, avec son projet FL :
@@ -174,7 +195,8 @@ Même style que Melofinds Web, avec un menu à gauche :
   Les projets sont des **cartes encadrées** dans leur couleur, avec leur icône : chaque
   projet a une couleur automatique, et **« Icône et couleur… »** (clic droit) en choisit
   une parmi 12 couleurs et 18 icônes (le style suit le projet quand on le renomme).
-  Clé, BPM, instru, date ; recherche, **favoris ★**, **ouvrir dans FL** (crée le projet
+  Clé, BPM, instru, date ; **♪ Sons** : l'instru et tous les sons du projet, versions
+  (`0.1`, `1.3.3`…) dans l'ordre, à écouter ici ; recherche, **favoris ★**, **ouvrir dans FL** (crée le projet
   FLmake s'il n'y a encore que la prod), écouter l'instru, ouvrir le dossier, et
   **renommer** : le dossier du projet et tous les fichiers qui portent son nom (prod,
   projet, sauvegardes, exports) prennent le nouveau nom, et les chemins enregistrés dans

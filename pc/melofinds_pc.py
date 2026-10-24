@@ -34,7 +34,7 @@ def missing_glyphs():
     try:
         import ctypes
         import mf_library as L
-        text = "".join(L.ICONS) + "★☆▶✓✗"
+        text = "".join(L.ICONS) + "★☆▶■✓✗"
         gdi, user = ctypes.windll.gdi32, ctypes.windll.user32
         hdc = user.GetDC(0)
         font = gdi.CreateFontW(-20, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0, "Segoe UI Symbol")
@@ -69,6 +69,27 @@ def selftest(out):
             ok, detail = C.download(vid, d, {}, None, lambda st, pct: seen.update({st: max(seen.get(st) or 0, pct or 0)}))
             res["download"] = {"ok": ok, "detail": detail, "progress": seen,
                                "files": [str(x.relative_to(d)) for x in Path(d).rglob("*")]}
+    # Copie d'écoute pour l'app web (vrai ffmpeg) : un son de 3 min doit tenir en 2 pièces jointes ntfy
+    try:
+        import math
+        import struct
+        import wave
+        with tempfile.TemporaryDirectory(prefix="melofinds-ecoute-test-") as d:
+            src = Path(d) / "test.wav"
+            with wave.open(str(src), "wb") as w:
+                w.setnchannels(2)
+                w.setsampwidth(2)
+                w.setframerate(44100)
+                frames = bytearray()
+                for i in range(44100 * 180):
+                    v = int(8000 * math.sin(i * 440 * 2 * math.pi / 44100) + 3000 * math.sin(i * 0.37))
+                    frames += struct.pack("<hh", v, v)
+                w.writeframes(bytes(frames))
+            out = C.make_preview(src, Path(d) / "ecoute.m4a")
+            n = out.stat().st_size
+            res["preview"] = {"bytes": n, "parts": len(C.chunks(out.read_bytes())), "ok": 0 < n <= 2 * C.ATTACH_MAX}
+    except Exception as e:
+        res["preview"] = {"ok": False, "err": str(e)[:200]}
     # Tunebat (informatif) : une prod connue, sortie sur Spotify par son beatmaker
     res["tunebat"] = C.tunebat_lookup("NEMZZZ TYPE BEAT", "Nemzzz", 173) or "rien / injoignable"
     res["glyphs_missing"] = missing_glyphs()
@@ -78,7 +99,7 @@ def selftest(out):
         res["gui"] = "ok"
     except Exception as e:  # Tk absent ou cassé
         res["gui"] = f"erreur {e}"
-    res["ok"] = (not res["tool_errors"] and all(res[n] != "absent" for n in ("yt-dlp.exe", "ffmpeg.exe", "deno.exe"))
+    res["ok"] = (res["preview"]["ok"] and not res["tool_errors"] and all(res[n] != "absent" for n in ("yt-dlp.exe", "ffmpeg.exe", "deno.exe"))
                  and res["gui"] == "ok")
     Path(out).write_text(json.dumps(res, indent=2, ensure_ascii=False), encoding="utf-8")
     return 0 if res["ok"] else 1

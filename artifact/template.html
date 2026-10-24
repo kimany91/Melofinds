@@ -33,6 +33,7 @@
     <button class="nav-item" type="button" data-view="saved" role="tab"><svg><use href="#i-heart"/></svg><span>Favoris</span><em class="dot" id="savedDot" hidden></em></button>
     <button class="nav-item" type="button" data-view="history" role="tab"><svg><use href="#i-clock"/></svg><span>Historique</span></button>
     <button class="nav-item" type="button" data-view="recs" role="tab" id="navRecs" hidden><svg><use href="#i-mic"/></svg><span>Recs</span></button>
+    <button class="nav-item" type="button" data-view="pc" role="tab" id="navPc" hidden><svg><use href="#i-down"/></svg><span class="nav-lg">File d’attente</span><span class="nav-sm">File</span><em class="dot" id="pcNavDot" hidden></em></button>
   </nav>
   <button type="button" class="verify-btn" id="openVerify" title="Vérifier la licence d’une prod"><svg><use href="#i-shield"/></svg><span>Vérifier une prod</span></button>
 </header>
@@ -131,6 +132,28 @@
     </div>
     <p class="muted recs-intro">Tes prises de voix enregistrées sur les prods. Elles restent dans ce navigateur : télécharge celles que tu veux garder.</p>
     <div id="recsList" class="rows"></div>
+  </section>
+
+  <!-- ================= FILE D'ATTENTE + PROJETS DU PC (version web) ================= -->
+  <section id="view-pc" class="view">
+    <div class="page-head">
+      <h2>File d’attente</h2>
+      <button type="button" class="link" id="pcSetupBtn">Connexion du PC</button>
+    </div>
+    <div id="pcLive" class="pc-live"></div>
+    <div class="page-head pc-lib-head">
+      <h2>Sur ton PC</h2>
+      <div class="seg" id="pcLibSeg" role="tablist" aria-label="Projets affichés">
+        <button type="button" class="seg-btn" data-f="all">Tous</button>
+        <button type="button" class="seg-btn" data-f="fav">Favoris</button>
+      </div>
+    </div>
+    <div class="pc-lib-bar">
+      <input type="search" id="pcLibSearch" class="pc-input" placeholder="Chercher un projet, une version…" aria-label="Chercher un projet">
+      <button type="button" class="ghost" id="pcLibRefresh">Actualiser</button>
+    </div>
+    <p class="hint" id="pcLibMeta"></p>
+    <div class="pc-grid" id="pcLibGrid"></div>
   </section>
 
   <!-- ================= HISTORIQUE ================= -->

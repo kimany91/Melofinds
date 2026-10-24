@@ -130,7 +130,7 @@ const LIMITS = () => (WEB
 // ---------------------------------------------------------------------------
 // Navigation
 
-const VIEWS = ['search', 'saved', 'history', ...(window.MF_TARGET === 'web' ? ['recs'] : [])];
+const VIEWS = ['search', 'saved', 'history', ...(window.MF_TARGET === 'web' ? ['recs', 'pc'] : [])];
 function showView(name) {
   if (!VIEWS.includes(name)) name = 'search';
   $$('.nav-item').forEach((t) => { const on = t.dataset.view === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
@@ -139,6 +139,7 @@ function showView(name) {
   if (name === 'saved') { renderSavedProds(); renderSavedSearches(); }
   if (name === 'history') renderHistory();
   if (name === 'recs') renderRecs();
+  if (name === 'pc') { listenPc(); renderPcView(); askPcLib(); }
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 $$('.nav-item').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
@@ -400,6 +401,7 @@ function prewarmPlayer() {
 }
 
 function playItem(item) {
+  pcStop(true);
   const vid = ytIdOf(item);
   if (!vid) { toast('Pas de vidéo YouTube pour cette prod'); return; }
   player.userPaused = false;
@@ -2652,7 +2654,7 @@ async function signed(obj) {
   const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(p)));
   return JSON.stringify({ p, s: Array.from(sig, (b) => b.toString(16).padStart(2, '0')).join('') });
 }
-const pc = { queue: local.get('pcQueue', {}) || {}, info: local.get('pcInfo', null), es: null, onPong: null };
+const pc = { queue: local.get('pcQueue', {}) || {}, info: local.get('pcInfo', null), es: null, onPong: null, cur: null };
 function savePc() {
   const ids = Object.keys(pc.queue).sort((a, b) => (pc.queue[b].at || 0) - (pc.queue[a].at || 0)).slice(0, 150);
   pc.queue = Object.fromEntries(ids.map((id) => [id, pc.queue[id]]));
@@ -2677,6 +2679,7 @@ function listenPc() {
     try { m = JSON.parse(d.message || '{}'); } catch { return; }
     if (!m || typeof m !== 'object') return;
     const fresh = (d.time || 0) * 1000 > Date.now() - 90e3;
+    if (onPcViewMessage(d, m, fresh)) return;
     if (m.update) {
       if (fresh) {
         if (m.update === 'none') toast(`Ton PC est déjà à jour (version ${String(m.version || '')})`);
@@ -2716,6 +2719,7 @@ function listenPc() {
       }
     }
     pc.queue[id] = { ...cur, state: m.ok ? 'done' : 'error', file: m.file ? String(m.file) : cur.file, err: m.err ? String(m.err) : null };
+    if (pc.cur?.v === id) pc.cur = null;
     pc.info = { ...(pc.info || {}), at: Math.max(pc.info?.at || 0, (d.time || 0) * 1000) };
     local.set('pcInfo', pc.info);
     savePc();
@@ -2758,7 +2762,8 @@ async function sendToPc(item) {
 // File d'attente : ntfy garde les envois ~12 h. Une prod pas encore reçue est
 // renvoyée avant d'expirer (et dès que le réseau revient) : elle arrive dès que
 // le PC se rallume, même des jours plus tard. Le PC ignore les doublons.
-const pcOn = () => !!pc.info && !pc.info.offline && Date.now() - (pc.info.at || 0) < 40 * 60e3;
+// Le PC se signale toutes les 50 min (limite de 250 envois par jour sur ntfy.sh)
+const pcOn = () => !!pc.info && !pc.info.offline && Date.now() - (pc.info.at || 0) < 110 * 60e3;
 let resending = false;
 async function resendPending() {
   if (!WEB || !pc.info || resending || !navigator.onLine) return;
@@ -2772,6 +2777,7 @@ async function resendPending() {
       } catch { break; }
     }
     if (todo.length) { savePc(); syncPcUi(); }
+    await resendPcCmds();
   } finally { resending = false; }
 }
 
@@ -2799,6 +2805,7 @@ function syncPcUi() {
     dot.classList.toggle('wait', waiting > 0);
   }
   if ($('#pcStatus')) renderPcStatus();
+  renderPcView();
 }
 
 function pcStatusText() {
@@ -2820,6 +2827,399 @@ function renderPcStatus() {
     h('div', { class: 'pc-row-main' }, h('b', {}, displayTitle(q.t || id)), h('span', {}, q.state === 'done' ? (q.file || 'Téléchargée') : q.state === 'error' ? (q.err || 'Erreur') : q.state === 'unsent' ? 'Partira dès que tu as du réseau' : pcOn() ? 'Le PC s’en occupe…' : 'En file d’attente : arrivera dès que le PC se rallume')),
     q.state !== 'done' ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc({ id, url: `https://www.youtube.com/watch?v=${id}`, title: q.t }) }, 'Renvoyer') : null))
     : [h('p', { class: 'muted' }, 'Aucune prod envoyée pour l’instant. Touche ', icon('down'), ' sur une prod.')]));
+}
+
+// ---------------------------------------------------------------------------
+// Onglet « File d'attente » : la prod qui arrive sur le PC, celles qui attendent, puis
+// tous les projets du PC (renommer, icône, couleur, favori, écouter l'instru et chaque
+// version). La liste et les sons écoutés sont gardés sur ce téléphone : tout reste
+// visible et écoutable quand le PC est éteint. Les changements faits PC éteint partent
+// dès qu'il se rallume (ntfy les garde 12 h, l'app les renvoie ensuite).
+
+const pcLib = { data: null, parts: {}, waiting: null, askedAt: 0, q: '', filter: local.get('pcLibFilter', 'all'), open: new Set(), cmds: local.get('pcCmds', []) || [], cached: new Map() };
+const PC_COLOR = /^#[0-9a-f]{6}$/i;
+const pcPlayer = { audio: null, fid: null, url: '', el: null, unlocked: false };
+// Un seul lecteur, « débloqué » au moment où tu touches ▶ : le son peut démarrer tout seul
+// quand il arrive du PC quelques secondes plus tard (iPhone compris).
+const SILENT_WAV = 'data:audio/wav;base64,UklGRjQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YRAAAAAAAAAAAAAAAAAAAAAAAAAA';
+function pcAudioEl() {
+  if (!pcPlayer.el) pcPlayer.el = new Audio();
+  return pcPlayer.el;
+}
+function unlockPcAudio() {
+  if (pcPlayer.unlocked || pcPlayer.audio) return;
+  const el = pcAudioEl();
+  try {
+    el.src = SILENT_WAV;
+    const r = el.play();
+    pcPlayer.unlocked = true;
+    if (r && r.catch) r.catch(() => { pcPlayer.unlocked = false; });
+  } catch { /* lecteur indisponible */ }
+}
+
+function sanitizeLib(raw) {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.projects)) return null;
+  const str = (v, n) => String(v ?? '').slice(0, n);
+  const palette = (Array.isArray(raw.palette) ? raw.palette : []).filter((c) => PC_COLOR.test(String(c))).slice(0, 24);
+  const icons = (Array.isArray(raw.icons) ? raw.icons : []).map((i) => str(i, 2)).filter(Boolean).slice(0, 40);
+  const projects = raw.projects.slice(0, 300).filter((p) => p && typeof p === 'object' && typeof p.p === 'string').map((p) => ({
+    p: str(p.p, 260), n: str(p.n, 200), t: str(p.t || p.n, 160), k: /^[A-G][#b]?( (min|maj))?$/.test(String(p.k || '')) ? String(p.k) : '',
+    b: Number(p.b) >= 50 && Number(p.b) <= 220 ? Math.round(Number(p.b)) : 0, tb: Array.isArray(p.tb) ? p.tb.filter((x) => x === 'key' || x === 'bpm') : [],
+    lic: str(p.lic, 30), fav: p.fav ? 1 : 0, c: PC_COLOR.test(String(p.c)) ? String(p.c) : '#8b5cf6', ic: str(p.ic, 2) || '♪', d: Number(p.d) || 0, fl: p.fl ? 1 : 0,
+    files: (Array.isArray(p.files) ? p.files : []).slice(0, 60).filter((f) => f && /^[a-f0-9]{12}$/.test(String(f.f))).map((f) => ({
+      f: String(f.f), n: str(f.n, 140), e: str(f.e, 6), v: /^v[\d.]{1,15}$/.test(String(f.v || '')) ? String(f.v) : '', s: Number(f.s) || 0, m: Number(f.m) || 0, i: f.i ? 1 : 0, l: f.l ? 1 : 0 })),
+  }));
+  return { at: Number(raw.at) || 0, projects, palette: palette.length ? palette : ['#8b5cf6'], icons: icons.length ? icons : ['♪'] };
+}
+pcLib.data = sanitizeLib(local.get('pcLib', null));
+function savePcLib() {
+  pcLib.cmds = pcLib.cmds.filter((c) => Date.now() - c.at < 7 * 864e5).slice(-60);
+  local.set('pcCmds', pcLib.cmds);
+  if (pcLib.data) local.set('pcLib', pcLib.data);
+}
+
+// Sons écoutés : gardés dans ce navigateur (IndexedDB), 60 au plus
+const pcAudioStore = {
+  db: null,
+  open() {
+    if (this.db !== null) return this.db;
+    this.db = new Promise((resolve) => {
+      try {
+        const req = indexedDB.open('melofinds-pc', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('audio', { keyPath: 'id' });
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      } catch { resolve(null); }
+    });
+    return this.db;
+  },
+  async req(mode, fn) {
+    const db = await this.open();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const t = db.transaction('audio', mode);
+        const r = fn(t.objectStore('audio'));
+        t.oncomplete = () => resolve(r?.result ?? null);
+        t.onerror = () => resolve(null);
+      } catch { resolve(null); }
+    });
+  },
+  get(id) { return this.req('readonly', (st) => st.get(id)); },
+  put(row) { pcLib.cached.set(row.id, row.m); return this.req('readwrite', (st) => st.put(row)); },
+  del(id) { pcLib.cached.delete(id); return this.req('readwrite', (st) => st.delete(id)); },
+  async load() {
+    const rows = (await this.req('readonly', (st) => st.getAll())) || [];
+    rows.forEach((r) => pcLib.cached.set(r.id, r.m));
+    if (rows.length > 60) rows.sort((a, b) => a.at - b.at).slice(0, rows.length - 60).forEach((r) => this.del(r.id));
+  },
+};
+
+const pcAttachment = (d) => {
+  const u = String(d?.attachment?.url || '');
+  return u.startsWith(`${NTFY}/file/`) ? u : null;
+};
+function pcSeen(d) {
+  if (!pc.info) return;
+  pc.info = { ...pc.info, at: Math.max(pc.info.at || 0, (d.time || 0) * 1000), offline: false };
+  local.set('pcInfo', pc.info);
+}
+
+// Messages du PC propres à cet onglet. Renvoie true si le message est traité.
+function onPcViewMessage(d, m, fresh) {
+  if (m.lib) { pcSeen(d); onPcLib(d, m); return true; }
+  if (m.aud) { pcSeen(d); onPcAudio(d, m, fresh); return true; }
+  if (m.q && typeof m.q === 'object') {
+    pcSeen(d);
+    const v = String(m.q.v || '');
+    if (/^[\w-]{11}$/.test(v) && (d.time || 0) * 1000 > (pc.cur?.at || 0) && pc.queue[v]?.state !== 'done') {
+      pc.cur = { v, t: String(m.q.t || pc.queue[v]?.t || v).slice(0, 160), left: Math.max(0, Number(m.q.left) || 0), at: (d.time || 0) * 1000 };
+      renderPcView();
+    }
+    return true;
+  }
+  if (m.cmd) {
+    pcSeen(d);
+    const p = String(m.p || '');
+    if (!m.ok) pcLib.cmds = pcLib.cmds.filter((c) => !(c.msg.p === p && c.msg.cmd === m.cmd && c.at < (d.time || 0) * 1000));
+    savePcLib();
+    if (fresh) {
+      const what = { ren: 'Projet renommé sur ton PC', style: 'Icône et couleur changées sur ton PC', fav: 'Favori mis à jour sur ton PC' }[m.cmd] || 'Fait sur ton PC';
+      toast(m.ok ? (m.new ? `${what} : ${String(m.new).slice(0, 80)}` : what) : `Le PC n’a pas pu le faire : ${String(m.err || '').slice(0, 90)}`);
+    }
+    renderPcView();
+    return true;
+  }
+  return false;
+}
+
+async function onPcLib(d, m) {
+  const url = pcAttachment(d);
+  const at = Number(m.at) || 0;
+  if (!url || (pcLib.data && pcLib.data.at >= at)) return;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const lib = sanitizeLib(await res.json());
+    if (!lib || (pcLib.data && pcLib.data.at >= lib.at)) return;
+    pcLib.data = lib;
+    // les changements que le PC a reçus avant cette liste y sont déjà
+    pcLib.cmds = pcLib.cmds.filter((c) => c.at > lib.at * 1000 + 2000);
+    savePcLib();
+    renderPcView();
+  } catch { /* pièce jointe expirée (3 h) : on garde la liste qu'on a */ }
+}
+
+async function onPcAudio(d, m, fresh) {
+  const fid = String(m.aud || '');
+  if (!/^[a-f0-9]{12}$/.test(fid)) return;
+  if (m.err) {
+    if (pcLib.waiting === fid) { pcLib.waiting = null; renderPcView(); if (fresh) toast(String(m.err).slice(0, 100)); }
+    return;
+  }
+  const url = pcAttachment(d);
+  const i = Number(m.i);
+  const of = Number(m.of);
+  const mt = Number(m.m) || 0;
+  if (!url || !(of >= 1 && of <= 8 && i >= 0 && i < of)) return;
+  if ((pcLib.cached.get(fid) || -1) >= mt) return;
+  const key = `${fid}:${mt}`;
+  const e = pcLib.parts[key] || (pcLib.parts[key] = { urls: Array(of).fill(null) });
+  e.urls[i] = url;
+  if (e.urls.some((x) => !x)) return;
+  delete pcLib.parts[key];
+  try {
+    const blobs = await Promise.all(e.urls.map(async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(String(r.status)); return r.blob(); }));
+    const blob = new Blob(blobs, { type: 'audio/mp4' });
+    if (!blob.size || blob.size > 16e6) return;
+    await pcAudioStore.put({ id: fid, m: mt, blob, n: String(m.n || '').slice(0, 140), v: String(m.v || '').slice(0, 20), p: String(m.p || '').slice(0, 260), at: Date.now() });
+    if (pcLib.cached.size > 60) pcAudioStore.load();
+    if (pcLib.waiting === fid) { pcLib.waiting = null; playPcBlob(fid, blob); }
+    renderPcView();
+  } catch {
+    if (pcLib.waiting === fid) { pcLib.waiting = null; renderPcView(); toast('Son pas récupéré : réessaie'); }
+  }
+}
+
+function askPcLib(force) {
+  if (!WEB || !pc.info) return;
+  if (!force && (Date.now() - pcLib.askedAt < 90e3 || (pcLib.data && Date.now() - pcLib.data.at * 1000 < 5 * 60e3))) return;
+  pcLib.askedAt = Date.now();
+  ntfyPublish({ cmd: 'lib' }).then(() => { if (force) toast(pcOn() ? 'Le PC envoie sa liste…' : 'PC éteint : la liste arrivera quand il se rallume'); }).catch(() => { if (force) toast('Pas de réseau'); });
+}
+
+async function pcCommand(msg, label) {
+  const c = { id: randHex(6), msg, at: Date.now(), lastSent: 0 };
+  pcLib.cmds.push(c);
+  savePcLib();
+  renderPcView();
+  try {
+    await ntfyPublish(msg);
+    c.lastSent = Date.now();
+    toast(pcOn() ? `${label}…` : `${label} : ton PC est éteint, ce sera fait dès qu’il se rallume`);
+  } catch {
+    toast(`${label} : pas de réseau, ça partira dès que tu en as`);
+  }
+  savePcLib();
+}
+// Changements pas encore confirmés par le PC : renvoyés s'il était éteint trop longtemps
+async function resendPcCmds() {
+  for (const c of pcLib.cmds) {
+    if (c.lastSent && Date.now() - c.lastSent < 10 * 3600e3) continue;
+    try { await ntfyPublish(c.msg); c.lastSent = Date.now(); } catch { break; }
+  }
+  savePcLib();
+}
+
+function pcProjects() {
+  const ps = (pcLib.data?.projects || []).map((p) => ({ ...p }));
+  for (const c of pcLib.cmds) {
+    const p = ps.find((x) => x.p === c.msg.p);
+    if (!p) continue;
+    p.pending = true;
+    if (c.msg.cmd === 'fav') p.fav = c.msg.on ? 1 : 0;
+    if (c.msg.cmd === 'style') { p.c = c.msg.c || p.c; p.ic = c.msg.i || p.ic; }
+    if (c.msg.cmd === 'ren') { p.t = c.msg.t; p.renaming = true; }
+  }
+  return ps;
+}
+
+// --- Lecture
+function pcStop(silent) {
+  if (pcPlayer.audio) { pcPlayer.audio.pause(); URL.revokeObjectURL(pcPlayer.url); }
+  Object.assign(pcPlayer, { audio: null, fid: null, url: '' });
+  if (!silent) renderPcView();
+}
+function playPcBlob(fid, blob) {
+  pcStop(true);
+  if (isPlaying()) { player.userPaused = true; ytSend('pauseVideo'); player.state = 2; renderMini(); }
+  stopTake();
+  const url = URL.createObjectURL(blob);
+  const a = pcAudioEl();
+  a.src = url;
+  a.onended = () => pcStop();
+  a.ontimeupdate = () => {
+    const bar = $(`.pcf[data-f="${fid}"] .pcf-prog i`);
+    if (bar && a.duration) bar.style.width = `${(a.currentTime / a.duration) * 100}%`;
+    const tm = $(`.pcf[data-f="${fid}"] .pcf-time`);
+    if (tm) tm.textContent = `${fmtTime(a.currentTime)} / ${fmtTime(a.duration || 0)}`;
+  };
+  Object.assign(pcPlayer, { audio: a, fid, url });
+  a.play().catch(() => {
+    // le son est arrivé longtemps après le toucher : le navigateur demande un nouveau toucher
+    if (pcPlayer.audio === a) pcStop();
+    toast('Son prêt : touche ▶ pour l’écouter');
+  });
+  renderPcView();
+}
+async function playPcFile(f) {
+  if (pcPlayer.fid === f.f) { pcStop(); return; }
+  unlockPcAudio();
+  const have = await pcAudioStore.get(f.f);
+  if (have && (have.m >= f.m || !pcOn())) {
+    if (have.m < f.m) toast('Version gardée sur ce téléphone (le son a changé depuis sur le PC)');
+    playPcBlob(f.f, have.blob);
+    return;
+  }
+  if (!pcOn()) { toast('PC éteint : ce son n’a pas encore été gardé sur ce téléphone'); return; }
+  pcLib.waiting = f.f;
+  renderPcView();
+  try {
+    await ntfyPublish({ cmd: 'play', f: f.f });
+    toast('Le PC prépare le son… (quelques secondes)');
+  } catch { pcLib.waiting = null; renderPcView(); toast('Pas de réseau'); return; }
+  setTimeout(() => { if (pcLib.waiting === f.f) { pcLib.waiting = null; renderPcView(); toast('Pas de réponse du PC pour ce son'); } }, 120e3);
+}
+
+// --- Gestion (renommer, icône et couleur, favori)
+function pcRename(p) {
+  const inp = h('input', { type: 'text', class: 'pc-input', value: p.t, maxlength: 110, 'aria-label': 'Nouveau nom' });
+  const err = h('p', { class: 'hint', style: 'color:var(--paid);min-height:1.2em;margin:6px 0 0' });
+  const go = h('button', { type: 'button', class: 'primary' }, 'Renommer');
+  const submit = () => {
+    const t = inp.value.replace(/\s+/g, ' ').trim();
+    if (!t) { err.textContent = 'Choisis un nom.'; return; }
+    if (/[\\/:*?"<>|]/.test(t)) { err.textContent = 'Pas de \\ / : * ? " < > | dans un nom de fichier Windows.'; return; }
+    if (t === p.t) { closeDrawer(); return; }
+    closeDrawer();
+    pcCommand({ cmd: 'ren', p: p.p, t }, 'Renommage envoyé au PC');
+  };
+  go.addEventListener('click', submit);
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  openDrawer('Renommer le projet', [
+    h('p', { class: 'muted', style: 'margin:0' }, 'Sur ton PC, le dossier du projet, la prod, le projet FL et tous les fichiers à son nom prennent le nouveau nom (tout ou rien). La clé, le BPM et la licence restent.'),
+    inp, err, h('div', { class: 'actions' }, go),
+  ]);
+  setTimeout(() => { inp.focus(); inp.select(); }, 80);
+}
+function pcStyle(p) {
+  const lib = pcLib.data || { palette: ['#8b5cf6'], icons: ['♪'] };
+  const st = { c: p.c, i: p.ic };
+  const prev = h('span', { class: 'pc-tile big' });
+  const sw = h('div', { class: 'pc-swatches' });
+  const ig = h('div', { class: 'pc-icons' });
+  const paint = () => {
+    prev.style.setProperty('--pc', st.c);
+    prev.textContent = st.i;
+    $$('button', sw).forEach((b) => b.classList.toggle('on', b.dataset.c === st.c));
+    $$('button', ig).forEach((b) => { b.classList.toggle('on', b.textContent === st.i); b.style.setProperty('--pc', st.c); });
+  };
+  lib.palette.forEach((c) => sw.append(h('button', { type: 'button', 'data-c': c, style: `--sw:${c}`, 'aria-label': `Couleur ${c}`, onclick: () => { st.c = c; paint(); } })));
+  lib.icons.forEach((i) => ig.append(h('button', { type: 'button', onclick: () => { st.i = i; paint(); } }, i)));
+  const save = h('button', { type: 'button', class: 'primary', onclick: () => { closeDrawer(); pcCommand({ cmd: 'style', p: p.p, c: st.c, i: st.i }, 'Icône et couleur envoyées au PC'); } }, 'Enregistrer');
+  const reset = h('button', { type: 'button', class: 'ghost', onclick: () => { closeDrawer(); pcCommand({ cmd: 'style', p: p.p, c: null, i: null }, 'Style par défaut envoyé au PC'); } }, 'Par défaut');
+  openDrawer('Icône et couleur', [
+    h('div', { class: 'pc-style-head' }, prev, h('b', {}, p.t)),
+    h('div', { class: 'd-sec' }, h('h4', {}, 'Couleur'), sw),
+    h('div', { class: 'd-sec' }, h('h4', {}, 'Icône'), ig),
+    h('div', { class: 'actions' }, save, reset),
+  ]);
+  paint();
+}
+
+// --- Affichage
+function pcFileRow(p, f) {
+  const playing = pcPlayer.fid === f.f;
+  const loading = pcLib.waiting === f.f;
+  const kept = (pcLib.cached.get(f.f) || -1) >= 0;
+  const tag = f.i ? 'INSTRU' : f.v ? f.v.toUpperCase() : f.e.toUpperCase();
+  return h('div', { class: `pcf${playing ? ' on' : ''}${f.i ? ' instru' : f.v ? ' ver' : ''}`, 'data-f': f.f },
+    h('button', { type: 'button', class: `pcf-play${loading ? ' loading' : ''}`, 'aria-label': playing ? 'Arrêter' : `Écouter ${f.n}`, onclick: () => playPcFile(f) }, icon(playing ? 'pause' : 'play')),
+    h('div', { class: 'pcf-main' },
+      h('div', { class: 'pcf-line' }, h('span', { class: 'pcf-tag' }, tag), h('b', { title: f.n }, f.n), f.l ? h('span', { class: 'pcf-last' }, 'dernière') : null),
+      playing ? h('div', { class: 'pcf-prog', onclick: (e) => { const a = pcPlayer.audio; if (a?.duration) { const r = e.currentTarget.getBoundingClientRect(); a.currentTime = ((e.clientX - r.left) / r.width) * a.duration; } } }, h('i')) : null,
+      h('span', { class: 'pcf-sub' }, playing ? h('span', { class: 'pcf-time' }, '0:00') : loading ? 'Le PC prépare le son…' : kept ? 'Gardé sur ce téléphone' : pcOn() ? 'Sur le PC' : 'PC éteint')),
+    kept ? h('span', { class: 'pcf-kept', title: 'Écoutable même PC éteint' }) : null);
+}
+function pcCard(p) {
+  const files = p.files || [];
+  const open = pcLib.open.has(p.p);
+  const shown = open ? files : files.filter((f, n) => f.i || f.l || n < 3).slice(0, 4);
+  const chip = (txt, cls) => (txt ? h('span', { class: `pcp-chip ${cls || ''}` }, txt) : null);
+  return h('article', { class: `pcp${p.fav ? ' fav' : ''}${p.pending ? ' pending' : ''}`, style: `--pc:${p.c}` },
+    h('div', { class: 'pcp-top' },
+      h('span', { class: 'pc-tile' }, p.ic),
+      h('div', { class: 'pcp-tt' }, h('b', { title: p.t }, p.t),
+        h('span', {}, p.renaming ? 'Renommage en attente du PC…' : `${p.fl ? 'Projet FL' : 'Prod seule'} · ${p.d ? fmtAgo(p.d * 1000) : ''}`)),
+      h('button', { type: 'button', class: `pcp-star${p.fav ? ' on' : ''}`, 'aria-label': p.fav ? 'Retirer des favoris' : 'Mettre en favori',
+        onclick: () => pcCommand({ cmd: 'fav', p: p.p, on: !p.fav }, p.fav ? 'Retiré des favoris' : 'Mis en favori') }, icon('star'))),
+    h('div', { class: 'pcp-chips' }, chip(p.k, p.tb.includes('key') ? 'tb' : ''), chip(p.b ? `${p.b} BPM` : '', p.tb.includes('bpm') ? 'tb' : ''), chip(p.lic, 'lic'),
+      !p.k && !p.b && !p.lic ? h('span', { class: 'pcp-chip faint' }, '—') : null),
+    h('div', { class: 'pcp-files' }, shown.length ? shown.map((f) => pcFileRow(p, f)) : h('p', { class: 'hint', style: 'margin:0' }, 'Aucun son dans ce projet.')),
+    files.length > shown.length || open ? h('button', { type: 'button', class: 'link pcp-more', onclick: () => { if (open) pcLib.open.delete(p.p); else pcLib.open.add(p.p); renderPcView(); } },
+      open ? 'Moins de sons' : `Voir les ${files.length} sons${files.some((f) => f.v) ? ' (par version)' : ''}`) : null,
+    h('div', { class: 'pcp-acts' },
+      h('button', { type: 'button', class: 'ghost', disabled: p.renaming, onclick: () => pcRename(p) }, 'Renommer'),
+      h('button', { type: 'button', class: 'ghost', onclick: () => pcStyle(p) }, 'Icône et couleur')));
+}
+function fmtAgo(ms) {
+  const s = (Date.now() - ms) / 1000;
+  return s < 90 ? 'à l’instant' : s < 3600 ? `il y a ${Math.round(s / 60)} min` : s < 86400 ? `il y a ${Math.round(s / 3600)} h` : s < 86400 * 30 ? `il y a ${Math.round(s / 86400)} j` : new Date(ms).toLocaleDateString('fr-FR');
+}
+function syncPcNav() {
+  const dot = $('#pcNavDot');
+  if (!dot) return;
+  const n = Object.values(pc.queue).filter((q) => q.state === 'sent' || q.state === 'unsent' || q.state === 'sending').length;
+  dot.hidden = !n;
+  dot.textContent = String(n);
+}
+function renderPcView() {
+  syncPcNav();
+  const view = $('#view-pc');
+  if (!WEB || !view?.classList.contains('active')) return;
+  // --- état + file d'attente
+  const st = pcStatusText();
+  if (pc.cur && (Date.now() - pc.cur.at > 30 * 60e3 || pc.queue[pc.cur.v]?.state === 'done' || pc.queue[pc.cur.v]?.state === 'error')) pc.cur = null;
+  const waiting = Object.entries(pc.queue).filter(([id, q]) => (q.state === 'sent' || q.state === 'unsent' || q.state === 'sending') && id !== pc.cur?.v)
+    .sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
+  const recent = Object.entries(pc.queue).filter(([, q]) => q.state === 'done' || q.state === 'error').sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 6);
+  const row = ([id, q], n) => h('div', { class: `pc-row ${q.state}` },
+    n != null ? h('span', { class: 'pcq-n' }, String(n + 1)) : h('span', { class: 'pc-ico' }, icon(q.state === 'done' ? 'check' : 'x')),
+    h('div', { class: 'pc-row-main' }, h('b', {}, displayTitle(q.t || id)),
+      h('span', {}, q.state === 'done' ? (q.file || 'Sur ton PC') : q.state === 'error' ? (q.err || 'Erreur') : q.state === 'unsent' ? 'Partira dès que tu as du réseau' : pcOn() ? 'En file d’attente sur le PC' : 'Arrivera dès que le PC se rallume')),
+    q.state !== 'done' ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc({ id, url: `https://www.youtube.com/watch?v=${id}`, title: q.t }) }, 'Renvoyer') : null);
+  $('#pcLive').replaceChildren(...[
+    h('div', { class: `pc-status${st.ok ? ' ok' : ''}${st.off ? ' off' : ''}` }, h('span', { class: 'pc-led', 'aria-hidden': 'true' }), h('div', {}, h('b', {}, st.t), h('span', {}, st.s))),
+    !pc.info ? h('div', { class: 'actions', style: 'margin-top:12px' }, h('button', { type: 'button', class: 'primary', onclick: () => openPcSetup() }, 'Connecter mon PC')) : null,
+    h('div', { class: 'd-sec' }, h('h4', {}, 'En cours'),
+      pc.cur ? h('div', { class: 'pcq-cur' }, h('b', {}, displayTitle(pc.cur.t)), h('span', {}, `Téléchargement et conversion en WAV sur ton PC${pc.cur.left ? ` · +${pc.cur.left} derrière` : ''}`), h('div', { class: 'pcq-bar' }, h('i')))
+        : h('p', { class: 'hint', style: 'margin:0' }, 'Rien en cours. Touche ', icon('down'), ' sur une prod pour l’envoyer.')),
+    h('div', { class: 'd-sec' }, h('h4', {}, `En attente${waiting.length ? ` · ${waiting.length}` : ''}`),
+      waiting.length ? h('div', { class: 'pc-list' }, waiting.map((e, n) => row(e, n))) : h('p', { class: 'hint', style: 'margin:0' }, 'Aucune prod en attente.')),
+    recent.length ? h('div', { class: 'd-sec' }, h('h4', {}, 'Dernières arrivées'), h('div', { class: 'pc-list' }, recent.map((e) => row(e)))) : null,
+  ].filter(Boolean));
+  // --- projets du PC
+  const all = pcProjects();
+  const q = strip(pcLib.q).toLowerCase();
+  const list = all.filter((p) => (pcLib.filter !== 'fav' || p.fav) && (!q || strip(`${p.t} ${p.k} ${p.files.map((f) => f.n).join(' ')}`).toLowerCase().includes(q)));
+  $('#pcLibMeta').textContent = pcLib.data ? `${list.length} / ${all.length} · liste du PC ${fmtAgo(pcLib.data.at * 1000)}${pcOn() ? '' : ' (gardée ici, PC éteint)'}` : '';
+  $$('#pcLibSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.f === pcLib.filter));
+  const grid = $('#pcLibGrid');
+  if (!pcLib.data) {
+    grid.replaceChildren(h('p', { class: 'muted' }, pc.info ? (pcOn() ? 'Le PC envoie la liste de tes projets…' : 'La liste de tes projets arrivera quand le PC sera allumé (Melofinds PC 3.9 ou plus).') : 'Connecte ton PC pour voir tes projets ici.'));
+    return;
+  }
+  grid.replaceChildren(...(list.length ? list.slice(0, 120).map(pcCard) : [h('p', { class: 'muted' }, all.length ? 'Aucun projet ne correspond.' : 'Aucun projet dans le dossier des projets du PC.')]));
 }
 
 function cmdBlock(text) {
@@ -2895,6 +3295,12 @@ function setupTarget() {
   document.body.classList.add(WEB ? 'web' : 'claude-page');
   if (WEB) {
     $('#navRecs').hidden = false;
+    $('#navPc').hidden = false;
+    $('#pcLibSearch').addEventListener('input', (e) => { pcLib.q = e.target.value; renderPcView(); });
+    $$('#pcLibSeg .seg-btn').forEach((b) => b.addEventListener('click', () => { pcLib.filter = b.dataset.f; local.set('pcLibFilter', pcLib.filter); renderPcView(); }));
+    $('#pcLibRefresh').addEventListener('click', () => askPcLib(true));
+    $('#pcSetupBtn').addEventListener('click', () => openPcSetup());
+    pcAudioStore.load().then(renderPcView);
     const keyBtn = h('button', { type: 'button', class: 'link', id: 'keyBtn', onclick: openKeySettings }, ytKey() ? 'Clé YouTube' : 'Descriptions complètes (clé YouTube, facultatif)');
     $('.results-foot').append(keyBtn);
     if (!ytKey()) pipedInstances();

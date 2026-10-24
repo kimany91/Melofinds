@@ -12,6 +12,7 @@
 import os
 import re
 import struct
+import time
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -471,3 +472,98 @@ def rename(item, new_title, cfg=None):
     cfg["renamed"] = dict(list(ren.items())[-1000:])
     C.save_config(cfg)
     return new
+
+
+# --- Sons d'un projet (instru, versions « 0.1 », « v1.3.3 »…) et liste pour l'app web
+
+AUDIO_EXT = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aif", ".aiff", ".opus"}
+_VER_DOTS = re.compile(r"(?i)(?:^|[\s_\-\[(.#])v?(?:er(?:sion)?\s?)?(\d{1,3}(?:\.\d{1,3}){1,3})(?=$|[\s_\-\])])")
+_VER_V = re.compile(r"(?i)(?:^|[\s_\-\[(])v(?:er(?:sion)?)?\s?(\d{1,3})(?=$|[\s_\-\])])")
+
+
+def version_of(name):
+    """« Haze 1.3.3 », « Haze v2 », « Haze_v0.1 (mix) » → (1, 3, 3) / (2,) / (0, 1), sinon None.
+    Les crochets de clé / BPM / licence sont ignorés."""
+    rest = parse_name(str(name or ""))[0]
+    for rx in (_VER_DOTS, _VER_V):
+        found = rx.findall(rest)
+        if found:
+            return tuple(int(x) for x in found[-1].split("."))
+    return None
+
+
+def file_id(path):
+    """Identifiant court et stable d'un fichier (pour l'app web)."""
+    try:
+        p = str(Path(path).resolve())
+    except OSError:
+        p = str(path)
+    return zlib.crc32(p.lower().encode("utf-8")).to_bytes(4, "big").hex() + format(len(p), "04x")
+
+
+def audio_files(item, limit=60):
+    """Sons du projet : l'instru d'abord, puis les versions dans l'ordre (0.1, 0.2, 1.0…),
+    puis les autres sons, les plus récents d'abord."""
+    instru = item.wav or item.extra.get("instru_path")
+    found = []
+    if item.folder:
+        try:
+            base = len(item.folder.parts)
+            for p in item.folder.rglob("*"):
+                if len(found) >= 400:
+                    break
+                if p.suffix.lower() in AUDIO_EXT and len(p.parts) - base <= 3 and not p.name.startswith(".") and p.is_file():
+                    found.append(p)
+        except OSError:
+            pass
+    elif instru and Path(instru).is_file():
+        found = [Path(instru)]
+    ins_key = str(Path(instru)).lower() if instru else ""
+    out = []
+    for p in found:
+        try:
+            stt = p.stat()
+        except OSError:
+            continue
+        ver = version_of(p.stem)
+        out.append({"path": p, "id": file_id(p), "name": p.stem, "ext": p.suffix.lower()[1:], "ver": ver,
+                    "label": f"v{'.'.join(map(str, ver))}" if ver else "", "size": stt.st_size, "mtime": stt.st_mtime,
+                    "instru": str(p).lower() == ins_key or (not ins_key and p.stem == item.name and p.suffix.lower() == ".wav")})
+    if out and not any(f["instru"] for f in out):
+        wavs = [f for f in out if f["ext"] == "wav" and not f["ver"]]
+        if wavs:
+            min(wavs, key=lambda f: len(f["name"]))["instru"] = True
+    vers = [f for f in out if f["ver"] and not f["instru"]]
+    if vers:
+        max(vers, key=lambda f: f["ver"])["latest"] = True
+    out.sort(key=lambda f: (0 if f["instru"] else 1 if f["ver"] else 2, f["ver"] or (), -f["mtime"]))
+    return out[:limit]
+
+
+def library_index(cfg=None, limit=150):
+    """Tous les projets, en court, pour l'app web (liste gardée sur le téléphone : visible
+    même quand le PC est éteint)."""
+    cfg = cfg if cfg is not None else C.load_config()
+    out = []
+    for it in scan_projects(cfg)[:limit]:
+        files = [{"f": f["id"], "n": f["name"][:140], "e": f["ext"], "v": f["label"], "s": f["size"], "m": int(f["mtime"]),
+                  **({"i": 1} if f["instru"] else {}), **({"l": 1} if f.get("latest") else {})} for f in audio_files(it, 40)]
+        out.append({"p": it.id, "n": it.name[:200], "t": it.title[:160], "k": it.key or "", "b": it.bpm or 0,
+                    "tb": sorted(it.extra.get("tb") or []), "lic": it.lic or "", "fav": 1 if it.fav else 0,
+                    "c": it.extra.get("color"), "ic": it.extra.get("icon"), "d": int(it.date), "fl": 1 if it.flp else 0,
+                    "files": files})
+    return {"at": int(time.time()), "projects": out, "palette": PALETTE, "icons": ICONS}
+
+
+def find_project(pid, cfg=None):
+    return next((it for it in scan_projects(cfg) if it.id == pid), None)
+
+
+def find_audio(fid, cfg=None):
+    """(projet, son) pour un identifiant envoyé par l'app : seulement un son trouvé dans le
+    dossier des projets (jamais un chemin venu de l'extérieur)."""
+    for it in scan_projects(cfg):
+        for f in audio_files(it, 400):
+            if f["id"] == fid:
+                return it, f
+    return None, None

@@ -366,7 +366,7 @@ def manager_window(selftest=False):
         t.configure(fg=FG if on else MUTED)
         g.configure(fg=ACCENT if on else FAINT)
 
-    for k, txt, gl in (("home", "Accueil", ""), ("prods", "Mes projets FL", ""), ("flmake", "FLmake", ""),
+    for k, txt, gl in (("home", "File d'attente", ""), ("prods", "Mes projets FL", ""), ("flmake", "FLmake", ""),
                        ("devices", "Appareils", ""), ("settings", "Réglages", "")):
         nav_item(k, txt, gl)
 
@@ -436,7 +436,8 @@ def manager_window(selftest=False):
             on_show[key]()
 
     # ================= Accueil
-    home = page("home", "Accueil", "Ton PC reçoit les prods envoyées depuis Melofinds Web, en .wav, dans ton dossier.")
+    home = page("home", "File d'attente", "Les prods envoyées depuis Melofinds Web : celle qui arrive, celles qui attendent, "
+                                          "et les dernières reçues (en .wav, dans ton dossier des projets).")
     dl = card(home)
     dl.pack(fill="x", pady=(0, 14))
     dl_top = tk.Frame(dl, bg=PANEL)
@@ -453,6 +454,31 @@ def manager_window(selftest=False):
     dl_bar.pack(side="left", fill="x", expand=True, pady=(12, 0))
     dl_pct = label(dl_barrow, "", 10, FG, bold=True, mono=True)
     dl_pct.pack(side="left", padx=(12, 0), pady=(10, 0))
+
+    waitc = card(home, pady=12)
+    waitc.pack(fill="x", pady=(0, 14))
+    label(waitc, "EN ATTENTE", 8, FAINT, bold=True).pack(anchor="w")
+    wait_box = tk.Frame(waitc, bg=PANEL)
+    wait_box.pack(fill="x", pady=(6, 0))
+    wait_state = {"sig": None}
+
+    def fill_wait(items):
+        if items == wait_state["sig"]:
+            return
+        wait_state["sig"] = items
+        for w in wait_box.winfo_children():
+            w.destroy()
+        if not items:
+            label(wait_box, "Rien en attente. Les prods envoyées pendant qu'une autre arrive s'affichent ici.", 10, MUTED, wrap=680).pack(anchor="w")
+            return
+        for n, t in enumerate(items[:12], 1):
+            r = tk.Frame(wait_box, bg=PANEL)
+            r.pack(fill="x", pady=2)
+            label(r, f"{n}", 9, FAINT, mono=True).pack(side="left", padx=(0, 10))
+            label(r, t, 10, FG).pack(side="left")
+        if len(items) > 12:
+            label(wait_box, f"+ {len(items) - 12} autres", 9, FAINT).pack(anchor="w", pady=(4, 0))
+    fill_wait([])
 
     recent = card(home, pady=12)
     recent.pack(fill="both", expand=True)
@@ -533,7 +559,7 @@ def manager_window(selftest=False):
     a_ren = Btn(acts, "Renommer…")
     a_style = Btn(acts, "Icône et couleur…")
     a_dir = Btn(acts, "Dossier")
-    a_play = Btn(acts, "▶ Instru")
+    a_play = Btn(acts, "♪ Sons")
     for b in (a_play, a_dir, a_style, a_ren, a_open):
         b.pack(side="right", padx=(8, 0))
 
@@ -678,7 +704,7 @@ def manager_window(selftest=False):
             return
         a_open.set(text="Ouvrir dans FL" if it.flp else ("Créer le projet FL" if FM.settings()["template"] else "Ouvrir la prod"))
         ip = it.extra.get("instru_path")
-        a_play.set(enabled=bool(ip and Path(ip).is_file()))
+        a_play.set(enabled=bool((ip and Path(ip).is_file()) or it.folder))
         files = it.extra.get("files")
         sel_lbl.configure(text=f"{it.title[:44]}" + (f"  ·  {files} fichier{'s' if files > 1 else ''}" if files else ""))
 
@@ -703,11 +729,94 @@ def manager_window(selftest=False):
         if it:
             _open_path(it.folder or it.flp.parent)
 
-    def do_play():
-        it = selected()
-        ip = it and it.extra.get("instru_path")
-        if ip and Path(ip).is_file():
-            _open_path(ip)
+    playing = {"path": None, "after": None}
+
+    def stop_sound():
+        playing["path"] = None
+        if C.WINDOWS:
+            try:
+                import winsound
+                winsound.PlaySound(None, winsound.SND_PURGE)
+            except (ImportError, RuntimeError):
+                pass
+
+    def play_sound(path):
+        """Joue un .wav ici (Windows) ; les autres formats s'ouvrent dans le lecteur de Windows."""
+        stop_sound()
+        if C.WINDOWS and str(path).lower().endswith(".wav"):
+            try:
+                import winsound
+                winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                playing["path"] = str(path)
+                return True
+            except (ImportError, RuntimeError):
+                pass
+        _open_path(path)
+        return False
+
+    def do_play(it=None):
+        """Sons du projet : l'instru, les versions (0.1, 1.3.3…) dans l'ordre, les autres sons."""
+        it = it or selected()
+        if not it:
+            return
+        files = L.audio_files(it)
+        dlg, f = dialog("Sons du projet")
+        head = tk.Frame(f, bg=PANEL)
+        head.pack(fill="x")
+        icon_tile(head, it.extra.get("color", L.PALETTE[0]), it.extra.get("icon", L.ICONS[0]), 44).pack(side="left")
+        hx = tk.Frame(head, bg=PANEL)
+        hx.pack(side="left", padx=12)
+        label(hx, it.title[:60], 13, bold=True, wrap=420).pack(anchor="w")
+        nv = sum(1 for x in files if x["ver"])
+        label(hx, f"{len(files)} son{'s' if len(files) > 1 else ''}" + (f" · {nv} version{'s' if nv > 1 else ''}, de la plus ancienne à la plus récente" if nv else ""),
+              9, MUTED).pack(anchor="w")
+        box = tk.Frame(f, bg=PANEL)
+        box.pack(fill="both", pady=(14, 0))
+        rows = {}
+
+        def paint():
+            for pth, (btn, row) in rows.items():
+                on = playing["path"] == pth
+                btn.configure(text="■" if on else "▶", fg=BG if on else FG, bg=ACCENT if on else PANEL3)
+                row.configure(highlightbackground=ACCENT2 if on else LINE)
+
+        def toggle(pth):
+            if playing["path"] == pth:
+                stop_sound()
+            else:
+                play_sound(pth)
+            paint()
+        if not files:
+            label(box, "Aucun son dans ce projet.", 10, MUTED).pack(anchor="w")
+        for x in files:
+            pth = str(x["path"])
+            row = tk.Frame(box, bg=PANEL2, highlightthickness=1, highlightbackground=LINE, padx=10, pady=7)
+            row.pack(fill="x", pady=3)
+            btn = tk.Label(row, text="▶", bg=PANEL3, fg=FG, font=(SYMB, 11), width=3, cursor="hand2")
+            btn.pack(side="left")
+            btn.bind("<Button-1>", lambda e, p=pth: toggle(p))
+            tag = "INSTRU" if x["instru"] else x["label"].upper() if x["ver"] else x["ext"].upper()
+            tcol = GREEN if x["instru"] else ACCENT if x["ver"] else FAINT
+            tk.Label(row, text=tag, bg=PANEL2, fg=tcol, font=(MONO, 8, "bold"), width=9).pack(side="left", padx=(10, 6))
+            label(row, x["name"][:70], 10, FG).pack(side="left")
+            if x.get("latest"):
+                tk.Label(row, text="DERNIÈRE", bg=blend(ACCENT, PANEL2, 0.25), fg=ACCENT, font=(MONO, 7, "bold"), padx=5).pack(side="left", padx=8)
+            o = tk.Label(row, text="Ouvrir", bg=PANEL2, fg=MUTED, font=(FONT, 9), cursor="hand2")
+            o.pack(side="right")
+            o.bind("<Button-1>", lambda e, p=pth: (stop_sound(), paint(), _open_path(p)))
+            rows[pth] = (btn, row)
+        foot = tk.Frame(f, bg=PANEL)
+        foot.pack(fill="x", pady=(14, 0))
+        label(foot, "▶ joue les .wav ici ; les autres formats s'ouvrent dans ton lecteur.", 8, FAINT).pack(side="left")
+
+        def close():
+            stop_sound()
+            dlg.destroy()
+        Btn(foot, "Fermer", close).pack(side="right")
+        dlg.protocol("WM_DELETE_WINDOW", close)
+        dlg.bind("<Escape>", lambda _e: close())
+        dlg.update_idletasks()
+        dlg.geometry(f"+{root.winfo_rootx() + 200}+{root.winfo_rooty() + 90}")
 
     def dialog(title):
         dlg = tk.Toplevel(root, bg=PANEL)
@@ -843,7 +952,7 @@ def manager_window(selftest=False):
     menu.add_command(label="Icône et couleur…", command=do_style)
     menu.add_command(label="Favori ★", command=do_fav)
     menu.add_separator()
-    menu.add_command(label="Écouter l'instru", command=do_play)
+    menu.add_command(label="Écouter les sons (instru, versions)…", command=do_play)
     menu.add_command(label="Ouvrir le dossier", command=do_dir)
     q_var.trace_add("write", lambda *_: fill_prods())
 
@@ -1109,6 +1218,17 @@ def manager_window(selftest=False):
     label(sc, "Melofinds PC reste en ligne tout seul : quand tu fermes ce panneau, quand tu redémarres l'ordinateur "
               "et après chaque mise à jour. Il ne se met hors ligne que si tu appuies sur « Mettre hors ligne ».",
           9, MUTED, wrap=680).pack(anchor="w", pady=(2, 0))
+    rc = card(setp)
+    rc.pack(fill="x", pady=(0, 14))
+
+    def set_remote(v):
+        cfg = C.load_config()
+        cfg["remote"] = bool(v)
+        C.save_config(cfg)
+        toast("Écoute et gestion depuis l'app web " + ("activées" if v else "désactivées"))
+    setting_row(rc, "Écouter et gérer depuis l'app web", "Ta liste de projets et des copies d'écoute légères passent par ntfy.sh pour "
+                    "l'onglet « File d'attente » de Melofinds Web (renommer, icône, couleur, favori, écouter, même PC éteint).",
+                lambda p: Switch(p, C.load_config().get("remote", True) is not False, set_remote))
     pc_ = card(setp)
     pc_.pack(fill="x", pady=(0, 14))
     label(pc_, "Emplacement du programme", 11, bold=True).pack(anchor="w")
@@ -1249,6 +1369,7 @@ def manager_window(selftest=False):
             dl_stage.configure(text=STAGES.get(stage, "…") if stage != "download" else "Téléchargement de l'audio…")
             dl_bar.set(float(pct) if (stage == "download" and pct is not None) else None)
             dl_pct.configure(text=f"{float(pct):.0f} %" if stage == "download" and pct is not None else "")
+            fill_wait([str(x) for x in (p.get("pending") or []) if isinstance(x, str)])
             qn = int(p.get("queue") or 0)
             dl_queue.configure(text=f"+{qn} en attente" if qn else "EN COURS")
             if not dl_barrow.winfo_ismapped():
@@ -1260,6 +1381,7 @@ def manager_window(selftest=False):
                 dl_barrow.pack_forget()
                 last["hist"] = None
                 refresh()
+            fill_wait([])
             dl_title.configure(text="Aucun téléchargement en cours")
             dl_stage.configure(text="Les prods envoyées depuis ton téléphone s'affichent ici pendant qu'elles arrivent.")
             dl_queue.configure(text="")
@@ -1278,7 +1400,7 @@ def manager_window(selftest=False):
         finally:
             root.after(3000, tick)
 
-    root._show, root._select, root._style = show, lambda cid: select(cid), lambda: do_style()  # (tests : captures d'écran)
+    root._show, root._select, root._style, root._sounds = show, lambda cid: select(cid), lambda: do_style(), lambda: do_play()  # (tests : captures d'écran)
     if not selftest:
         I.ensure_autostart()
         if I.wants_online() and not I.worker_running():
