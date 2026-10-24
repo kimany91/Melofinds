@@ -171,29 +171,62 @@ class Remote:
             C.reply(code, {"cmd": cmd, "ok": False, "p": it.id, "err": str(e)[:200]})
         self.want.add(code)
 
-    def tick(self, devices, cfg, force=False):
-        """Envoie la liste des projets aux appareils qui la veulent, ou quand elle a changé
-        (au plus toutes les 10 min, seulement aux appareils actifs ces dernières 24 h)."""
+    @staticmethod
+    def _sig(lib):
+        """Empreinte de la liste sans les dates : les sauvegardes auto de FL ne la renvoient pas."""
+        slim = [{**{k: v for k, v in p.items() if k != "d"}, "files": [{k: v for k, v in f.items() if k not in ("m", "s")} for f in p["files"]]}
+                for p in lib["projects"]]
+        return hashlib.sha1(json.dumps(slim, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+    def tick(self, devices, cfg, final=False):
+        """Liste des projets envoyée à l'app : au démarrage, à chaque changement (au plus
+        toutes les 3 min), quand l'app la demande, et à l'arrêt. Les nouveaux sons
+        (versions exportées…) partent aussi tout seuls en copie d'écoute."""
         now = time.time()
-        if not self.enabled(cfg) or not (self.want or force or now - self.checked > 60):
+        if not self.enabled(cfg) or not devices or not (self.want or final or now - self.checked > 45):
             return
         self.checked = now
+        fmap = {}
         try:
-            lib = L.library_index(cfg)
+            lib = L.library_index(cfg, files_out=fmap)
         except Exception as e:
             log(f"Liste des projets impossible : {e}")
             return
         body = json.dumps(lib, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        sig = hashlib.sha1(json.dumps(lib["projects"], sort_keys=True).encode("utf-8")).hexdigest()
+        sig = self._sig(lib)
         for d in devices:
             code = d["code"]
-            wanted = code in self.want
-            changed = self.sig.get(code) != sig and now - self.active.get(code, 0) < 24 * 3600 and now - self.sent_at.get(code, 0) > 600
-            if not (wanted or changed or force):
+            changed = self.sig.get(code) != sig
+            if not (code in self.want or (changed and (final or now - self.sent_at.get(code, 0) > 180))):
                 continue
             if C.publish_attachment(code, body, "projets.json", {"lib": 1, "n": len(lib["projects"]), "at": lib["at"]}):
                 self.sig[code], self.sent_at[code] = sig, now
-            self.want.discard(code)
+                self.want.discard(code)
+        if not final:
+            self.new_sounds(devices, fmap, now)
+
+    def new_sounds(self, devices, fmap, now):
+        """Sons apparus ou modifiés dans les projets (un export « Haze 1.3.4.wav »…) :
+        copie d'écoute envoyée toute seule, 2 par tour au plus, les plus récents d'abord."""
+        cur = {fid: int(f["mtime"]) for fid, (_, f) in fmap.items()}
+        known = self.st.get("known")
+        if not isinstance(known, dict):  # premier passage : on note ce qui existe déjà
+            self.st["known"] = cur
+            return
+        pushed = self.st.get("pushed") or {}
+        todo = [(fid, m) for fid, m in cur.items() if known.get(fid) != m and now - m > 20 and now - m < 3 * 86400]
+        todo.sort(key=lambda x: -x[1])
+        for fid, m in todo[:2]:
+            known[fid] = m
+            if pushed.get(fid, 0) >= m:  # déjà envoyé (prod qui vient d'arriver)
+                continue
+            it, f = fmap[fid]
+            for d in devices:
+                self.push_audio(d["code"], it, f, auto=True)
+        for fid, m in cur.items():  # sons anciens ou déjà connus : rien à envoyer
+            if fid not in known and now - m >= 3 * 86400:
+                known[fid] = m
+        self.st["known"] = {k: v for k, v in known.items() if k in cur}
 
 
 def _handle(msg, code, d, root, cfg, st, recent, seen, done, left, remote=None):
@@ -309,11 +342,23 @@ def worker(once=False):
     log(f"Melofinds PC {C.VERSION} en ligne.")
     reason = ""
     remote = Remote(st)
+
+    def windows_off():
+        """Windows s'éteint (ou ferme la session) : le téléphone est prévenu tout de suite."""
+        log("Windows s'éteint : le téléphone est prévenu.")
+        for d in C.load_config()["devices"]:
+            if d["code"] in announced:
+                C.reply(d["code"], {"pc": "offline", "version": C.VERSION, "why": "shutdown"}, timeout=3)
+        try:
+            P.stop.write_text("shutdown", encoding="utf-8")
+        except OSError:
+            pass
+    stop_watch = C.watch_windows_shutdown(windows_off)
     try:
         while True:
             if P.stop.exists():
                 reason = _stop_reason()
-                log("Arrêt pour mise à jour." if reason == "update" else "Mis hors ligne.")
+                log({"update": "Arrêt pour mise à jour.", "shutdown": "Arrêt de Windows."}.get(reason, "Mis hors ligne."))
                 break
             C.beat()
             if time.time() - last_cycle > 180:  # retour de veille : on se réannonce
@@ -332,6 +377,7 @@ def worker(once=False):
                 for d in devices:
                     if d["code"] not in announced and C.reply(d["code"], {"pc": "online", "version": C.VERSION, "dossier": str(root), "name": d.get("name", "")}):
                         announced.add(d["code"])
+                        remote.want.add(d["code"])  # la liste des projets part tout de suite
                 if time.time() - last_alive > 3000:
                     last_alive = time.time()
                     for d in devices:
@@ -397,13 +443,16 @@ def worker(once=False):
                 break
             _sleep(C.POLL_SECONDS)
     finally:
-        if reason != "update":  # pendant une mise à jour, le nouveau programme se réannonce tout de suite
+        if reason not in ("update", "shutdown"):  # mise à jour : le nouveau programme se réannonce tout de suite
             try:
-                for d in C.load_config()["devices"]:
+                cfg = C.load_config()
+                remote.tick(cfg["devices"], cfg, final=True)  # dernière liste des projets
+                for d in cfg["devices"]:
                     if d["code"] in announced:
                         C.reply(d["code"], {"pc": "offline", "version": C.VERSION})
             except Exception:
                 pass
+        stop_watch()
         for f in (P.heartbeat, P.pid, P.progress) if reason == "update" else (P.heartbeat, P.pid, P.stop, P.progress):
             try:
                 f.unlink(missing_ok=True)

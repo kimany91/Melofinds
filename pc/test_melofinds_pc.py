@@ -789,3 +789,62 @@ class EcouteEtGestionDepuisLApp(unittest.TestCase):
         r.command(self.CODE, {"cmd": "fav", "p": self.project().id, "on": True}, mpc.load_config())
         self.assertFalse(self.sent[-1]["ok"])
         self.assertFalse(self.project().fav)
+
+
+class EnvoiAutomatiqueALApp(EcouteEtGestionDepuisLApp):
+    """Le PC tient l'app à jour tout seul : liste au démarrage, à chaque changement, à
+    l'arrêt ; les nouveaux sons (versions exportées) partent en copie d'écoute."""
+
+    def devices(self):
+        return mpc.load_config()["devices"]
+
+    def test_liste_au_demarrage_puis_seulement_si_ca_change(self):
+        r = W.Remote(mpc.load_state())
+        r.want.add(self.CODE)  # annoncé en ligne → liste tout de suite
+        r.tick(self.devices(), mpc.load_config())
+        libs = lambda: [m for fn, m, _ in self.files if fn == "projets.json"]
+        self.assertEqual(len(libs()), 1)
+        r.checked = 0
+        r.tick(self.devices(), mpc.load_config())
+        self.assertEqual(len(libs()), 1)  # rien n'a changé
+        # sauvegarde auto de FL (dates seulement) : pas de renvoi
+        os.utime(self.root / self.name / f"{self.name}.wav", (time.time() + 50, time.time() + 50))
+        r.checked, r.sent_at[self.CODE] = 0, 0
+        r.tick(self.devices(), mpc.load_config())
+        self.assertEqual(len(libs()), 1)
+        # nouveau projet : renvoyée (au plus toutes les 3 min)
+        (self.root / "Nuit").mkdir()
+        (self.root / "Nuit" / "Nuit.wav").write_bytes(fake_wav(1))
+        r.checked, r.sent_at[self.CODE] = 0, time.time() - 60
+        r.tick(self.devices(), mpc.load_config())
+        self.assertEqual(len(libs()), 1)  # envoyée il y a moins de 3 min
+        r.checked, r.sent_at[self.CODE] = 0, 0
+        r.tick(self.devices(), mpc.load_config())
+        self.assertEqual(len(libs()), 2)
+        # arrêt : dernière liste si elle a changé
+        (self.root / "Brume").mkdir()
+        (self.root / "Brume" / "Brume 0.1.mp3").write_bytes(b"x")  # projet sans .wav ni .flp : compté quand même
+        r.tick(self.devices(), mpc.load_config(), final=True)
+        self.assertEqual(len(libs()), 3)
+        self.assertIn("Brume", [p["t"] for p in L.library_index()["projects"]])
+
+    def test_nouvelle_version_envoyee_toute_seule(self):
+        r = W.Remote(mpc.load_state())
+        r.tick(self.devices(), mpc.load_config())  # 1er passage : l'existant est noté, rien n'est envoyé
+        self.assertFalse([m for _, m, _ in self.files if "aud" in m])
+        new = self.root / self.name / "Haze 1.4.wav"
+        new.write_bytes(fake_wav(1))
+        old = time.time() - 60
+        os.utime(new, (old, old))
+        r.checked = 0
+        r.tick(self.devices(), mpc.load_config())
+        sent = [m for _, m, _ in self.files if "aud" in m]
+        self.assertEqual({(m["n"], m["v"]) for m in sent}, {("Haze 1.4", "v1.4")})
+        r.checked = 0
+        n = len(self.files)
+        r.tick(self.devices(), mpc.load_config())
+        self.assertEqual(len([1 for _, m, _ in self.files[n:] if "aud" in m]), 0)  # pas deux fois
+
+    def test_versions_fl(self):
+        self.assertEqual(L.version_of("Haze_2"), (2,))
+        self.assertEqual(L.version_of("Haze_2 [C# min, 150 BPM]"), (2,))

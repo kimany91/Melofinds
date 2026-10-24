@@ -80,14 +80,12 @@ def selftest(out):
                 w.setnchannels(2)
                 w.setsampwidth(2)
                 w.setframerate(44100)
-                frames = bytearray()
-                for i in range(44100 * 180):
-                    v = int(8000 * math.sin(i * 440 * 2 * math.pi / 44100) + 3000 * math.sin(i * 0.37))
-                    frames += struct.pack("<hh", v, v)
-                w.writeframes(bytes(frames))
-            out = C.make_preview(src, Path(d) / "ecoute.m4a")
-            n = out.stat().st_size
-            res["preview"] = {"bytes": n, "parts": len(C.chunks(out.read_bytes())), "ok": 0 < n <= 2 * C.ATTACH_MAX}
+                second = b"".join(struct.pack("<hh", v, v) for v in (int(8000 * math.sin(i * 440 * 2 * math.pi / 44100)
+                                                                         + 3000 * math.sin(i * 0.37)) for i in range(44100)))
+                w.writeframes(second * 180)  # 3 min (une seconde répétée : rapide)
+            prev = C.make_preview(src, Path(d) / "ecoute.m4a")
+            n = prev.stat().st_size
+            res["preview"] = {"bytes": n, "parts": len(C.chunks(prev.read_bytes())), "ok": 0 < n <= 2 * C.ATTACH_MAX}
     except Exception as e:
         res["preview"] = {"ok": False, "err": str(e)[:200]}
     # Tunebat (informatif) : une prod connue, sortie sur Spotify par son beatmaker

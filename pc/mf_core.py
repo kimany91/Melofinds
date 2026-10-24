@@ -32,7 +32,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.9.0"
+VERSION = "3.10.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -559,10 +559,10 @@ def http_post(url, data, timeout=15):
         return res.read()
 
 
-def reply(code, payload):
+def reply(code, payload, timeout=15):
     """Prévient l'app (sujet <code>-ok)."""
     try:
-        http_post(f"{NTFY}/{code}-ok", json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        http_post(f"{NTFY}/{code}-ok", json.dumps(payload, ensure_ascii=False).encode("utf-8"), timeout=timeout)
         return True
     except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as e:
         log(f"Impossible de prévenir l'app : {e}")
@@ -960,6 +960,73 @@ def apply_update(progress=None, reopen=False):
                 raise
     log(f"Mise à jour vers la version {ver} lancée")
     return f"Mise à jour vers la version {ver}…"
+
+
+def watch_windows_shutdown(callback):
+    """Fenêtre invisible qui reçoit « Windows s'éteint / ferme la session » et appelle
+    callback (quelques secondes au plus). Renvoie une fonction qui arrête la surveillance."""
+    if not WINDOWS:
+        return lambda: None
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    LRESULT = ctypes.c_ssize_t
+    WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.DefWindowProcW.restype = LRESULT
+    user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_int, ctypes.c_int,
+                                       ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+    class WNDCLASSW(ctypes.Structure):
+        _fields_ = [("style", wintypes.UINT), ("lpfnWndProc", WNDPROC), ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
+                    ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON), ("hCursor", wintypes.HANDLE),
+                    ("hbrBackground", wintypes.HBRUSH), ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR)]
+    state = {"done": False, "hwnd": None}
+
+    def proc(hwnd, msg, wp, lp):
+        if msg == 0x0011:  # WM_QUERYENDSESSION : on ne bloque jamais l'arrêt
+            return 1
+        if msg == 0x0016:  # WM_ENDSESSION
+            if wp and not state["done"]:
+                state["done"] = True
+                try:
+                    callback()
+                except Exception as e:
+                    log(f"Arrêt de Windows : {e}")
+            return 0
+        return user32.DefWindowProcW(hwnd, msg, wp, lp)
+    wndproc = WNDPROC(proc)
+
+    def run():
+        try:
+            hinst = kernel32.GetModuleHandleW(None)
+            wc = WNDCLASSW()
+            wc.lpfnWndProc = wndproc
+            wc.hInstance = hinst
+            wc.lpszClassName = "MelofindsPCWorker"
+            user32.RegisterClassW(ctypes.byref(wc))
+            hwnd = user32.CreateWindowExW(0, "MelofindsPCWorker", "Melofinds PC (en ligne)", 0, 0, 0, 0, 0, None, None, hinst, None)
+            if not hwnd:
+                return
+            state["hwnd"] = hwnd
+            msg = wintypes.MSG()
+            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+        except Exception as e:
+            log(f"Surveillance de l'arrêt de Windows indisponible : {e}")
+    threading.Thread(target=run, name="arret-windows", daemon=True).start()
+
+    def stop():
+        if state["hwnd"]:
+            user32.PostMessageW(state["hwnd"], 0x0012, 0, 0)  # WM_QUIT
+    stop.wndproc = wndproc  # garde la fonction en vie
+    return stop
 
 
 def _try_lock(f):

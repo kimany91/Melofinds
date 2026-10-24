@@ -171,13 +171,20 @@ ouvre le site dans Chrome) :
   `v2`, `1.3.3`…) sont triés par version, la plus récente est marquée « dernière ».
   Le PC envoie une copie d'écoute légère (AAC 96 kb/s, ~2 Mo pour 3 min), découpée en
   pièces jointes ntfy.sh de 1,9 Mo.
-- **PC éteint** : la liste des projets et les sons déjà écoutés (60 au plus), plus la
-  dernière prod reçue, que le PC envoie toute seule, restent sur le téléphone : tout se
-  voit et s'écoute. Un renommage, un style ou un favori fait PC éteint part dès qu'il se
-  rallume.
+- **Toujours à jour** : le PC envoie la liste de ses projets dès qu'il se met en ligne,
+  à chaque changement (nouveau projet, renommage, nouvelle version… pas les sauvegardes
+  auto de FL), et une dernière fois quand il s'arrête. Chaque nouveau son exporté dans
+  un projet (« Haze 1.4.wav ») part tout seul en copie d'écoute. Quand Windows s'éteint,
+  le téléphone est prévenu tout de suite (« PC éteint »).
+- Versions reconnues : `0.1`, `1.3.3`, `v2`, `version 3`, `Haze_2` (nouvelle version de
+  FL), dans le dossier du projet et ses sous-dossiers (.wav, .mp3, .flac, .m4a…).
+- **PC éteint** : la liste des projets et les sons déjà écoutés (60 au plus) restent sur
+  le téléphone : tout se voit et s'écoute. Un renommage, un style ou un favori fait PC
+  éteint part dès qu'il se rallume.
+- PC trop ancien (avant 3.10) : l'onglet le dit, avec un bouton « Mettre à jour le PC ».
 - Limites de ntfy.sh (gratuit) : pièces jointes gardées 3 h, 20 Mo par 3 h et ~250
   envois par jour pour le PC ; le PC envoie donc au plus 25 copies d'écoute par heure
-  (17 Mo par 3 h), la liste seulement quand elle change (toutes les 10 min au plus) ou
+  (17 Mo par 3 h), la liste seulement quand elle change (toutes les 3 min au plus) ou
   quand l'app la demande, et se signale toutes les 50 min.
 - À désactiver dans Melofinds PC → Réglages → « Écouter et gérer depuis l'app web ».
 

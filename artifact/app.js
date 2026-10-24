@@ -2691,7 +2691,7 @@ function listenPc() {
     if (m.pc === 'online' || m.pc === 'alive' || m.pc === 'offline' || m.pong) {
       const at = (d.time || 0) * 1000;
       if (at >= (pc.info?.at || 0)) {
-        pc.info = { ...(pc.info || {}), at, offline: m.pc === 'offline', version: String(m.version || pc.info?.version || ''), dossier: String(m.dossier || pc.info?.dossier || ''), name: String(m.name || pc.info?.name || '') };
+        pc.info = { ...(pc.info || {}), at, offline: m.pc === 'offline', why: m.pc === 'offline' ? String(m.why || '').slice(0, 20) : '', version: String(m.version || pc.info?.version || ''), dossier: String(m.dossier || pc.info?.dossier || ''), name: String(m.name || pc.info?.name || '') };
         local.set('pcInfo', pc.info);
       }
       if (m.pong && pc.onPong) pc.onPong(m);
@@ -2813,7 +2813,7 @@ function pcStatusText() {
   const ago = Date.now() - (pc.info.at || 0);
   const when = ago < 90e3 ? 'à l’instant' : ago < 3600e3 ? `il y a ${Math.round(ago / 60e3)} min` : ago < 864e5 ? `il y a ${Math.round(ago / 3600e3)} h` : `il y a ${Math.round(ago / 864e5)} j`;
   const waiting = Object.values(pc.queue).filter((q) => q.state === 'sent' || q.state === 'unsent').length;
-  if (!pcOn()) return { ok: false, off: true, t: pc.info.offline ? 'PC hors ligne' : 'PC éteint ou hors ligne', s: `Dernier signe ${when}. ${waiting ? `${waiting} prod${waiting > 1 ? 's' : ''} en file d’attente : elle${waiting > 1 ? 's' : ''} arrivera${waiting > 1 ? 'nt' : ''} dès qu’il se rallume.` : 'Tes envois l’attendront et arriveront dès qu’il se rallume.'}` };
+  if (!pcOn()) return { ok: false, off: true, t: pc.info.offline ? (pc.info.why === 'shutdown' ? 'PC éteint' : 'PC hors ligne') : 'PC éteint ou hors ligne', s: `Dernier signe ${when}. ${waiting ? `${waiting} prod${waiting > 1 ? 's' : ''} en file d’attente : elle${waiting > 1 ? 's' : ''} arrivera${waiting > 1 ? 'nt' : ''} dès qu’il se rallume.` : 'Tes envois l’attendront et arriveront dès qu’il se rallume.'}` };
   return { ok: true, t: `PC en ligne${pc.info.version ? ` · version ${pc.info.version}` : ''}`, s: `${pc.info.name ? `Ce téléphone s’appelle « ${pc.info.name} » sur le PC · ` : ''}Dernier signe ${when}${pc.info.dossier ? ` · dossier ${pc.info.dossier}` : ''}` };
 }
 function renderPcStatus() {
@@ -3045,35 +3045,89 @@ function pcProjects() {
 }
 
 // --- Lecture
+function pcFindFile(fid) {
+  for (const p of pcProjects()) {
+    const f = p.files.find((x) => x.f === fid);
+    if (f) return { p, f };
+  }
+  return null;
+}
+// « Haze [C# min, 150 BPM] [FFP] » → « Haze » (la clé / le BPM sont déjà sur la carte)
+const pcName = (n) => String(n || '').replace(/(\s*\[[^[\]]*\])+\s*$/, '').trim() || String(n || '');
 function pcStop(silent) {
-  if (pcPlayer.audio) { pcPlayer.audio.pause(); URL.revokeObjectURL(pcPlayer.url); }
+  const a = pcPlayer.audio;
+  if (a) { a.pause(); a.onended = null; a.ontimeupdate = null; a.onplay = null; a.onpause = null; URL.revokeObjectURL(pcPlayer.url); }
   Object.assign(pcPlayer, { audio: null, fid: null, url: '' });
+  renderPcMini();
   if (!silent) renderPcView();
+}
+function pcSeek(e) {
+  e.stopPropagation();
+  const a = pcPlayer.audio;
+  if (!a?.duration) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  a.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * a.duration;
+  pcProgress();
+}
+function pcProgress() {
+  const a = pcPlayer.audio;
+  if (!a) return;
+  const pct = a.duration ? (a.currentTime / a.duration) * 100 : 0;
+  $$(`.pcf[data-f="${pcPlayer.fid}"] .pcf-prog i, #pcMini .pcm-bar i`).forEach((i) => { i.style.width = `${pct}%`; });
+  const t = `${fmtTime(a.currentTime)} / ${fmtTime(a.duration || 0)}`;
+  $$(`.pcf[data-f="${pcPlayer.fid}"] .pcf-time, #pcMini .pcm-time`).forEach((el) => { el.textContent = t; });
 }
 function playPcBlob(fid, blob) {
   pcStop(true);
-  if (isPlaying()) { player.userPaused = true; ytSend('pauseVideo'); player.state = 2; renderMini(); }
+  if (player.item) stopPlayer();
   stopTake();
   const url = URL.createObjectURL(blob);
   const a = pcAudioEl();
   a.src = url;
   a.onended = () => pcStop();
-  a.ontimeupdate = () => {
-    const bar = $(`.pcf[data-f="${fid}"] .pcf-prog i`);
-    if (bar && a.duration) bar.style.width = `${(a.currentTime / a.duration) * 100}%`;
-    const tm = $(`.pcf[data-f="${fid}"] .pcf-time`);
-    if (tm) tm.textContent = `${fmtTime(a.currentTime)} / ${fmtTime(a.duration || 0)}`;
-  };
+  a.ontimeupdate = pcProgress;
+  a.onplay = () => { renderPcMini(); renderPcView(); };
+  a.onpause = () => { renderPcMini(); renderPcView(); };
   Object.assign(pcPlayer, { audio: a, fid, url });
   a.play().catch(() => {
     // le son est arrivé longtemps après le toucher : le navigateur demande un nouveau toucher
     if (pcPlayer.audio === a) pcStop();
     toast('Son prêt : touche ▶ pour l’écouter');
   });
+  renderPcMini();
   renderPcView();
 }
+// Barre de lecture en bas de l'écran : reste visible quand on fait défiler
+function renderPcMini() {
+  let bar = $('#pcMini');
+  const a = pcPlayer.audio;
+  if (!a) {
+    if (bar) bar.hidden = true;
+    document.body.classList.remove('pc-playing');
+    return;
+  }
+  if (!bar) { bar = h('div', { class: 'pc-mini', id: 'pcMini', role: 'region', 'aria-label': 'Lecture d’un son du PC' }); document.body.append(bar); }
+  const hit = pcFindFile(pcPlayer.fid);
+  bar.style.setProperty('--pc', hit?.p.c || '#8b5cf6');
+  bar.replaceChildren(
+    h('span', { class: 'pc-tile sm' }, hit?.p.ic || '♪'),
+    h('div', { class: 'pcm-main' },
+      h('b', {}, hit ? (hit.f.i ? pcName(hit.p.t) : pcName(hit.f.n)) : 'Son du PC'),
+      h('span', {}, hit ? `${hit.f.i ? 'Instru' : hit.f.v || hit.f.e.toUpperCase()} · ${pcName(hit.p.t)}` : ''),
+      h('div', { class: 'pcm-bar', onclick: pcSeek }, h('i'))),
+    h('span', { class: 'pcm-time' }, '0:00'),
+    h('button', { type: 'button', class: 'pcm-btn', 'aria-label': a.paused ? 'Lecture' : 'Pause', onclick: () => (a.paused ? a.play().catch(() => {}) : a.pause()) }, icon(a.paused ? 'play' : 'pause')),
+    h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Arrêter', onclick: () => pcStop() }, icon('x')));
+  bar.hidden = false;
+  document.body.classList.add('pc-playing');
+  pcProgress();
+}
 async function playPcFile(f) {
-  if (pcPlayer.fid === f.f) { pcStop(); return; }
+  if (pcPlayer.fid === f.f && pcPlayer.audio) {
+    const a = pcPlayer.audio;
+    if (a.paused) a.play().catch(() => {}); else a.pause();
+    return;
+  }
   unlockPcAudio();
   const have = await pcAudioStore.get(f.f);
   if (have && (have.m >= f.m || !pcOn())) {
@@ -3139,35 +3193,42 @@ function pcStyle(p) {
 
 // --- Affichage
 function pcFileRow(p, f) {
-  const playing = pcPlayer.fid === f.f;
+  const cur = pcPlayer.fid === f.f && !!pcPlayer.audio;
+  const playing = cur && !pcPlayer.audio.paused;
   const loading = pcLib.waiting === f.f;
-  const kept = (pcLib.cached.get(f.f) || -1) >= 0;
-  const tag = f.i ? 'INSTRU' : f.v ? f.v.toUpperCase() : f.e.toUpperCase();
-  return h('div', { class: `pcf${playing ? ' on' : ''}${f.i ? ' instru' : f.v ? ' ver' : ''}`, 'data-f': f.f },
-    h('button', { type: 'button', class: `pcf-play${loading ? ' loading' : ''}`, 'aria-label': playing ? 'Arrêter' : `Écouter ${f.n}`, onclick: () => playPcFile(f) }, icon(playing ? 'pause' : 'play')),
-    h('div', { class: 'pcf-main' },
-      h('div', { class: 'pcf-line' }, h('span', { class: 'pcf-tag' }, tag), h('b', { title: f.n }, f.n), f.l ? h('span', { class: 'pcf-last' }, 'dernière') : null),
-      playing ? h('div', { class: 'pcf-prog', onclick: (e) => { const a = pcPlayer.audio; if (a?.duration) { const r = e.currentTarget.getBoundingClientRect(); a.currentTime = ((e.clientX - r.left) / r.width) * a.duration; } } }, h('i')) : null,
-      h('span', { class: 'pcf-sub' }, playing ? h('span', { class: 'pcf-time' }, '0:00') : loading ? 'Le PC prépare le son…' : kept ? 'Gardé sur ce téléphone' : pcOn() ? 'Sur le PC' : 'PC éteint')),
+  const kept = pcLib.cached.has(f.f);
+  const sub = cur ? null : loading ? 'Le PC prépare le son…' : `${kept ? 'Gardé sur ce téléphone' : pcOn() ? 'Sur le PC' : 'PC éteint'}${f.e && f.e !== 'wav' ? ` · ${f.e.toUpperCase()}` : ''}`;
+  return h('div', { class: `pcf${cur ? ' on' : ''}${f.i ? ' instru' : f.v ? ' ver' : ''}`, 'data-f': f.f },
+    h('button', { type: 'button', class: `pcf-play${loading ? ' loading' : ''}`, 'aria-label': playing ? 'Pause' : `Écouter ${f.n}`, onclick: () => playPcFile(f) }, icon(playing ? 'pause' : 'play')),
+    h('div', { class: 'pcf-main', onclick: () => playPcFile(f) },
+      h('div', { class: 'pcf-line' }, f.v ? h('span', { class: 'pcf-tag' }, f.v) : null, h('b', { title: f.n }, f.i ? 'Instru' : pcName(f.n)), f.l ? h('span', { class: 'pcf-last' }, 'dernière') : null),
+      cur ? h('div', { class: 'pcf-prog', onclick: pcSeek }, h('i')) : null,
+      h('span', { class: 'pcf-sub' }, cur ? h('span', { class: 'pcf-time' }, '0:00') : sub)),
     kept ? h('span', { class: 'pcf-kept', title: 'Écoutable même PC éteint' }) : null);
 }
 function pcCard(p) {
   const files = p.files || [];
+  const instru = files.filter((f) => f.i);
+  const vers = files.filter((f) => !f.i && f.v);
+  const other = files.filter((f) => !f.i && !f.v);
   const open = pcLib.open.has(p.p);
-  const shown = open ? files : files.filter((f, n) => f.i || f.l || n < 3).slice(0, 4);
   const chip = (txt, cls) => (txt ? h('span', { class: `pcp-chip ${cls || ''}` }, txt) : null);
+  const sec = (title, list) => (list.length ? h('div', { class: 'pcp-sec' }, h('h5', {}, title), ...list.map((f) => pcFileRow(p, f))) : null);
   return h('article', { class: `pcp${p.fav ? ' fav' : ''}${p.pending ? ' pending' : ''}`, style: `--pc:${p.c}` },
     h('div', { class: 'pcp-top' },
       h('span', { class: 'pc-tile' }, p.ic),
-      h('div', { class: 'pcp-tt' }, h('b', { title: p.t }, p.t),
-        h('span', {}, p.renaming ? 'Renommage en attente du PC…' : `${p.fl ? 'Projet FL' : 'Prod seule'} · ${p.d ? fmtAgo(p.d * 1000) : ''}`)),
+      h('div', { class: 'pcp-tt' }, h('b', { title: p.t }, pcName(p.t)),
+        h('span', {}, p.renaming ? 'Renommage en attente du PC…' : [p.fl ? 'Projet FL' : 'Prod', p.d ? fmtAgo(p.d * 1000) : '', vers.length ? `${vers.length} version${vers.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · '))),
       h('button', { type: 'button', class: `pcp-star${p.fav ? ' on' : ''}`, 'aria-label': p.fav ? 'Retirer des favoris' : 'Mettre en favori',
         onclick: () => pcCommand({ cmd: 'fav', p: p.p, on: !p.fav }, p.fav ? 'Retiré des favoris' : 'Mis en favori') }, icon('star'))),
-    h('div', { class: 'pcp-chips' }, chip(p.k, p.tb.includes('key') ? 'tb' : ''), chip(p.b ? `${p.b} BPM` : '', p.tb.includes('bpm') ? 'tb' : ''), chip(p.lic, 'lic'),
-      !p.k && !p.b && !p.lic ? h('span', { class: 'pcp-chip faint' }, '—') : null),
-    h('div', { class: 'pcp-files' }, shown.length ? shown.map((f) => pcFileRow(p, f)) : h('p', { class: 'hint', style: 'margin:0' }, 'Aucun son dans ce projet.')),
-    files.length > shown.length || open ? h('button', { type: 'button', class: 'link pcp-more', onclick: () => { if (open) pcLib.open.delete(p.p); else pcLib.open.add(p.p); renderPcView(); } },
-      open ? 'Moins de sons' : `Voir les ${files.length} sons${files.some((f) => f.v) ? ' (par version)' : ''}`) : null,
+    p.k || p.b || p.lic ? h('div', { class: 'pcp-chips' }, chip(p.k, p.tb.includes('key') ? 'tb' : ''), chip(p.b ? `${p.b} BPM` : '', p.tb.includes('bpm') ? 'tb' : ''), chip(p.lic, 'lic')) : null,
+    files.length ? null : h('p', { class: 'hint', style: 'margin:0' }, 'Aucun son dans ce projet.'),
+    sec('Instru', instru),
+    sec(`Versions · ${vers.length}`, vers),
+    other.length ? h('div', { class: 'pcp-sec' },
+      h('button', { type: 'button', class: 'pcp-more', 'aria-expanded': open ? 'true' : 'false', onclick: () => { if (open) pcLib.open.delete(p.p); else pcLib.open.add(p.p); renderPcView(); } },
+        `${open ? '▾' : '▸'} Autres sons · ${other.length}`),
+      ...(open ? other.map((f) => pcFileRow(p, f)) : [])) : null,
     h('div', { class: 'pcp-acts' },
       h('button', { type: 'button', class: 'ghost', disabled: p.renaming, onclick: () => pcRename(p) }, 'Renommer'),
       h('button', { type: 'button', class: 'ghost', onclick: () => pcStyle(p) }, 'Icône et couleur')));
@@ -3176,12 +3237,27 @@ function fmtAgo(ms) {
   const s = (Date.now() - ms) / 1000;
   return s < 90 ? 'à l’instant' : s < 3600 ? `il y a ${Math.round(s / 60)} min` : s < 86400 ? `il y a ${Math.round(s / 3600)} h` : s < 86400 * 30 ? `il y a ${Math.round(s / 86400)} j` : new Date(ms).toLocaleDateString('fr-FR');
 }
+const versionLt = (a, b) => {
+  const x = String(a || '0').split('.').map(Number);
+  const y = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0);
+  return false;
+};
 function syncPcNav() {
   const dot = $('#pcNavDot');
   if (!dot) return;
   const n = Object.values(pc.queue).filter((q) => q.state === 'sent' || q.state === 'unsent' || q.state === 'sending').length;
   dot.hidden = !n;
   dot.textContent = String(n);
+}
+function pcUpdateBtn() {
+  const b = h('button', { type: 'button', class: 'primary' }, 'Mettre à jour le PC');
+  b.addEventListener('click', async () => {
+    b.disabled = true;
+    try { await ntfyPublish({ update: 1 }); toast(pcOn() ? 'Le PC se met à jour… il revient tout seul' : 'PC éteint : il se mettra à jour en se rallumant'); } catch { toast('Pas de réseau'); }
+    setTimeout(() => { b.disabled = false; }, 5000);
+  });
+  return b;
 }
 function renderPcView() {
   syncPcNav();
@@ -3192,31 +3268,33 @@ function renderPcView() {
   if (pc.cur && (Date.now() - pc.cur.at > 30 * 60e3 || pc.queue[pc.cur.v]?.state === 'done' || pc.queue[pc.cur.v]?.state === 'error')) pc.cur = null;
   const waiting = Object.entries(pc.queue).filter(([id, q]) => (q.state === 'sent' || q.state === 'unsent' || q.state === 'sending') && id !== pc.cur?.v)
     .sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
-  const recent = Object.entries(pc.queue).filter(([, q]) => q.state === 'done' || q.state === 'error').sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 6);
+  const recent = Object.entries(pc.queue).filter(([, q]) => q.state === 'done' || q.state === 'error').sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 3);
   const row = ([id, q], n) => h('div', { class: `pc-row ${q.state}` },
     n != null ? h('span', { class: 'pcq-n' }, String(n + 1)) : h('span', { class: 'pc-ico' }, icon(q.state === 'done' ? 'check' : 'x')),
     h('div', { class: 'pc-row-main' }, h('b', {}, displayTitle(q.t || id)),
-      h('span', {}, q.state === 'done' ? (q.file || 'Sur ton PC') : q.state === 'error' ? (q.err || 'Erreur') : q.state === 'unsent' ? 'Partira dès que tu as du réseau' : pcOn() ? 'En file d’attente sur le PC' : 'Arrivera dès que le PC se rallume')),
-    q.state !== 'done' ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc({ id, url: `https://www.youtube.com/watch?v=${id}`, title: q.t }) }, 'Renvoyer') : null);
+      h('span', {}, q.state === 'done' ? pcName(String(q.file || 'Sur ton PC').replace(/\.wav$/i, '')) : q.state === 'error' ? (q.err || 'Erreur') : q.state === 'unsent' ? 'Partira dès que tu as du réseau' : pcOn() ? 'En file d’attente sur le PC' : 'Arrivera dès que le PC se rallume')),
+    q.state !== 'done' ? h('button', { type: 'button', class: 'ghost sm', onclick: () => sendToPc({ id, url: `https://www.youtube.com/watch?v=${id}`, title: q.t }) }, 'Renvoyer') : null);
+  const old = pc.info?.version && versionLt(pc.info.version, '3.10.0');
   $('#pcLive').replaceChildren(...[
     h('div', { class: `pc-status${st.ok ? ' ok' : ''}${st.off ? ' off' : ''}` }, h('span', { class: 'pc-led', 'aria-hidden': 'true' }), h('div', {}, h('b', {}, st.t), h('span', {}, st.s))),
-    !pc.info ? h('div', { class: 'actions', style: 'margin-top:12px' }, h('button', { type: 'button', class: 'primary', onclick: () => openPcSetup() }, 'Connecter mon PC')) : null,
-    h('div', { class: 'd-sec' }, h('h4', {}, 'En cours'),
-      pc.cur ? h('div', { class: 'pcq-cur' }, h('b', {}, displayTitle(pc.cur.t)), h('span', {}, `Téléchargement et conversion en WAV sur ton PC${pc.cur.left ? ` · +${pc.cur.left} derrière` : ''}`), h('div', { class: 'pcq-bar' }, h('i')))
-        : h('p', { class: 'hint', style: 'margin:0' }, 'Rien en cours. Touche ', icon('down'), ' sur une prod pour l’envoyer.')),
-    h('div', { class: 'd-sec' }, h('h4', {}, `En attente${waiting.length ? ` · ${waiting.length}` : ''}`),
-      waiting.length ? h('div', { class: 'pc-list' }, waiting.map((e, n) => row(e, n))) : h('p', { class: 'hint', style: 'margin:0' }, 'Aucune prod en attente.')),
-    recent.length ? h('div', { class: 'd-sec' }, h('h4', {}, 'Dernières arrivées'), h('div', { class: 'pc-list' }, recent.map((e) => row(e)))) : null,
+    !pc.info ? h('div', { class: 'actions' }, h('button', { type: 'button', class: 'primary', onclick: () => openPcSetup() }, 'Connecter mon PC')) : null,
+    old ? h('div', { class: 'pc-old' }, h('div', {}, h('b', {}, `Ton PC a la version ${pc.info.version}`),
+      h('span', {}, 'Mets-le à jour pour voir ici tes projets, tes versions et les écouter : la liste arrive toute seule ensuite.')), pcUpdateBtn()) : null,
+    pc.cur ? h('div', { class: 'pcq-cur' }, h('span', { class: 'pcq-k' }, 'En cours'), h('b', {}, displayTitle(pc.cur.t)),
+      h('span', {}, `Téléchargement et conversion en WAV sur ton PC${pc.cur.left ? ` · +${pc.cur.left} derrière` : ''}`), h('div', { class: 'pcq-bar' }, h('i'))) : null,
+    waiting.length ? h('div', { class: 'pcq-sec' }, h('h4', {}, `En attente · ${waiting.length}`), h('div', { class: 'pc-list' }, waiting.map((e, n) => row(e, n)))) : null,
+    !pc.cur && !waiting.length && pc.info ? h('p', { class: 'hint pcq-empty' }, 'Rien en cours ni en attente. Touche ', icon('down'), ' sur une prod pour l’envoyer sur ton PC.') : null,
+    recent.length ? h('div', { class: 'pcq-sec' }, h('h4', {}, 'Dernières arrivées'), h('div', { class: 'pc-list' }, recent.map((e) => row(e)))) : null,
   ].filter(Boolean));
   // --- projets du PC
   const all = pcProjects();
   const q = strip(pcLib.q).toLowerCase();
-  const list = all.filter((p) => (pcLib.filter !== 'fav' || p.fav) && (!q || strip(`${p.t} ${p.k} ${p.files.map((f) => f.n).join(' ')}`).toLowerCase().includes(q)));
-  $('#pcLibMeta').textContent = pcLib.data ? `${list.length} / ${all.length} · liste du PC ${fmtAgo(pcLib.data.at * 1000)}${pcOn() ? '' : ' (gardée ici, PC éteint)'}` : '';
+  const list = all.filter((p) => (pcLib.filter !== 'fav' || p.fav) && (!q || strip(`${p.t} ${p.k} ${p.files.map((f) => `${f.n} ${f.v}`).join(' ')}`).toLowerCase().includes(q)));
+  $('#pcLibMeta').textContent = pcLib.data ? `${list.length} projet${list.length > 1 ? 's' : ''}${list.length !== all.length ? ` sur ${all.length}` : ''} · mis à jour ${fmtAgo(pcLib.data.at * 1000)}${pcOn() ? '' : ' · gardé ici, PC éteint'}` : '';
   $$('#pcLibSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.f === pcLib.filter));
   const grid = $('#pcLibGrid');
   if (!pcLib.data) {
-    grid.replaceChildren(h('p', { class: 'muted' }, pc.info ? (pcOn() ? 'Le PC envoie la liste de tes projets…' : 'La liste de tes projets arrivera quand le PC sera allumé (Melofinds PC 3.9 ou plus).') : 'Connecte ton PC pour voir tes projets ici.'));
+    grid.replaceChildren(h('p', { class: 'muted' }, !pc.info ? 'Connecte ton PC pour voir tes projets ici.' : old ? 'La liste de tes projets arrivera après la mise à jour du PC.' : pcOn() ? 'Le PC envoie la liste de tes projets…' : 'La liste de tes projets arrivera dès que le PC sera allumé.'));
     return;
   }
   grid.replaceChildren(...(list.length ? list.slice(0, 120).map(pcCard) : [h('p', { class: 'muted' }, all.length ? 'Aucun projet ne correspond.' : 'Aucun projet dans le dossier des projets du PC.')]));

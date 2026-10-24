@@ -220,6 +220,19 @@ def set_style(item, color=None, icon=None, cfg=None):
     item.extra["color"], item.extra["icon"], item.extra["styled"] = style_of(item, cfg)
 
 
+def _has_audio(folder, depth=2):
+    """Un dossier avec des sons (même seulement des .mp3 ou dans un sous-dossier) est un projet."""
+    try:
+        for p in folder.iterdir():
+            if p.is_file() and p.suffix.lower() in AUDIO_EXT:
+                return True
+            if depth > 1 and p.is_dir() and not p.name.startswith(".") and _has_audio(p, depth - 1):
+                return True
+    except OSError:
+        pass
+    return False
+
+
 def scan_projects(cfg=None):
     """Mes projets FL : chaque dossier de projet du dossier des projets (projet FL et/ou
     prod .wav), plus les .flp seuls ; les plus récemment modifiés d'abord."""
@@ -236,7 +249,7 @@ def scan_projects(cfg=None):
             if e.is_dir():
                 flps = sorted(e.glob("*.flp"), key=lambda p: (p.stem != e.name, -p.stat().st_mtime))
                 wavs = sorted(e.glob("*.wav"), key=lambda p: p.stem != e.name)
-                if not flps and not wavs:
+                if not flps and not wavs and not _has_audio(e):
                     continue
                 flp, sub, name = (flps[0] if flps else None), e, e.name
             elif e.suffix.lower() == ".flp":
@@ -479,13 +492,14 @@ def rename(item, new_title, cfg=None):
 AUDIO_EXT = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aif", ".aiff", ".opus"}
 _VER_DOTS = re.compile(r"(?i)(?:^|[\s_\-\[(.#])v?(?:er(?:sion)?\s?)?(\d{1,3}(?:\.\d{1,3}){1,3})(?=$|[\s_\-\])])")
 _VER_V = re.compile(r"(?i)(?:^|[\s_\-\[(])v(?:er(?:sion)?)?\s?(\d{1,3})(?=$|[\s_\-\])])")
+_VER_FL = re.compile(r"_(\d{1,3})$")  # « Enregistrer une nouvelle version » de FL : « Haze_2 »
 
 
 def version_of(name):
     """« Haze 1.3.3 », « Haze v2 », « Haze_v0.1 (mix) » → (1, 3, 3) / (2,) / (0, 1), sinon None.
     Les crochets de clé / BPM / licence sont ignorés."""
-    rest = parse_name(str(name or ""))[0]
-    for rx in (_VER_DOTS, _VER_V):
+    rest = parse_name(str(name or ""))[0].strip()
+    for rx in (_VER_DOTS, _VER_V, _VER_FL):
         found = rx.findall(rest)
         if found:
             return tuple(int(x) for x in found[-1].split("."))
@@ -540,14 +554,17 @@ def audio_files(item, limit=60):
     return out[:limit]
 
 
-def library_index(cfg=None, limit=150):
+def library_index(cfg=None, limit=150, files_out=None):
     """Tous les projets, en court, pour l'app web (liste gardée sur le téléphone : visible
-    même quand le PC est éteint)."""
+    même quand le PC est éteint). files_out (dict) reçoit {id: (projet, son)}."""
     cfg = cfg if cfg is not None else C.load_config()
     out = []
     for it in scan_projects(cfg)[:limit]:
+        af = audio_files(it, 40)
+        if files_out is not None:
+            files_out.update({f["id"]: (it, f) for f in af})
         files = [{"f": f["id"], "n": f["name"][:140], "e": f["ext"], "v": f["label"], "s": f["size"], "m": int(f["mtime"]),
-                  **({"i": 1} if f["instru"] else {}), **({"l": 1} if f.get("latest") else {})} for f in audio_files(it, 40)]
+                  **({"i": 1} if f["instru"] else {}), **({"l": 1} if f.get("latest") else {})} for f in af]
         out.append({"p": it.id, "n": it.name[:200], "t": it.title[:160], "k": it.key or "", "b": it.bpm or 0,
                     "tb": sorted(it.extra.get("tb") or []), "lic": it.lic or "", "fav": 1 if it.fav else 0,
                     "c": it.extra.get("color"), "ic": it.extra.get("icon"), "d": int(it.date), "fl": 1 if it.flp else 0,

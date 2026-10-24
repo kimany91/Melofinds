@@ -196,6 +196,16 @@ jobs:
           Run-Wait "$dir\MelofindsPC.exe" @('--en-ligne') | Out-Null
           $r.back_online = Wait-Online (Now) 30
 
+          # Windows s'éteint : la fenêtre invisible du programme prévient le téléphone
+          Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string c, string t); [DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);'
+          $hwnd = [IntPtr]::Zero
+          for ($i = 0; $i -lt 30 -and $hwnd -eq [IntPtr]::Zero; $i++) { $hwnd = [W.U]::FindWindowW('MelofindsPCWorker', $null); Start-Sleep -Milliseconds 500 }
+          $r.shutdown_window = $hwnd -ne [IntPtr]::Zero
+          if ($r.shutdown_window) { [W.U]::SendMessageW($hwnd, 0x16, [IntPtr]1, [IntPtr]::Zero) | Out-Null }
+          for ($i = 0; $i -lt 60 -and (Workers).Count; $i++) { Start-Sleep -Milliseconds 500 }
+          $r.shutdown_logged = [bool](Select-String -Path "$dir\melofinds.log" -Pattern "Windows s'éteint" -SimpleMatch -Quiet)
+          $r.shutdown_stopped = (Workers).Count -eq 0
+
           $u = Get-ChildItem "$dir\unins*.exe" | Select-Object -First 1
           Run-Wait $u.FullName @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') | Out-Null
           for ($i = 0; $i -lt 60 -and (Workers).Count; $i++) { Start-Sleep -Milliseconds 500 }
