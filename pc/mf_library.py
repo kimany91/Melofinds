@@ -296,25 +296,45 @@ def rename(item, new_title, cfg=None):
             os.replace(src, dst)
         moves.append((src, dst))
 
+    def forms(p):
+        """Toutes les écritures d'un chemin (nom court « RUNNER~1 » ou complet, liens) :
+        le .flp garde celle de FLmake, la liste peut en avoir une autre."""
+        out = [str(p)]
+        try:
+            out.append(str(p.resolve()))
+            out.append(os.path.realpath(p))
+        except OSError:
+            pass
+        return list(dict.fromkeys(out))
+
+    def full(p):
+        try:
+            return str(p.parent.resolve() / p.name)
+        except OSError:
+            return str(p)
+
     mapping = []
     try:
         if plan["wav"]:
             a, b = plan["wav"]
+            olds = forms(a)
             move(a, b)
-            mapping.append((str(a), str(b)))
+            mapping += [(o, full(b)) for o in olds]
         flps = []
         if plan["folder"]:
             a, b = plan["folder"]
+            olds = forms(a)
             move(a, b)
+            nb = full(b)
             # fichiers / sous-dossiers qui portent l'ancien nom, les plus profonds d'abord
             inner = sorted((p for p in b.rglob("*") if item.name in p.name), key=lambda x: len(x.parts), reverse=True)
             for p in inner:
                 rel = p.relative_to(b)
-                final = b.joinpath(*[part.replace(item.name, new) for part in rel.parts])
+                final = Path(nb).joinpath(*[part.replace(item.name, new) for part in rel.parts])
                 move(p, p.with_name(p.name.replace(item.name, new)))
-                mapping.append((str(a / rel), str(final)))
+                mapping += [(str(Path(o) / rel), str(final)) for o in olds]
             mapping.sort(key=lambda m: len(m[0]), reverse=True)
-            mapping.append((str(a), str(b)))
+            mapping += [(o, nb) for o in olds]
             flps = [p for p in b.rglob("*.flp") if p.is_file()]
         elif plan["flp"]:
             a, b = plan["flp"]
