@@ -208,8 +208,16 @@ Même style que Melofinds Web, avec un menu à gauche :
   Les projets sont des **cartes encadrées** dans leur couleur, avec leur icône : chaque
   projet a une couleur automatique ; **clic sur l'icône** (ou « Icône et couleur… ») pour
   en choisir une parmi 12 couleurs et 50 icônes (le style suit le projet renommé).
-  **Double-clic** : ouvrir dans FL. **Glisser une carte** sur une autre : changer l'ordre
-  (gardé, aussi dans l'app web ; les nouveaux projets arrivent en haut).
+  **Double-clic** : ouvrir dans FL. **Glisser une carte**, comme une icône du bureau de
+  Windows : elle suit la souris et les autres se poussent pour lui faire de la place
+  (ordre gardé, aussi dans l'app web ; les nouveaux projets arrivent en haut).
+  **Lecteur dans chaque carte** : le son principal (dernière version, sinon l'instru,
+  sinon ton dernier export) avec ▶ / pause, barre de lecture cliquable et durée ; **▾**
+  affiche les autres versions et exports (lecteur de Windows : .wav, .mp3…).
+  **Sons créés par FL** mis à part, jamais pris pour l'instru, une version ou le son
+  principal : enregistrements au nom automatique (`Projet_2026-09-20 14-12-20_Piste`),
+  dossiers Recorded / Rendered / Sliced beats, samples du projet (sons de moins de 3 s ou
+  utilisés par le .flp, comme « Basic 808 Clap »). Dans l'app web : « Créés par FL ».
   Chaque carte montre la **durée** de la prod et, pour une prod envoyée depuis l'app,
   **« ▶ Voir la vidéo YouTube »** (le lien suit le projet s'il est renommé).
   Clé, BPM, instru, date ; **♪ Sons** : l'instru et tous les sons du projet, versions

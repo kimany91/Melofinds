@@ -6106,7 +6106,7 @@ function sanitizeLib(raw) {
     lic: str(p.lic, 30), fav: p.fav ? 1 : 0, c: PC_COLOR.test(String(p.c)) ? String(p.c) : '#8b5cf6', ic: str(p.ic, 2) || '♪', d: Number(p.d) || 0, fl: p.fl ? 1 : 0,
     y: /^[\w-]{11}$/.test(String(p.y || '')) ? String(p.y) : '', du: Number(p.du) > 0 && Number(p.du) < 36000 ? Math.round(Number(p.du)) : 0,
     files: (Array.isArray(p.files) ? p.files : []).slice(0, 60).filter((f) => f && /^[a-f0-9]{12}$/.test(String(f.f))).map((f) => ({
-      f: String(f.f), n: str(f.n, 140), e: str(f.e, 6), v: /^v[\d.]{1,15}$/.test(String(f.v || '')) ? String(f.v) : '', s: Number(f.s) || 0, m: Number(f.m) || 0, i: f.i ? 1 : 0, l: f.l ? 1 : 0 })),
+      f: String(f.f), n: str(f.n, 140), e: str(f.e, 6), v: /^v[\d.]{1,15}$/.test(String(f.v || '')) ? String(f.v) : '', s: Number(f.s) || 0, m: Number(f.m) || 0, i: f.i ? 1 : 0, l: f.l ? 1 : 0, x: f.x ? 1 : 0, g: f.g ? 1 : 0 })),
   }));
   return { at: Number(raw.at) || 0, projects, palette: palette.length ? palette : ['#8b5cf6'], icons: icons.length ? icons : ['♪'] };
 }
@@ -6256,7 +6256,8 @@ async function onPcAudio(d, m, fresh) {
 // --- Synchronisation : la dernière version de chaque projet (sinon l'instru) est
 // gardée sur ce téléphone, pour l'écouter même PC éteint. Le téléphone dit au PC ce qui
 // lui manque ; le PC l'envoie petit à petit (limites de ntfy.sh : ~10 sons par 3 h).
-const pcTarget = (p) => p.files.find((f) => f.l) || p.files.find((f) => f.i) || null;
+// le son principal choisi par le PC (dernière version, sinon l'instru, sinon ton dernier export)
+const pcTarget = (p) => p.files.find((f) => f.x) || p.files.find((f) => f.l) || p.files.find((f) => f.i) || null;
 const pcTargets = () => pcProjects().map(pcTarget).filter(Boolean);
 const pcHas = (f) => (pcLib.cached.has(f.f) ? pcLib.cached.get(f.f) : -1) >= f.m;
 const pcSyncState = { at: 0, sig: '' };
@@ -6482,7 +6483,8 @@ function pcCard(p) {
   const files = p.files || [];
   const instru = files.filter((f) => f.i);
   const vers = files.filter((f) => !f.i && f.v);
-  const other = files.filter((f) => !f.i && !f.v);
+  const other = files.filter((f) => !f.i && !f.v && !f.g);
+  const flMade = files.filter((f) => f.g);
   const open = pcLib.open.has(p.p);
   const chip = (txt, cls) => (txt ? h('span', { class: `pcp-chip ${cls || ''}` }, txt) : null);
   const sec = (title, list) => (list.length ? h('div', { class: 'pcp-sec' }, h('h5', {}, title), ...list.map((f) => pcFileRow(p, f))) : null);
@@ -6504,6 +6506,11 @@ function pcCard(p) {
       h('button', { type: 'button', class: 'pcp-more', 'aria-expanded': open ? 'true' : 'false', onclick: () => { if (open) pcLib.open.delete(p.p); else pcLib.open.add(p.p); renderPcView(); } },
         `${open ? '▾' : '▸'} Autres sons · ${other.length}`),
       ...(open ? other.map((f) => pcFileRow(p, f)) : [])) : null,
+    flMade.length ? h('div', { class: 'pcp-sec' },
+      h('button', { type: 'button', class: 'pcp-more', 'aria-expanded': pcLib.open.has(`${p.p}#fl`) ? 'true' : 'false',
+        onclick: () => { const k = `${p.p}#fl`; if (pcLib.open.has(k)) pcLib.open.delete(k); else pcLib.open.add(k); renderPcView(); } },
+      `${pcLib.open.has(`${p.p}#fl`) ? '▾' : '▸'} Créés par FL · ${flMade.length}`),
+      ...(pcLib.open.has(`${p.p}#fl`) ? flMade.map((f) => pcFileRow(p, f)) : [])) : null,
     h('div', { class: 'pcp-acts' },
       h('button', { type: 'button', class: 'ghost', disabled: p.renaming, onclick: () => pcRename(p) }, 'Renommer'),
       h('button', { type: 'button', class: 'ghost', onclick: () => pcStyle(p) }, 'Icône et couleur')));

@@ -269,13 +269,16 @@ def scan_projects(cfg=None):
             it.extra["files"] = len(files)
         except OSError:
             it.date = 0.0
-        sounds = [Path(s) for s in (_flp_samples(flp) if flp else []) if s and not s.startswith("%") and s.lower().endswith(AUDIO)]
-        if sub:  # l'instru du dossier du projet d'abord
-            sounds.sort(key=lambda p: str(p.parent).lower() != str(sub).lower() and str(p.parent).lower() != str(sub.resolve()).lower())
-        sounds = sounds or wavs
-        if sounds:
-            it.extra["instru"] = parse_name(sounds[0].stem)[0] or sounds[0].stem
-            it.extra["instru_path"] = sounds[0]
+        # L'instru : la prod reçue, au nom du projet (« Haze [C# min, 150 BPM]/Haze [C# min, 150 BPM].wav »),
+        # jamais un sample de FL (« Basic 808 Clap »).
+        ttl = (title or name).lower()
+        same = lambda p: p.stem.lower() == name.lower() or (parse_name(p.stem)[0] or p.stem).lower() == ttl
+        cands = [w for w in wavs if same(w)]
+        if not cands:
+            cands = [Path(x) for x in (_flp_samples(flp) if flp else []) if x and not x.startswith("%") and x.lower().endswith(AUDIO) and same(Path(x))]
+        if cands:
+            it.extra["instru"] = parse_name(cands[0].stem)[0] or cands[0].stem
+            it.extra["instru_path"] = cands[0]
         it.fav = it.id in favs
         it.extra["color"], it.extra["icon"], it.extra["styled"] = style_of(it, cfg)
         ip = it.extra.get("instru_path")
@@ -312,6 +315,20 @@ def move_project(src_id, dst_id, cfg=None):
     cfg["project_order"] = order[:3000]
     C.save_config(cfg)
     return order
+
+
+def reorder(shown_ids, cfg=None):
+    """Nouvel ordre des projets affichés (glisser-déposer). Avec un filtre, seuls ceux
+    affichés changent de place entre eux. Renvoie l'ordre complet."""
+    cfg = cfg if cfg is not None else C.load_config()
+    full = [i.id for i in scan_projects(cfg)]
+    shown = [x for x in shown_ids if x in full]
+    slots = [n for n, pid in enumerate(full) if pid in set(shown)]
+    for n, pid in zip(slots, shown):
+        full[n] = pid
+    cfg["project_order"] = full[:3000]
+    C.save_config(cfg)
+    return full
 
 
 _dur_cache = {}
@@ -615,9 +632,33 @@ def file_id(path):
     return zlib.crc32(p.lower().encode("utf-8")).to_bytes(4, "big").hex() + format(len(p), "04x")
 
 
+# Fichiers que FL Studio crée tout seul : enregistrements « Projet_2026-09-20 14-12-20_Piste »
+# (nom automatique d'un enregistrement de piste du mixeur), dossiers de données du projet
+# (Recorded, Rendered, Sliced beats), et les samples utilisés par le .flp (« Basic 808 Clap »).
+_FL_STAMP = re.compile(r"(?:^|[_ ])\d{4}-\d{2}-\d{2}[ _]\d{2}[-.]\d{2}[-.]\d{2}(?:[_ ]|$)")
+_FL_DIRS = {"recorded", "rendered", "sliced beats", "sliced", "backup", "autosave", "autosaves"}
+
+
+def fl_generated(path, folder=None):
+    """True si le son a été créé par FL (enregistrement, rendu, découpe), pas exporté par toi."""
+    p = Path(path)
+    if _FL_STAMP.search(p.stem):
+        return True
+    if folder:
+        try:
+            rel = p.relative_to(folder).parts[:-1]
+        except ValueError:
+            rel = ()
+        if any(part.lower() in _FL_DIRS for part in rel):
+            return True
+    return False
+
+
 def audio_files(item, limit=60):
-    """Sons du projet : l'instru d'abord, puis les versions dans l'ordre (0.1, 0.2, 1.0…),
-    puis les autres sons, les plus récents d'abord."""
+    """Sons du projet, rangés : l'instru (la prod reçue), les versions (0.1, 0.2, 1.0…),
+    tes exports (les plus récents d'abord), puis ce que FL a créé tout seul (enregistrements,
+    samples du projet). « main » : le son à écouter d'abord (dernière version, sinon
+    l'instru, sinon ton export le plus récent)."""
     instru = item.wav or item.extra.get("instru_path")
     found = []
     if item.folder:
@@ -632,25 +673,35 @@ def audio_files(item, limit=60):
             pass
     elif instru and Path(instru).is_file():
         found = [Path(instru)]
-    ins_key = str(Path(instru)).lower() if instru else ""
+    ins_keys = _forms(instru) if instru else set()
+    samples = set()
+    if item.flp:
+        for sp in _flp_samples(item.flp):
+            if sp and not sp.startswith("%"):
+                samples |= _forms(Path(sp.replace("\\", os.sep)) if os.sep == "/" else Path(sp))
     out = []
     for p in found:
         try:
             stt = p.stat()
         except OSError:
             continue
-        ver = version_of(p.stem)
-        out.append({"path": p, "id": file_id(p), "name": p.stem, "ext": p.suffix.lower()[1:], "ver": ver,
-                    "label": f"v{'.'.join(map(str, ver))}" if ver else "", "size": stt.st_size, "mtime": stt.st_mtime,
-                    "instru": str(p).lower() == ins_key or (not ins_key and p.stem == item.name and p.suffix.lower() == ".wav")})
-    if out and not any(f["instru"] for f in out):
-        wavs = [f for f in out if f["ext"] == "wav" and not f["ver"]]
-        if wavs:
-            min(wavs, key=lambda f: len(f["name"]))["instru"] = True
-    vers = [f for f in out if f["ver"] and not f["instru"]]
+        keys = _forms(p)
+        is_instru = bool(keys & ins_keys)
+        ver = None if is_instru else version_of(p.stem)
+        short = not is_instru and not ver and (_duration(p) or 99) < 3  # un clap, un kick : un sample
+        kind = "instru" if is_instru else "fl" if fl_generated(p, item.folder) or short or (keys & samples and not ver) else "version" if ver else "export"
+        out.append({"path": p, "id": file_id(p), "name": p.stem, "ext": p.suffix.lower()[1:], "ver": ver if kind == "version" else None,
+                    "label": f"v{'.'.join(map(str, ver))}" if ver and kind == "version" else "", "size": stt.st_size,
+                    "mtime": stt.st_mtime, "instru": is_instru, "kind": kind})
+    vers = [f for f in out if f["kind"] == "version"]
     if vers:
         max(vers, key=lambda f: f["ver"])["latest"] = True
-    out.sort(key=lambda f: (0 if f["instru"] else 1 if f["ver"] else 2, f["ver"] or (), -f["mtime"]))
+    order = {"instru": 0, "version": 1, "export": 2, "fl": 3}
+    out.sort(key=lambda f: (order[f["kind"]], f["ver"] or (), -f["mtime"]))
+    main = next((f for f in out if f.get("latest")), None) or next((f for f in out if f["instru"]), None) \
+        or next((f for f in out if f["kind"] == "export"), None)
+    if main:
+        main["main"] = True
     return out[:limit]
 
 
@@ -664,7 +715,8 @@ def library_index(cfg=None, limit=150, files_out=None):
         if files_out is not None:
             files_out.update({f["id"]: (it, f) for f in af})
         files = [{"f": f["id"], "n": f["name"][:140], "e": f["ext"], "v": f["label"], "s": f["size"], "m": int(f["mtime"]),
-                  **({"i": 1} if f["instru"] else {}), **({"l": 1} if f.get("latest") else {})} for f in af]
+                  **({"i": 1} if f["instru"] else {}), **({"l": 1} if f.get("latest") else {}),
+                  **({"x": 1} if f.get("main") else {}), **({"g": 1} if f["kind"] == "fl" else {})} for f in af]
         out.append({"p": it.id, "n": it.name[:200], "t": it.title[:160], "k": it.key or "", "b": it.bpm or 0,
                     "tb": sorted(it.extra.get("tb") or []), "lic": it.lic or "", "fav": 1 if it.fav else 0,
                     "c": it.extra.get("color"), "ic": it.extra.get("icon"), "d": int(it.date), "fl": 1 if it.flp else 0,

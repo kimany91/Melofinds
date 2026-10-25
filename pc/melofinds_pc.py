@@ -34,7 +34,7 @@ def missing_glyphs():
     try:
         import ctypes
         import mf_library as L
-        text = "".join(L.ICONS) + "★☆▶■✓✗"
+        text = "".join(L.ICONS) + "★☆▶■✓✗❚▾▴"
         gdi, user = ctypes.windll.gdi32, ctypes.windll.user32
         hdc = user.GetDC(0)
         font = gdi.CreateFontW(-20, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0, "Segoe UI Symbol")

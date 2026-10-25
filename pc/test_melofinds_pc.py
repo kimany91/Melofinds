@@ -964,3 +964,55 @@ class OrdreLienEtDuree(unittest.TestCase):
     def test_plus_d_icones(self):
         self.assertGreaterEqual(len(L.ICONS), 50)
         self.assertEqual(len(set(L.ICONS)), len(L.ICONS))
+
+
+class SonsDeFL(unittest.TestCase):
+    """Comme sur la capture : enregistrements automatiques de FL et samples mis à part,
+    pas pris pour l'instru ni pour une version."""
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp(prefix="mf-fl-"))
+        mpc.P.set(self.d / "prog")
+        self.root = self.d / "Projets FL"
+        self.root.mkdir()
+        mpc.save_config({"dossier": str(self.root), "devices": [], "flmake": {"on": False, "dossier": str(self.root)}})
+        p = self.root / "Project Supernova"
+        p.mkdir()
+        (p / "Project Supernova.flp").write_bytes(fake_flp())
+        for n in ("NSupernova 0.1", "NSupernova 0.2", "Basic 808 Clap", "Project Supernova_2026-09-20 14-12-20_ON YOUR SIDE",
+                  "Project Supernova_2026-09-20 14-06-35_ON YOUR SIDE", "Supernova mix final"):
+            (p / f"{n}.wav").write_bytes(fake_wav(1 if n == "Basic 808 Clap" else 4, rate=8000))
+        (p / "Recorded").mkdir()
+        (p / "Recorded" / "Vocal take.wav").write_bytes(fake_wav(1))
+
+    def files(self):
+        it = next(i for i in L.scan_projects() if i.title == "Project Supernova")
+        return it, L.audio_files(it)
+
+    def test_tri(self):
+        it, files = self.files()
+        self.assertIsNone(it.extra.get("instru"))  # pas de prod reçue : pas d'instru (le clap n'en est pas une)
+        kinds = {f["name"]: f["kind"] for f in files}
+        self.assertEqual(kinds["NSupernova 0.2"], "version")
+        self.assertEqual(kinds["Supernova mix final"], "export")
+        self.assertEqual(kinds["Project Supernova_2026-09-20 14-12-20_ON YOUR SIDE"], "fl")
+        self.assertEqual(kinds["Vocal take"], "fl")  # dossier Recorded de FL
+        self.assertEqual(kinds["Basic 808 Clap"], "fl")  # un sample de 1 s
+        self.assertEqual([f["name"] for f in files if f.get("main")], ["NSupernova 0.2"])
+        self.assertEqual([f["name"] for f in files][:3], ["NSupernova 0.1", "NSupernova 0.2", "Supernova mix final"])
+
+    def test_sans_version_l_export_le_plus_recent(self):
+        for n in ("NSupernova 0.1", "NSupernova 0.2"):
+            (self.root / "Project Supernova" / f"{n}.wav").unlink()
+        _, files = self.files()
+        self.assertEqual([f["name"] for f in files if f.get("main")], ["Supernova mix final"])
+
+    def test_prod_recue_reste_l_instru(self):
+        p = self.root / "Haze [C# min, 150 BPM]"
+        p.mkdir()
+        (p / "Haze [C# min, 150 BPM].wav").write_bytes(fake_wav(1))
+        (p / "Kick 01.wav").write_bytes(fake_wav(1))
+        it = next(i for i in L.scan_projects() if i.title == "Haze")
+        files = L.audio_files(it)
+        self.assertEqual(it.extra.get("instru"), "Haze")
+        self.assertEqual([f["name"] for f in files if f.get("main")], ["Haze [C# min, 150 BPM]"])

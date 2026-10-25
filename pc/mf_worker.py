@@ -301,13 +301,9 @@ class Remote:
 
 
 def phone_targets(fmap):
-    """Le son de chaque projet que le téléphone garde : la dernière version, sinon l'instru."""
-    best = {}
-    for fid, (it, f) in fmap.items():
-        rank = 2 if f.get("latest") else 1 if f["instru"] else 0
-        if rank and rank > best.get(it.id, (0, None))[0]:
-            best[it.id] = (rank, fid)
-    return {fid for _, fid in best.values()}
+    """Le son de chaque projet que le téléphone garde : la dernière version, sinon l'instru,
+    sinon ton export le plus récent (jamais un enregistrement ou un sample de FL)."""
+    return {fid for fid, (_, f) in fmap.items() if f.get("main")}
 
 
 def _handle(msg, code, d, root, cfg, st, recent, seen, done, left, remote=None):

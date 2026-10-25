@@ -104,6 +104,81 @@ def _open_path(p):
         pass
 
 
+def _mmss(sec):
+    sec = int(sec or 0)
+    return f"{sec // 60}:{sec % 60:02d}"
+
+
+class Player:
+    """Lecture des sons dans le panneau avec le lecteur intégré à Windows (MCI) : .wav,
+    .mp3…, pause, reprise, position. Ailleurs : le lecteur par défaut du système."""
+
+    def __init__(self):
+        self.path = None
+        self.length = 0
+        self.ok = C.WINDOWS
+        if self.ok:
+            import ctypes
+            self._send = ctypes.windll.winmm.mciSendStringW
+            self._buf = ctypes.create_unicode_buffer(256)
+
+    def _cmd(self, text):
+        if not self.ok:
+            return None
+        return self._buf.value if self._send(text, self._buf, 255, 0) == 0 else None
+
+    def play(self, path):
+        self.stop()
+        p = str(path).replace('"', "")
+        if not self.ok or (self._cmd(f'open "{p}" type mpegvideo alias mfplay') is None and self._cmd(f'open "{p}" alias mfplay') is None):
+            _open_path(path)
+            return False
+        self._cmd("set mfplay time format milliseconds")
+        try:
+            self.length = int(self._cmd("status mfplay length") or 0)
+        except ValueError:
+            self.length = 0
+        self._cmd("play mfplay")
+        self.path = str(path)
+        return True
+
+    def mode(self):
+        return (self._cmd("status mfplay mode") or "stopped") if self.path else None
+
+    def position(self):
+        try:
+            return int(self._cmd("status mfplay position") or 0) if self.path else 0
+        except ValueError:
+            return 0
+
+    def toggle(self):
+        m = self.mode()
+        if m == "playing":
+            self._cmd("pause mfplay")
+        elif m in ("paused", "stopped"):
+            self._cmd("play mfplay")
+
+    def seek(self, frac):
+        if not self.path or not self.length:
+            return
+        ms = int(max(0.0, min(1.0, frac)) * self.length)
+        was = self.mode()
+        self._cmd(f"seek mfplay to {ms}")
+        if was == "playing":
+            self._cmd("play mfplay")
+
+    def stop(self):
+        if self.path:
+            self._cmd("close mfplay")
+        self.path, self.length = None, 0
+
+    def is_(self, path):
+        return bool(self.path) and str(path).lower() == self.path.lower()
+
+
+PLAYER = Player()
+
+
 def read_progress():
     """Téléchargement en cours (écrit par le programme en ligne), ou None."""
     try:
@@ -587,8 +662,9 @@ def manager_window(selftest=False):
         cv.create_text(size / 2, size / 2 + 1, text=icon, fill=color, font=(SYMB, int(size * 0.42)))
         return cv
 
-    # --- Glisser-déposer : changer l'ordre des projets
-    drag = {"src": None, "x": 0, "y": 0, "on": False, "dst": None}
+    # --- Glisser-déposer, comme les icônes du bureau de Windows : la carte suit la souris
+    # et les autres se poussent pour lui faire de la place ; on lâche, c'est rangé.
+    drag = {"src": None, "x": 0, "y": 0, "on": False, "ghost": None, "order": None}
     gcanvas = gbody.master
 
     def card_at(x, y):
@@ -601,44 +677,65 @@ def manager_window(selftest=False):
         return None
 
     def drag_start(e, it):
-        drag.update(src=it.id, x=e.x_root, y=e.y_root, on=False, dst=None)
+        drag.update(src=it.id, x=e.x_root, y=e.y_root, on=False, order=None)
+
+    def make_ghost(it):
+        g = tk.Toplevel(root)
+        g.overrideredirect(True)
+        try:
+            g.attributes("-alpha", 0.88)
+            g.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        color = it.extra.get("color", ACCENT2)
+        f = tk.Frame(g, bg=PANEL, highlightthickness=2, highlightbackground=color, padx=10, pady=8)
+        f.pack()
+        icon_tile(f, color, it.extra.get("icon", "♪"), 34, PANEL).pack(side="left")
+        tk.Label(f, text=it.title[:30], bg=PANEL, fg=FG, font=(FONT, 10, "bold")).pack(side="left", padx=(10, 4))
+        return g
 
     def drag_move(e):
-        if not drag["src"]:
+        src = drag["src"]
+        if not src or src not in cards:
             return
         if not drag["on"]:
-            if abs(e.x_root - drag["x"]) + abs(e.y_root - drag["y"]) < 12:
+            if abs(e.x_root - drag["x"]) + abs(e.y_root - drag["y"]) < 10:
                 return
-            drag["on"] = True
+            drag.update(on=True, order=list(lib["shown"]), ghost=make_ghost(lib["by_id"][src]))
             root.configure(cursor="fleur")
-            frame_card(drag["src"], state="drag")
-        # défilement automatique près des bords
+            frame_card(src, state="drag")
+        drag["ghost"].geometry(f"+{e.x_root + 16}+{e.y_root + 12}")
         top, bottom = gcanvas.winfo_rooty(), gcanvas.winfo_rooty() + gcanvas.winfo_height()
         if e.y_root < top + 40:
             gcanvas.yview_scroll(-1, "units")
         elif e.y_root > bottom - 40:
             gcanvas.yview_scroll(1, "units")
-        dst = card_at(e.x_root, e.y_root)
-        if dst != drag["dst"]:
-            if drag["dst"] and drag["dst"] != drag["src"]:
-                frame_card(drag["dst"])
-            drag["dst"] = dst
-            if dst and dst != drag["src"]:
-                frame_card(dst, state="target")
+        tgt = card_at(e.x_root, e.y_root)
+        if not tgt or tgt == src or tgt not in cards:
+            return
+        c = cards[tgt]
+        after = e.x_root > c.winfo_rootx() + c.winfo_width() / 2  # moitié droite : après
+        order = [x for x in drag["order"] if x != src]
+        order.insert(order.index(tgt) + (1 if after else 0), src)
+        if order != drag["order"]:
+            drag["order"] = order
+            lib["shown"] = order
+            for idx, cid in enumerate(order):
+                place(cid, idx)
 
     def drag_end(e):
-        src, dst, was = drag["src"], drag["dst"], drag["on"]
-        drag.update(src=None, on=False, dst=None)
+        src, was, order, ghost = drag["src"], drag["on"], drag["order"], drag["ghost"]
+        drag.update(src=None, on=False, order=None, ghost=None)
         if not was:
             return
+        if ghost:
+            ghost.destroy()
         root.configure(cursor="")
-        for cid in (src, dst):
-            if cid:
-                frame_card(cid)
-        if src and dst and src != dst:
-            L.move_project(src, dst)
+        frame_card(src)
+        if order:
+            L.reorder(order)
             load_prods(force=True)
-            toast("Projet déplacé · ton ordre est gardé")
+            toast("Projet rangé · ton ordre est gardé")
 
     def frame_card(cid, state=None):
         c = cards.get(cid)
@@ -646,10 +743,8 @@ def manager_window(selftest=False):
         if not c or not it or not c.winfo_exists():
             return
         color = it.extra.get("color", ACCENT2)
-        if state == "target":
-            c.configure(highlightthickness=3, highlightbackground=FG)
-        elif state == "drag":
-            c.configure(highlightthickness=3, highlightbackground=blend(color, PANEL, 0.35))
+        if state == "drag":  # sa place pendant le déplacement : un cadre en pointillés
+            c.configure(highlightthickness=3, highlightbackground=ACCENT)
         else:
             on = sel["id"] == cid
             c.configure(highlightthickness=3 if on else 2, highlightbackground=color if on else blend(color, PANEL, 0.55))
@@ -670,6 +765,132 @@ def manager_window(selftest=False):
             webbrowser.open(f"https://www.youtube.com/watch?v={vid}")
         elif it:
             toast("Pas de vidéo YouTube : ce projet ne vient pas d'une prod envoyée depuis l'app")
+
+    # --- Lecteur de chaque carte : le son principal (dernière version, sinon l'instru, sinon
+    # ton dernier export), barre de lecture, et ▾ pour les autres versions.
+    choice = {}          # projet → son choisi dans son lecteur
+    opened = set()       # projets dont la liste des versions est ouverte
+    pw = {}              # projet → widgets de son lecteur
+
+    def refresh_players():
+        for cid, w in list(pw.items()):
+            if not w["btn"].winfo_exists():
+                pw.pop(cid, None)
+                continue
+            on = PLAYER.is_(w["path"])
+            playing = on and PLAYER.mode() == "playing"
+            w["btn"].configure(text="❚❚" if playing else "▶")
+            if not on:
+                w["bar"].delete("all")
+                w["tm"].configure(text=w["dur"])
+
+    def tick_player():
+        try:
+            if PLAYER.path:
+                pos, length, mode = PLAYER.position(), PLAYER.length, PLAYER.mode()
+                if mode == "stopped" and length and pos >= length - 250:
+                    PLAYER.stop()
+                    refresh_players()
+                for w in pw.values():
+                    if PLAYER.is_(w["path"]) and w["bar"].winfo_exists():
+                        bw = w["bar"].winfo_width()
+                        w["bar"].delete("all")
+                        if length:
+                            w["bar"].create_rectangle(0, 0, bw * pos / length, 6, fill=w["color"], width=0)
+                        w["tm"].configure(text=f"{_mmss(pos / 1000)} / {_mmss(length / 1000)}")
+        finally:
+            root.after(250, tick_player)
+
+    def rebuild_card(cid):
+        it = lib["by_id"].get(cid)
+        if not it or cid not in cards:
+            return
+        cards[cid].destroy()
+        cards[cid] = make_card(it)
+        if cid in lib["shown"]:
+            place(cid, lib["shown"].index(cid))
+
+    def player_box(parent, it, files, color):
+        mine = [f for f in files if f["kind"] != "fl"]
+        if not mine:
+            return None
+        cur = next((f for f in mine if f["id"] == choice.get(it.id)), None) or next((f for f in mine if f.get("main")), mine[0])
+        box = tk.Frame(parent, bg=PANEL2, highlightthickness=1, highlightbackground=blend(color, PANEL2, 0.45), padx=8, pady=7)
+        row = tk.Frame(box, bg=PANEL2)
+        row.pack(fill="x")
+        btn = tk.Label(row, text="▶", bg=color, fg=BG, font=(SYMB, 9, "bold"), width=3, cursor="hand2")
+        btn.pack(side="left")
+        tag = "INSTRU" if cur["instru"] else cur["label"].upper() if cur["label"] else "MIX"
+        tk.Label(row, text=tag, bg=PANEL2, fg=GREEN if cur["instru"] else ACCENT if cur["label"] else MUTED,
+                 font=(MONO, 7, "bold")).pack(side="left", padx=(7, 4))
+        name = L.parse_name(cur["name"])[0] or cur["name"]
+        tk.Label(row, text=name if len(name) <= 16 else name[:15] + "…", bg=PANEL2, fg=FG, font=(FONT, 9), anchor="w").pack(side="left", fill="x", expand=True)
+        others = [f for f in mine if f["id"] != cur["id"]]
+        nfl = sum(1 for f in files if f["kind"] == "fl")
+        arrow = None
+        if others or nfl:
+            arrow = tk.Label(row, text="▴" if it.id in opened else "▾", bg=PANEL2, fg=MUTED, font=(SYMB, 11), cursor="hand2")
+            arrow.pack(side="right")
+        bar = tk.Canvas(box, height=6, bg=PANEL3, highlightthickness=0, cursor="hand2")
+        bar.pack(fill="x", pady=(7, 1))
+        dur = L._duration(cur["path"])
+        tm = tk.Label(box, text=_mmss(dur) if dur else "", bg=PANEL2, fg=FAINT, font=(MONO, 7))
+        tm.pack(anchor="e")
+        picks = []
+        if it.id in opened:
+            lst = tk.Frame(box, bg=PANEL2)
+            lst.pack(fill="x", pady=(4, 0))
+            for f in others[:14]:
+                r = tk.Frame(lst, bg=PANEL2, cursor="hand2")
+                r.pack(fill="x", pady=1)
+                t = "INSTRU" if f["instru"] else f["label"].upper() if f["label"] else "MIX"
+                a1 = tk.Label(r, text="▶", bg=PANEL2, fg=MUTED, font=(SYMB, 8))
+                a1.pack(side="left")
+                a2 = tk.Label(r, text=t, bg=PANEL2, fg=ACCENT if f["label"] else MUTED, font=(MONO, 7, "bold"))
+                a2.pack(side="left", padx=(4, 4))
+                nm = L.parse_name(f["name"])[0] or f["name"]
+                a3 = tk.Label(r, text=nm if len(nm) <= 18 else nm[:17] + "…", bg=PANEL2, fg=FG, font=(FONT, 8), anchor="w")
+                a3.pack(side="left", fill="x", expand=True)
+                picks += [(w_, f) for w_ in (r, a1, a2, a3)]
+            if nfl:
+                more = tk.Label(lst, text=f"+ {nfl} son{'s' if nfl > 1 else ''} créé{'s' if nfl > 1 else ''} par FL", bg=PANEL2, fg=FAINT,
+                                font=(FONT, 8), cursor="hand2", anchor="w")
+                more.pack(fill="x", pady=(3, 0))
+                picks.append((more, None))
+        pw[it.id] = {"btn": btn, "bar": bar, "tm": tm, "path": str(cur["path"]), "color": color, "dur": _mmss(dur) if dur else ""}
+
+        def toggle(_e=None, path=str(cur["path"])):
+            if PLAYER.is_(path):
+                PLAYER.toggle()
+            else:
+                PLAYER.play(path)
+            refresh_players()
+            return "break"
+
+        def seek(e, path=str(cur["path"])):
+            if not PLAYER.is_(path):
+                PLAYER.play(path)
+            PLAYER.seek(e.x / max(1, e.widget.winfo_width()))
+            refresh_players()
+            return "break"
+
+        def flip(_e=None):
+            opened.symmetric_difference_update({it.id})
+            rebuild_card(it.id)
+            return "break"
+
+        def pick(_e=None, f=None):
+            if f is None:
+                do_play(it)
+                return "break"
+            choice[it.id] = f["id"]
+            opened.discard(it.id)
+            PLAYER.play(f["path"])
+            rebuild_card(it.id)
+            refresh_players()
+            return "break"
+        handlers = [(btn, toggle), (bar, seek)] + ([(arrow, flip)] if arrow else []) + [(w_, lambda e, f=f: pick(e, f)) for w_, f in picks]
+        return box, handlers
 
     def make_card(it):
         color, icon = it.extra.get("color", ACCENT2), it.extra.get("icon", "♪")
@@ -703,9 +924,7 @@ def manager_window(selftest=False):
                      padx=7, pady=2).pack(side="left", padx=(0, 6))
         if not (it.key or it.bpm or it.lic or dur):
             tk.Label(chips, text="—", bg=bgc, fg=FAINT, font=(MONO, 8)).pack(side="left")
-        ins = it.extra.get("instru") or ""
-        tk.Label(inner, text=f"♪ {ins}" if ins else "Pas d'instru", bg=bgc, fg=MUTED, font=(FONT, 9), anchor="w",
-                 wraplength=CARD_W - 34, justify="left").pack(fill="x", pady=(10, 0))
+
         foot = tk.Frame(inner, bg=bgc)
         foot.pack(fill="x", pady=(6, 0))
         tk.Label(foot, text="Projet FL" if it.flp else "Prod seule", bg=bgc, fg=GREEN if it.flp else AMBER, font=(FONT, 8, "bold")).pack(side="left")
@@ -714,7 +933,22 @@ def manager_window(selftest=False):
         if it.extra.get("yt"):
             yt = tk.Label(inner, text="▶ Voir la vidéo YouTube", bg=bgc, fg="#ff5a52", font=(FONT, 9, "bold"), cursor="hand2", anchor="w")
             yt.pack(fill="x", pady=(6, 0))
+        pb = player_box(inner, it, L.audio_files(it), color)
+        if pb:
+            pb[0].pack(fill="x", pady=(10, 0), before=foot)
+        else:
+            tk.Label(inner, text="Aucun son à écouter", bg=bgc, fg=FAINT, font=(FONT, 9), anchor="w").pack(fill="x", pady=(10, 0), before=foot)
         bind_all_children(c, it)
+        if pb:  # le lecteur garde ses clics pour lui (ni sélection, ni déplacement, ni ouverture)
+            def quiet(w):
+                w.bind("<Button-1>", lambda e: "break")
+                w.unbind("<Double-1>")
+                w.unbind("<B1-Motion>")
+                for ch in w.winfo_children():
+                    quiet(ch)
+            quiet(pb[0])
+            for w_, fn in pb[1]:
+                w_.bind("<Button-1>", fn)
         star.bind("<Button-1>", lambda e, i=it: (do_fav(i), "break")[1])
         tile.configure(cursor="hand2")
         tile.bind("<Button-1>", lambda e, i=it: (select(i.id), do_style(i), "break")[2])
@@ -822,26 +1056,15 @@ def manager_window(selftest=False):
 
     def stop_sound():
         playing["path"] = None
-        if C.WINDOWS:
-            try:
-                import winsound
-                winsound.PlaySound(None, winsound.SND_PURGE)
-            except (ImportError, RuntimeError):
-                pass
+        PLAYER.stop()
+        refresh_players()
 
     def play_sound(path):
-        """Joue un .wav ici (Windows) ; les autres formats s'ouvrent dans le lecteur de Windows."""
-        stop_sound()
-        if C.WINDOWS and str(path).lower().endswith(".wav"):
-            try:
-                import winsound
-                winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-                playing["path"] = str(path)
-                return True
-            except (ImportError, RuntimeError):
-                pass
-        _open_path(path)
-        return False
+        """Joue le son ici (lecteur de Windows : .wav, .mp3…)."""
+        ok = PLAYER.play(path)
+        playing["path"] = PLAYER.path
+        refresh_players()
+        return ok
 
     def do_play(it=None):
         """Sons du projet : l'instru, les versions (0.1, 1.3.3…) dans l'ordre, les autres sons."""
@@ -856,6 +1079,7 @@ def manager_window(selftest=False):
         hx = tk.Frame(head, bg=PANEL)
         hx.pack(side="left", padx=12)
         label(hx, it.title[:60], 13, bold=True, wrap=420).pack(anchor="w")
+        files = [x for x in files if x["kind"] != "fl"] + [x for x in files if x["kind"] == "fl"]
         nv = sum(1 for x in files if x["ver"])
         label(hx, f"{len(files)} son{'s' if len(files) > 1 else ''}" + (f" · {nv} version{'s' if nv > 1 else ''}, de la plus ancienne à la plus récente" if nv else ""),
               9, MUTED).pack(anchor="w")
@@ -877,7 +1101,11 @@ def manager_window(selftest=False):
             paint()
         if not files:
             label(box, "Aucun son dans ce projet.", 10, MUTED).pack(anchor="w")
+        fl_head = False
         for x in files:
+            if x["kind"] == "fl" and not fl_head:
+                fl_head = True
+                label(box, "CRÉÉS PAR FL · enregistrements, rendus, samples", 8, FAINT, bold=True).pack(anchor="w", pady=(10, 2))
             pth = str(x["path"])
             row = tk.Frame(box, bg=PANEL2, highlightthickness=1, highlightbackground=LINE, padx=10, pady=7)
             row.pack(fill="x", pady=3)
@@ -896,7 +1124,7 @@ def manager_window(selftest=False):
             rows[pth] = (btn, row)
         foot = tk.Frame(f, bg=PANEL)
         foot.pack(fill="x", pady=(14, 0))
-        label(foot, "▶ joue les .wav ici ; les autres formats s'ouvrent dans ton lecteur.", 8, FAINT).pack(side="left")
+        label(foot, "▶ joue le son ici (.wav, .mp3…), ■ l'arrête.", 8, FAINT).pack(side="left")
 
         def close():
             stop_sound()
@@ -1498,6 +1726,7 @@ def manager_window(selftest=False):
     show("home" if C.load_config()["devices"] else "devices")
     tick()
     tick_progress()
+    tick_player()
     if selftest:
         for k in ("home", "prods", "flmake", "devices", "settings"):
             show(k)
