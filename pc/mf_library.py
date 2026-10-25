@@ -287,7 +287,7 @@ def scan_projects(cfg=None):
     videos = _videos(cfg)
     for it in out:
         if it.folder:
-            vid = videos.get(str(it.folder).lower())
+            vid = next((videos[k] for k in _forms(it.folder) if k in videos), None)
             if vid:
                 it.extra["yt"] = vid
     return order_projects(out, cfg)
@@ -356,12 +356,20 @@ def _videos(cfg):
         if not C.VIDEO_ID.match(str(vid)) or not path:
             continue
         p = C.follow_renames(path, renamed)
-        out[str(p.parent).lower()] = vid
-        try:
-            out[str(p.parent.resolve()).lower()] = vid
-        except OSError:
-            pass
+        for k in _forms(p.parent):
+            out[k] = vid
     _video_cache.update(sig=sig, map=out)
+    return out
+
+
+def _forms(path):
+    """Écritures d'un dossier (Windows : nom court « RUNNER~1 » ou complet), en minuscules."""
+    out = {str(path).lower()}
+    try:
+        out.add(str(Path(path).resolve()).lower())
+        out.add(os.path.realpath(path).lower())
+    except OSError:
+        pass
     return out
 
 
