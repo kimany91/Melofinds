@@ -2867,6 +2867,7 @@ function sanitizeLib(raw) {
     p: str(p.p, 260), n: str(p.n, 200), t: str(p.t || p.n, 160), k: /^[A-G][#b]?( (min|maj))?$/.test(String(p.k || '')) ? String(p.k) : '',
     b: Number(p.b) >= 50 && Number(p.b) <= 220 ? Math.round(Number(p.b)) : 0, tb: Array.isArray(p.tb) ? p.tb.filter((x) => x === 'key' || x === 'bpm') : [],
     lic: str(p.lic, 30), fav: p.fav ? 1 : 0, c: PC_COLOR.test(String(p.c)) ? String(p.c) : '#8b5cf6', ic: str(p.ic, 2) || '♪', d: Number(p.d) || 0, fl: p.fl ? 1 : 0,
+    y: /^[\w-]{11}$/.test(String(p.y || '')) ? String(p.y) : '', du: Number(p.du) > 0 && Number(p.du) < 36000 ? Math.round(Number(p.du)) : 0,
     files: (Array.isArray(p.files) ? p.files : []).slice(0, 60).filter((f) => f && /^[a-f0-9]{12}$/.test(String(f.f))).map((f) => ({
       f: String(f.f), n: str(f.n, 140), e: str(f.e, 6), v: /^v[\d.]{1,15}$/.test(String(f.v || '')) ? String(f.v) : '', s: Number(f.s) || 0, m: Number(f.m) || 0, i: f.i ? 1 : 0, l: f.l ? 1 : 0 })),
   }));
@@ -3256,7 +3257,9 @@ function pcCard(p) {
         pcTarget(p) ? h('em', { class: `pcp-off${pcHas(pcTarget(p)) ? ' ok' : ''}` }, pcHas(pcTarget(p)) ? '✓ Écoutable hors ligne' : '↓ Arrive sur ce téléphone') : null),
       h('button', { type: 'button', class: `pcp-star${p.fav ? ' on' : ''}`, 'aria-label': p.fav ? 'Retirer des favoris' : 'Mettre en favori',
         onclick: () => pcCommand({ cmd: 'fav', p: p.p, on: !p.fav }, p.fav ? 'Retiré des favoris' : 'Mis en favori') }, icon('star'))),
-    p.k || p.b || p.lic ? h('div', { class: 'pcp-chips' }, chip(p.k, p.tb.includes('key') ? 'tb' : ''), chip(p.b ? `${p.b} BPM` : '', p.tb.includes('bpm') ? 'tb' : ''), chip(p.lic, 'lic')) : null,
+    p.k || p.b || p.lic || p.du || p.y ? h('div', { class: 'pcp-chips' }, chip(p.k, p.tb.includes('key') ? 'tb' : ''), chip(p.b ? `${p.b} BPM` : '', p.tb.includes('bpm') ? 'tb' : ''), chip(p.lic, 'lic'),
+      chip(p.du ? fmtTime(p.du) : '', 'dur'),
+      p.y ? h('a', { class: 'pcp-yt', href: `https://www.youtube.com/watch?v=${p.y}`, target: '_blank', rel: 'noopener' }, icon('play'), 'YouTube') : null) : null,
     files.length ? null : h('p', { class: 'hint', style: 'margin:0' }, 'Aucun son dans ce projet.'),
     sec('Instru', instru),
     sec(`Versions · ${vers.length}`, vers),

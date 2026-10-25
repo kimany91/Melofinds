@@ -206,8 +206,12 @@ Même style que Melofinds Web, avec un menu à gauche :
   dossier, avec son projet FL :
   `Titre [C# min, 150 BPM] [FFP]/Titre [C# min, 150 BPM] [FFP].wav` et `….flp`.
   Les projets sont des **cartes encadrées** dans leur couleur, avec leur icône : chaque
-  projet a une couleur automatique, et **« Icône et couleur… »** (clic droit) en choisit
-  une parmi 12 couleurs et 18 icônes (le style suit le projet quand on le renomme).
+  projet a une couleur automatique ; **clic sur l'icône** (ou « Icône et couleur… ») pour
+  en choisir une parmi 12 couleurs et 50 icônes (le style suit le projet renommé).
+  **Double-clic** : ouvrir dans FL. **Glisser une carte** sur une autre : changer l'ordre
+  (gardé, aussi dans l'app web ; les nouveaux projets arrivent en haut).
+  Chaque carte montre la **durée** de la prod et, pour une prod envoyée depuis l'app,
+  **« ▶ Voir la vidéo YouTube »** (le lien suit le projet s'il est renommé).
   Clé, BPM, instru, date ; **♪ Sons** : l'instru et tous les sons du projet, versions
   (`0.1`, `1.3.3`…) dans l'ordre, à écouter ici ; recherche, **favoris ★**, **ouvrir dans FL** (crée le projet
   FLmake s'il n'y a encore que la prod), écouter l'instru, ouvrir le dossier, et

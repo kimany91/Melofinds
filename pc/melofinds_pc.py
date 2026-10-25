@@ -110,7 +110,7 @@ def selftest(out):
         res["gui"] = "ok"
     except Exception as e:  # Tk absent ou cassé
         res["gui"] = f"erreur {e}"
-    res["ok"] = (res["preview"]["ok"] and not res["tool_errors"] and all(res[n] != "absent" for n in ("yt-dlp.exe", "ffmpeg.exe", "deno.exe"))
+    res["ok"] = (res["preview"]["ok"] and not res["glyphs_missing"] and not res["tool_errors"] and all(res[n] != "absent" for n in ("yt-dlp.exe", "ffmpeg.exe", "deno.exe"))
                  and res["gui"] == "ok")
     Path(out).write_text(json.dumps(res, indent=2, ensure_ascii=False), encoding="utf-8")
     return 0 if res["ok"] else 1

@@ -195,7 +195,9 @@ AUDIO = (".wav", ".mp3", ".flac", ".ogg", ".aif", ".aiff", ".m4a")
 # Couleurs et icônes des projets (symboles simples, présents dans les polices Windows)
 PALETTE = ["#8b5cf6", "#ec4899", "#f87171", "#fb923c", "#fbbf24", "#a3e635",
            "#34d399", "#2dd4bf", "#22d3ee", "#60a5fa", "#818cf8", "#9aa1b2"]
-ICONS = ["♪", "♫", "★", "♥", "⚡", "☀", "☾", "✦", "✿", "♛", "☁", "♠", "♦", "⚑", "☯", "☠", "⚔", "✈"]
+ICONS = ["♪", "♫", "★", "♥", "⚡", "☀", "☾", "✦", "✿", "♛", "☁", "♠", "♦", "⚑", "☯", "☠", "⚔", "✈",
+         "♬", "♩", "♣", "❄", "☂", "☘", "✪", "✺", "❖", "☢", "⚓", "⚙", "☎", "✉", "✎", "✂", "⌛", "☕",
+         "♨", "⚛", "☮", "✌", "☺", "♔", "♞", "⚜", "⚖", "☄", "♻", "⚠", "✝", "☪"]
 
 
 def style_of(item, cfg):
@@ -276,8 +278,95 @@ def scan_projects(cfg=None):
             it.extra["instru_path"] = sounds[0]
         it.fav = it.id in favs
         it.extra["color"], it.extra["icon"], it.extra["styled"] = style_of(it, cfg)
+        ip = it.extra.get("instru_path")
+        if ip:
+            d = _duration(ip)
+            if d:
+                it.extra["dur"] = d
         out.append(it)
-    return sorted(out, key=lambda i: i.date, reverse=True)
+    videos = _videos(cfg)
+    for it in out:
+        if it.folder:
+            vid = videos.get(str(it.folder).lower())
+            if vid:
+                it.extra["yt"] = vid
+    return order_projects(out, cfg)
+
+
+def order_projects(items, cfg):
+    """Ton ordre (glisser-déposer dans le panneau) ; les nouveaux projets arrivent en haut."""
+    pos = {pid: n for n, pid in enumerate(cfg.get("project_order") or [])}
+    new = sorted((i for i in items if i.id not in pos), key=lambda i: i.date, reverse=True)
+    return new + sorted((i for i in items if i.id in pos), key=lambda i: pos[i.id])
+
+
+def move_project(src_id, dst_id, cfg=None):
+    """Déplace un projet à la place d'un autre (glisser-déposer). Renvoie le nouvel ordre."""
+    cfg = cfg if cfg is not None else C.load_config()
+    order = [i.id for i in scan_projects(cfg)]
+    if src_id not in order or dst_id not in order or src_id == dst_id:
+        return order
+    down = order.index(src_id) < order.index(dst_id)
+    order.remove(src_id)
+    order.insert(order.index(dst_id) + (1 if down else 0), src_id)
+    cfg["project_order"] = order[:3000]
+    C.save_config(cfg)
+    return order
+
+
+_dur_cache = {}
+
+
+def _duration(path):
+    """Durée (s) d'une prod .wav, lue dans l'en-tête (rapide), gardée en mémoire."""
+    p = Path(path)
+    if p.suffix.lower() != ".wav":
+        return None
+    try:
+        key = (str(p).lower(), p.stat().st_mtime)
+    except OSError:
+        return None
+    if key not in _dur_cache:
+        try:
+            import wave
+            with wave.open(str(p), "rb") as w:
+                _dur_cache[key] = round(w.getnframes() / float(w.getframerate()))
+        except (OSError, EOFError, ValueError, ZeroDivisionError, wave.Error):
+            _dur_cache[key] = None
+        if len(_dur_cache) > 5000:
+            _dur_cache.clear()
+    return _dur_cache[key]
+
+
+_video_cache = {"sig": None, "map": {}}
+
+
+def _videos(cfg):
+    """Dossier de projet → identifiant de la vidéo YouTube d'où vient la prod (prods
+    téléchargées depuis l'app ; suit les renommages)."""
+    try:
+        sig = (P_state_mtime(), len(cfg.get("renamed") or {}))
+    except OSError:
+        sig = None
+    if sig and sig == _video_cache["sig"]:
+        return _video_cache["map"]
+    out = {}
+    renamed = cfg.get("renamed") or {}
+    for vid, path in (C.load_state().get("files") or {}).items():
+        if not C.VIDEO_ID.match(str(vid)) or not path:
+            continue
+        p = C.follow_renames(path, renamed)
+        out[str(p.parent).lower()] = vid
+        try:
+            out[str(p.parent.resolve()).lower()] = vid
+        except OSError:
+            pass
+    _video_cache.update(sig=sig, map=out)
+    return out
+
+
+def P_state_mtime():
+    return C.P.state.stat().st_mtime if C.P.state.exists() else 0
 
 
 def toggle_fav(item, cfg=None):
@@ -473,6 +562,9 @@ def rename(item, new_title, cfg=None):
     favs = cfg.get(item.fav_key) or []
     if item.id in favs:
         cfg[item.fav_key] = [new_id if f == item.id else f for f in favs]
+    order = cfg.get("project_order") or []
+    if item.id in order:  # sa place dans ton ordre aussi
+        cfg["project_order"] = [new_id if x == item.id else x for x in order]
     styles = cfg.get("project_style") or {}
     if item.id in styles:  # l'icône et la couleur suivent le projet
         styles[new_id] = styles.pop(item.id)
@@ -568,6 +660,7 @@ def library_index(cfg=None, limit=150, files_out=None):
         out.append({"p": it.id, "n": it.name[:200], "t": it.title[:160], "k": it.key or "", "b": it.bpm or 0,
                     "tb": sorted(it.extra.get("tb") or []), "lic": it.lic or "", "fav": 1 if it.fav else 0,
                     "c": it.extra.get("color"), "ic": it.extra.get("icon"), "d": int(it.date), "fl": 1 if it.flp else 0,
+                    **({"y": it.extra["yt"]} if it.extra.get("yt") else {}), **({"du": it.extra["dur"]} if it.extra.get("dur") else {}),
                     "files": files})
     return {"at": int(time.time()), "projects": out, "palette": PALETTE, "icons": ICONS}
 

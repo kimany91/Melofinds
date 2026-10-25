@@ -587,25 +587,104 @@ def manager_window(selftest=False):
         cv.create_text(size / 2, size / 2 + 1, text=icon, fill=color, font=(SYMB, int(size * 0.42)))
         return cv
 
+    # --- Glisser-déposer : changer l'ordre des projets
+    drag = {"src": None, "x": 0, "y": 0, "on": False, "dst": None}
+    gcanvas = gbody.master
+
+    def card_at(x, y):
+        w = root.winfo_containing(x, y)
+        while w is not None:
+            cid = getattr(w, "_mf_card", None)
+            if cid:
+                return cid
+            w = getattr(w, "master", None)
+        return None
+
+    def drag_start(e, it):
+        drag.update(src=it.id, x=e.x_root, y=e.y_root, on=False, dst=None)
+
+    def drag_move(e):
+        if not drag["src"]:
+            return
+        if not drag["on"]:
+            if abs(e.x_root - drag["x"]) + abs(e.y_root - drag["y"]) < 12:
+                return
+            drag["on"] = True
+            root.configure(cursor="fleur")
+            frame_card(drag["src"], state="drag")
+        # défilement automatique près des bords
+        top, bottom = gcanvas.winfo_rooty(), gcanvas.winfo_rooty() + gcanvas.winfo_height()
+        if e.y_root < top + 40:
+            gcanvas.yview_scroll(-1, "units")
+        elif e.y_root > bottom - 40:
+            gcanvas.yview_scroll(1, "units")
+        dst = card_at(e.x_root, e.y_root)
+        if dst != drag["dst"]:
+            if drag["dst"] and drag["dst"] != drag["src"]:
+                frame_card(drag["dst"])
+            drag["dst"] = dst
+            if dst and dst != drag["src"]:
+                frame_card(dst, state="target")
+
+    def drag_end(e):
+        src, dst, was = drag["src"], drag["dst"], drag["on"]
+        drag.update(src=None, on=False, dst=None)
+        if not was:
+            return
+        root.configure(cursor="")
+        for cid in (src, dst):
+            if cid:
+                frame_card(cid)
+        if src and dst and src != dst:
+            L.move_project(src, dst)
+            load_prods(force=True)
+            toast("Projet déplacé · ton ordre est gardé")
+
+    def frame_card(cid, state=None):
+        c = cards.get(cid)
+        it = lib["by_id"].get(cid)
+        if not c or not it or not c.winfo_exists():
+            return
+        color = it.extra.get("color", ACCENT2)
+        if state == "target":
+            c.configure(highlightthickness=3, highlightbackground=FG)
+        elif state == "drag":
+            c.configure(highlightthickness=3, highlightbackground=blend(color, PANEL, 0.35))
+        else:
+            on = sel["id"] == cid
+            c.configure(highlightthickness=3 if on else 2, highlightbackground=color if on else blend(color, PANEL, 0.55))
+
     def bind_all_children(w, it):
-        w.bind("<Button-1>", lambda e, i=it: select(i.id), add="+")
+        w.bind("<ButtonPress-1>", lambda e, i=it: (drag_start(e, i), select(i.id)), add="+")
+        w.bind("<B1-Motion>", drag_move, add="+")
+        w.bind("<ButtonRelease-1>", drag_end, add="+")
         w.bind("<Double-1>", lambda e, i=it: do_open(i))
         w.bind("<Button-3>", lambda e, i=it: (select(i.id), menu.tk_popup(e.x_root, e.y_root)))
         for ch in w.winfo_children():
             bind_all_children(ch, it)
 
+    def open_video(it):
+        it = it or selected()
+        vid = it.extra.get("yt") if it else None
+        if vid:
+            webbrowser.open(f"https://www.youtube.com/watch?v={vid}")
+        elif it:
+            toast("Pas de vidéo YouTube : ce projet ne vient pas d'une prod envoyée depuis l'app")
+
     def make_card(it):
         color, icon = it.extra.get("color", ACCENT2), it.extra.get("icon", "♪")
         on = sel["id"] == it.id
-        bgc = blend(color, PANEL, 0.10) if on else PANEL
-        c = tk.Frame(grid, bg=bgc, highlightthickness=2, highlightbackground=color if on else blend(color, PANEL, 0.55),
+        bgc = PANEL
+        c = tk.Frame(grid, bg=bgc, highlightthickness=3 if on else 2, highlightbackground=color if on else blend(color, PANEL, 0.55),
                      cursor="hand2", width=CARD_W)
+        c._mf_card = it.id
         tk.Frame(c, bg=color, height=5).pack(fill="x")
         inner = tk.Frame(c, bg=bgc, padx=14, pady=12)
         inner.pack(fill="both", expand=True)
         top = tk.Frame(inner, bg=bgc)
         top.pack(fill="x")
-        icon_tile(top, color, icon, 44, bgc).pack(side="left")
+        tile = icon_tile(top, color, icon, 44, bgc)
+        tile.pack(side="left")
         star = tk.Label(top, text="★" if it.fav else "☆", bg=bgc, fg=AMBER if it.fav else FAINT, font=(SYMB, 14), cursor="hand2")
         star.pack(side="right", anchor="n")
         tk.Label(inner, text=it.title if len(it.title) <= 64 else it.title[:62] + "…", bg=bgc, fg=FG, font=(FONT, 11, "bold"),
@@ -618,7 +697,11 @@ def manager_window(selftest=False):
             if txt:
                 tk.Label(chips, text=txt, bg=PANEL3 if not on else blend(color, PANEL3, 0.18), fg=col, font=(MONO, 8, "bold"),
                          padx=7, pady=2).pack(side="left", padx=(0, 6))
-        if not (it.key or it.bpm or it.lic):
+        dur = it.extra.get("dur")
+        if dur:
+            tk.Label(chips, text=f"{int(dur) // 60}:{int(dur) % 60:02d}", bg=PANEL3, fg=MUTED, font=(MONO, 8, "bold"),
+                     padx=7, pady=2).pack(side="left", padx=(0, 6))
+        if not (it.key or it.bpm or it.lic or dur):
             tk.Label(chips, text="—", bg=bgc, fg=FAINT, font=(MONO, 8)).pack(side="left")
         ins = it.extra.get("instru") or ""
         tk.Label(inner, text=f"♪ {ins}" if ins else "Pas d'instru", bg=bgc, fg=MUTED, font=(FONT, 9), anchor="w",
@@ -627,8 +710,16 @@ def manager_window(selftest=False):
         foot.pack(fill="x", pady=(6, 0))
         tk.Label(foot, text="Projet FL" if it.flp else "Prod seule", bg=bgc, fg=GREEN if it.flp else AMBER, font=(FONT, 8, "bold")).pack(side="left")
         tk.Label(foot, text=_ago(it.date), bg=bgc, fg=FAINT, font=(FONT, 8)).pack(side="right")
+        yt = None
+        if it.extra.get("yt"):
+            yt = tk.Label(inner, text="▶ Voir la vidéo YouTube", bg=bgc, fg="#ff5a52", font=(FONT, 9, "bold"), cursor="hand2", anchor="w")
+            yt.pack(fill="x", pady=(6, 0))
         bind_all_children(c, it)
         star.bind("<Button-1>", lambda e, i=it: (do_fav(i), "break")[1])
+        tile.configure(cursor="hand2")
+        tile.bind("<Button-1>", lambda e, i=it: (select(i.id), do_style(i), "break")[2])
+        if yt:
+            yt.bind("<Button-1>", lambda e, i=it: (open_video(i), "break")[1])
         return c
 
     def place(cid, idx):
@@ -647,14 +738,12 @@ def manager_window(selftest=False):
     gbody.bind("<Configure>", lambda e: relayout(), add="+")
 
     def select(cid):
+        """Sélection sans recréer la carte (le double-clic pour ouvrir dans FL marche à coup sûr)."""
         old = sel["id"]
         sel["id"] = cid
         for x in {old, cid}:
-            if x in cards and x in lib["by_id"]:
-                cards[x].destroy()
-                cards[x] = make_card(lib["by_id"][x])
-                if x in lib["shown"]:
-                    place(x, lib["shown"].index(x))
+            if x:
+                frame_card(x)
         update_actions()
 
     def fill_prods():
@@ -700,7 +789,7 @@ def manager_window(selftest=False):
         for b in (a_open, a_ren, a_style, a_dir, a_play):
             b.set(enabled=bool(it))
         if not it:
-            sel_lbl.configure(text="Clic : choisir · double-clic : ouvrir · clic droit : menu")
+            sel_lbl.configure(text="Double-clic : ouvrir dans FL · clic sur l'icône : icône et couleur · glisser : changer l'ordre")
             return
         a_open.set(text="Ouvrir dans FL" if it.flp else ("Créer le projet FL" if FM.settings()["template"] else "Ouvrir la prod"))
         ip = it.extra.get("instru_path")
@@ -871,7 +960,7 @@ def manager_window(selftest=False):
             swatches[c] = cv
         for n, ic in enumerate(L.ICONS):
             lb = tk.Label(ig, text=ic, font=(SYMB, 15), width=2, bg=PANEL2, fg=MUTED, cursor="hand2", pady=4)
-            lb.grid(row=n // 9, column=n % 9, padx=2, pady=2)
+            lb.grid(row=n // 10, column=n % 10, padx=2, pady=2)
             lb.bind("<Button-1>", lambda e, ic=ic: (st.update(icon=ic), redraw()))
             icons[ic] = lb
         redraw()
@@ -954,6 +1043,7 @@ def manager_window(selftest=False):
     menu.add_separator()
     menu.add_command(label="Écouter les sons (instru, versions)…", command=do_play)
     menu.add_command(label="Ouvrir le dossier", command=do_dir)
+    menu.add_command(label="Voir la vidéo YouTube", command=lambda: open_video(None))
     q_var.trace_add("write", lambda *_: fill_prods())
 
     def q_placeholder(*_):

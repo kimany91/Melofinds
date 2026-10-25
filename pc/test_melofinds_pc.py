@@ -915,3 +915,52 @@ class SynchroDuTelephone(unittest.TestCase):
         self.assertEqual(mpc.preview_kbps(120), 96)
         self.assertEqual(mpc.preview_kbps(330), 64)
         self.assertEqual(mpc.preview_kbps(None), 80)
+
+
+class OrdreLienEtDuree(unittest.TestCase):
+    """Mes projets FL : ordre au glisser-déposer, lien de la vidéo YouTube, durée."""
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp(prefix="mf-ordre-"))
+        mpc.P.set(self.d / "prog")
+        self.root = self.d / "Projets FL"
+        self.root.mkdir()
+        mpc.save_config({"dossier": str(self.root), "devices": [], "flmake": {"on": False, "dossier": str(self.root)}})
+        for n, age in (("Aube", 300), ("Brume", 200), ("Ciel", 100)):
+            p = self.root / n
+            p.mkdir()
+            (p / f"{n}.wav").write_bytes(fake_wav(3))
+            os.utime(p / f"{n}.wav", (time.time() - age, time.time() - age))
+
+    def titles(self):
+        return [i.title for i in L.scan_projects()]
+
+    def test_ordre(self):
+        self.assertEqual(self.titles(), ["Ciel", "Brume", "Aube"])  # sans ordre : les plus récents d'abord
+        L.move_project("p:ciel", "p:aube")  # vers le bas : après la cible
+        self.assertEqual(self.titles(), ["Brume", "Aube", "Ciel"])
+        L.move_project("p:ciel", "p:brume")  # vers le haut : avant la cible
+        self.assertEqual(self.titles(), ["Ciel", "Brume", "Aube"])
+        L.move_project("p:aube", "p:ciel")
+        self.assertEqual(self.titles(), ["Aube", "Ciel", "Brume"])
+        (self.root / "Dune").mkdir()
+        (self.root / "Dune" / "Dune.wav").write_bytes(fake_wav(1))
+        self.assertEqual(self.titles(), ["Dune", "Aube", "Ciel", "Brume"])  # nouveau projet : en haut
+        L.rename(next(i for i in L.scan_projects() if i.title == "Ciel"), "Cendre")
+        self.assertEqual(self.titles(), ["Dune", "Aube", "Cendre", "Brume"])  # garde sa place
+        self.assertEqual([p["t"] for p in L.library_index()["projects"]], ["Dune", "Aube", "Cendre", "Brume"])  # même ordre dans l'app web
+
+    def test_lien_youtube_et_duree(self):
+        mpc.save_state({**mpc.load_state(), "files": {"jNQXAC9IVRw": str((self.root / "Brume" / "Brume.wav").resolve())}})
+        it = next(i for i in L.scan_projects() if i.title == "Brume")
+        self.assertEqual((it.extra.get("yt"), it.extra.get("dur")), ("jNQXAC9IVRw", 3))
+        self.assertNotIn("yt", next(i for i in L.scan_projects() if i.title == "Aube").extra)
+        L.rename(it, "Brouillard")
+        it = next(i for i in L.scan_projects() if i.title == "Brouillard")
+        self.assertEqual(it.extra.get("yt"), "jNQXAC9IVRw")  # le lien suit le renommage
+        p = next(x for x in L.library_index()["projects"] if x["t"] == "Brouillard")
+        self.assertEqual((p["y"], p["du"]), ("jNQXAC9IVRw", 3))
+
+    def test_plus_d_icones(self):
+        self.assertGreaterEqual(len(L.ICONS), 50)
+        self.assertEqual(len(set(L.ICONS)), len(L.ICONS))
