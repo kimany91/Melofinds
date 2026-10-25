@@ -3025,14 +3025,45 @@ const pcTarget = (p) => p.files.find((f) => f.x) || p.files.find((f) => f.l) || 
 const pcTargets = () => pcProjects().map(pcTarget).filter(Boolean);
 const pcHas = (f) => (pcLib.cached.has(f.f) ? pcLib.cached.get(f.f) : -1) >= f.m;
 const pcSyncState = { at: 0, sig: '' };
-function pcSync(force) {
-  if (!WEB || !pc.info || !pcLib.data || !pcOn() || versionLt(pc.info.version, '3.11.0')) return;
+function pcSync(force, reset) {
+  if (!WEB || !pc.info || !pcLib.data || !pcOn() || versionLt(pc.info.version, '3.11.0')) return Promise.resolve(false);
   const miss = pcTargets().filter((f) => !pcHas(f)).map((f) => f.f);
-  if (!miss.length) { pcLib.syncInfo = null; return; }
+  if (!miss.length) { pcLib.syncInfo = null; return Promise.resolve(false); }
   const sig = miss.join(',');
-  if (!force && sig === pcSyncState.sig && Date.now() - pcSyncState.at < 10 * 60e3) return;
+  if (!force && sig === pcSyncState.sig && Date.now() - pcSyncState.at < 10 * 60e3) return Promise.resolve(false);
   Object.assign(pcSyncState, { sig, at: Date.now() });
-  ntfyPublish({ cmd: 'sync', f: miss.slice(0, 300) }).catch(() => { pcSyncState.at = 0; });
+  return ntfyPublish({ cmd: 'sync', f: miss.slice(0, 300), reset: reset ? 1 : undefined }).then(() => true).catch(() => { pcSyncState.at = 0; return false; });
+}
+
+// Bouton « Vider et retélécharger » : efface tous les sons gardés sur ce téléphone, puis le
+// PC renvoie seulement la dernière version de chaque projet. PC allumé et en ligne seulement.
+function pcClearAll() {
+  if (!pcOn()) { toast('Allume ton PC et mets-le en ligne pour faire ça'); return; }
+  if (versionLt(pc.info.version, '3.15.0')) { toast('Mets d’abord le PC à jour (bouton « Mettre à jour le PC »)'); return; }
+  const n = pcLib.cached.size;
+  const targets = pcTargets().length;
+  const yes = h('button', { type: 'button', class: 'primary danger-btn' }, 'Oui, tout effacer et retélécharger');
+  const no = h('button', { type: 'button', class: 'ghost', onclick: closeDrawer }, 'Annuler');
+  yes.addEventListener('click', async () => {
+    if (!pcOn()) { closeDrawer(); toast('Le PC n’est plus en ligne : rien n’a été effacé'); return; }
+    yes.disabled = true;
+    pcStop(true);
+    for (const id of [...pcLib.cached.keys()]) await pcAudioStore.del(id);
+    pcLib.cached.clear();
+    pcLib.parts = {};
+    pcLib.waiting = null;
+    pcLib.syncInfo = { left: targets, wait: 0, at: Date.now() };
+    const sent = await pcSync(true, true);
+    closeDrawer();
+    renderPcView();
+    toast(sent ? `Effacé : le PC renvoie la dernière version de tes ${targets} projets` : 'Effacé, mais pas de réseau : la demande partira dès que possible');
+  });
+  openDrawer('Vider et retélécharger ?', [
+    h('p', { style: 'margin:0' }, `Tu es sûr ? Les ${n} son${n > 1 ? 's' : ''} gardé${n > 1 ? 's' : ''} sur ce téléphone (toutes les versions) vont être effacé${n > 1 ? 's' : ''}.`),
+    h('p', { class: 'muted', style: 'margin:0' }, `Ensuite le PC renvoie tout seul seulement la dernière version de chacun de tes ${targets} projets (par exemple la 1.2 si c’est la plus récente). Environ 10 sons toutes les 3 h (limite du relais gratuit) : en attendant, ceux qui ne sont pas encore revenus ne s’écoutent pas PC éteint.`),
+    h('p', { class: 'hint', style: 'margin:0' }, 'Rien n’est effacé sur ton PC.'),
+    h('div', { class: 'actions' }, yes, no),
+  ]);
 }
 
 // Liens YouTube des prods reçues avant que le PC les garde : ce téléphone sait quelle
@@ -3372,7 +3403,10 @@ function renderPcView() {
     sync.hidden = !pcLib.data || !tg.length;
     sync.replaceChildren(h('div', { class: 'pcs-top' }, h('b', {}, `${have} / ${tg.length} sons sur ce téléphone`),
       h('span', {}, have === tg.length ? 'Tout s’écoute même PC éteint' : pcOn() ? `Le PC envoie les autres${waitTxt}` : 'Les autres arriveront quand le PC sera allumé')),
-      h('div', { class: 'pcs-bar' }, h('i', { style: `width:${tg.length ? (have / tg.length) * 100 : 0}%` })));
+      h('div', { class: 'pcs-bar' }, h('i', { style: `width:${tg.length ? (have / tg.length) * 100 : 0}%` })),
+      h('div', { class: 'pcs-acts' },
+        h('button', { type: 'button', class: 'ghost sm', disabled: !pcOn(), title: pcOn() ? 'Efface les sons gardés ici et retélécharge la dernière version de chaque projet' : 'Possible seulement quand le PC est allumé et en ligne', onclick: pcClearAll }, 'Vider et retélécharger'),
+        pcOn() ? null : h('span', {}, 'PC allumé et en ligne seulement')));
   }
   $$('#pcLibSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.f === pcLib.filter));
   const grid = $('#pcLibGrid');

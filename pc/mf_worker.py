@@ -156,9 +156,14 @@ class Remote:
         self.st["sent_dev"][code] = dict(list(sent.items())[-800:])
         return "ok"
 
-    def sync_request(self, code, fids):
+    def sync_request(self, code, fids, reset=False):
         """Le téléphone dit quels sons il n'a pas encore (dernière version de chaque projet) :
-        ils partent petit à petit, sans dépasser les limites de ntfy.sh."""
+        ils partent petit à petit, sans dépasser les limites de ntfy.sh. reset : le téléphone a
+        tout effacé (bouton « Vider »), on oublie ce qui lui a déjà été envoyé."""
+        if reset:
+            self.st.setdefault("sent_dev", {})[code] = {}
+            self.queue[code] = []
+            self.reported.pop(code, None)
         q = [x for x in self.queue.get(code, []) if x in fids]  # ce qu'il a reçu entre-temps n'est plus demandé
         for fid in fids:
             if isinstance(fid, str) and re.fullmatch(r"[a-f0-9]{12}", fid) and fid not in q:
@@ -210,7 +215,7 @@ class Remote:
             return
         if cmd == "sync":
             f = msg.get("f")
-            self.sync_request(code, [x for x in f if isinstance(x, str)][:300] if isinstance(f, list) else [])
+            self.sync_request(code, [x for x in f if isinstance(x, str)][:300] if isinstance(f, list) else [], bool(msg.get("reset")))
             return
         if cmd == "play":
             it, f = L.find_audio(str(msg.get("f") or "")[:16], cfg)

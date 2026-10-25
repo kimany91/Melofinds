@@ -898,6 +898,23 @@ class SynchroDuTelephone(unittest.TestCase):
         r.tick(devs, mpc.load_config())
         self.assertEqual(len([m for _, m, _ in self.files if "aud" in m]), 4)
 
+    def test_vider_et_retelecharger(self):
+        r = W.Remote(mpc.load_state())
+        devs = mpc.load_config()["devices"]
+        _, t = self.targets()
+        r.command(self.CODE, {"cmd": "sync", "f": sorted(t)}, mpc.load_config())
+        for _ in range(2):
+            r.checked = 0
+            r.tick(devs, mpc.load_config())
+        auds = lambda: len([m for _, m, _ in self.files if "aud" in m])
+        self.assertEqual(auds(), 4)
+        # le téléphone a tout effacé : sans « reset », le PC croirait qu'il les a encore
+        r.command(self.CODE, {"cmd": "sync", "f": sorted(t), "reset": 1}, mpc.load_config())
+        for _ in range(2):
+            r.checked = 0
+            r.tick(devs, mpc.load_config())
+        self.assertEqual(auds(), 8)
+
     def test_limite_ntfy_attente_annoncee(self):
         r = W.Remote(mpc.load_state())
         r.audio = [(time.time() - 3600, 16_000_000)]  # 16 Mo déjà envoyés il y a 1 h

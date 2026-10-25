@@ -184,6 +184,9 @@ ouvre le site dans Chrome) :
   une seule pièce jointe pour une prod de 3 min). Une barre « 12 / 30 sons sur ce
   téléphone » suit l'avancement ; chaque carte dit « ✓ Écoutable hors ligne ». Les
   autres versions s'écoutent à la demande quand le PC est allumé.
+- **« Vider et retélécharger »** (PC allumé et en ligne seulement, avec confirmation) :
+  efface tous les sons gardés sur le téléphone (toutes les versions), puis le PC renvoie
+  seulement la dernière version de chaque projet. Rien n'est effacé sur le PC.
 - **PC éteint** : la liste des projets et les sons gardés (200 au plus) restent sur le
   téléphone : tout se voit et s'écoute. Un renommage, un style ou un favori fait PC
   éteint part dès qu'il se rallume.
