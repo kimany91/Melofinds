@@ -81,17 +81,22 @@ def _chrome_path():
     return shutil.which("google-chrome") or shutil.which("chrome")
 
 
-def open_site():
-    """Ouvre Melofinds Web dans Chrome (sinon le navigateur par défaut)."""
+def open_url(url):
+    """Ouvre un lien dans Chrome (sinon le navigateur par défaut)."""
     chrome = _chrome_path()
     if chrome:
         try:
-            subprocess.Popen([chrome, SITE_URL], close_fds=True)
+            subprocess.Popen([chrome, url], close_fds=True)
             return
         except OSError:
             pass
     import webbrowser
-    webbrowser.open(SITE_URL)
+    webbrowser.open(url)
+
+
+def open_site():
+    """Ouvre Melofinds Web dans Chrome (sinon le navigateur par défaut)."""
+    open_url(SITE_URL)
 
 
 def _open_path(p):
@@ -762,7 +767,8 @@ def manager_window(selftest=False):
         it = it or selected()
         vid = it.extra.get("yt") if it else None
         if vid:
-            webbrowser.open(f"https://www.youtube.com/watch?v={vid}")
+            open_url(f"{C.YT_URL}{vid}")
+            toast("Vidéo ouverte dans Chrome")
         elif it:
             toast("Pas de vidéo YouTube : ce projet ne vient pas d'une prod envoyée depuis l'app")
 

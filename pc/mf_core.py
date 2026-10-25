@@ -32,7 +32,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.13.0"
+VERSION = "3.14.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -853,6 +853,60 @@ def pick_value(sent, sent_tb, desc):
     return sent, bool(sent)
 
 
+YT_URL = "https://www.youtube.com/watch?v="
+
+
+def tag_wav_link(ffmpeg, src, dst, video_id, title=""):
+    """Copie du .wav avec le lien de la vidéo dans ses infos (commentaire), sans réencoder."""
+    if not VIDEO_ID.match(str(video_id)):
+        return None
+    t = re.sub(r"[\x00-\x1f]", " ", clean_title(title))[:200]
+    try:
+        r = run_tool([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), "-map", "0:a", "-c", "copy",
+                      "-metadata", f"comment={YT_URL}{video_id}", "-metadata", f"title={t}", str(dst)], 120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return Path(dst) if r.returncode == 0 and is_wav(dst) else None
+
+
+_link_cache = {}
+
+
+def wav_link(path):
+    """Identifiant de la vidéo YouTube écrit dans les infos d'un .wav (ou None)."""
+    p = Path(path)
+    try:
+        key = (str(p).lower(), p.stat().st_mtime)
+    except OSError:
+        return None
+    if key in _link_cache:
+        return _link_cache[key]
+    vid = None
+    try:
+        with open(p, "rb") as f:
+            head = f.read(12)
+            if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+                for _ in range(24):
+                    h = f.read(8)
+                    if len(h) < 8:
+                        break
+                    cid, size = h[:4], int.from_bytes(h[4:], "little")
+                    if cid == b"LIST" and size < 65536:
+                        body = f.read(size + (size & 1))
+                        m = re.search(rb"(?:youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_-]{11})", body)
+                        if m:
+                            vid = m.group(1).decode()
+                            break
+                    else:
+                        f.seek(size + (size & 1), 1)
+    except OSError:
+        pass
+    _link_cache[key] = vid
+    if len(_link_cache) > 5000:
+        _link_cache.clear()
+    return vid
+
+
 def download(video_id, root, info, out=None, progress=None):
     """Télécharge la prod en .wav dans root. progress(étape, pourcentage) : « info »,
     « download » (0-100), « convert »."""
@@ -923,6 +977,11 @@ def download(video_id, root, info, out=None, progress=None):
         wavs = [p for p in Path(tmp).iterdir() if p.suffix.lower() == ".wav" and is_wav(p)]
         if not wavs:
             return False, "la conversion en WAV a échoué"
+        # Le lien de la vidéo est écrit dans le .wav (commentaire) : il suit la prod partout,
+        # même renommée ou déplacée à la main.
+        tagged = tag_wav_link(ffmpeg, wavs[0], Path(tmp) / "tagged.wav", video_id, vt or info.get("t") or "")
+        if tagged:
+            wavs = [tagged]
         # 3) Seul le .wav vérifié entre dans ton dossier.
         final.parent.mkdir(parents=True, exist_ok=False)
         shutil.move(str(wavs[0]), str(final))
@@ -934,7 +993,7 @@ def download(video_id, root, info, out=None, progress=None):
             pass
         return False, "fichier non WAV supprimé"
     if out is not None:  # pour FLmake
-        out.update(path=str(final), key=key, bpm=bpm, title=clean_title(meta.get("title") or info.get("t") or video_id),
+        out.update(path=str(final), key=key, bpm=bpm, title=clean_title(meta.get("title") or info.get("t") or video_id), yt=video_id,
                    tb={k: v for k, v in (("key", key if tb_k else None), ("bpm", bpm if tb_b else None)) if v})
     return True, final.name
 

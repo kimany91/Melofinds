@@ -1016,3 +1016,60 @@ class SonsDeFL(unittest.TestCase):
         files = L.audio_files(it)
         self.assertEqual(it.extra.get("instru"), "Haze")
         self.assertEqual([f["name"] for f in files if f.get("main")], ["Haze [C# min, 150 BPM]"])
+
+
+class LienYouTubeGarde(unittest.TestCase):
+    """Le lien de la vidéo est gardé à la réception : dans le .wav et dans les réglages."""
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp(prefix="mf-lien-"))
+        mpc.P.set(self.d / "prog")
+        self.root = self.d / "Projets FL"
+        self.root.mkdir()
+        mpc.save_config({"dossier": str(self.root), "devices": [], "flmake": {"on": False, "dossier": str(self.root)}})
+
+    def project(self, name):
+        p = self.root / name
+        p.mkdir()
+        (p / f"{name}.wav").write_bytes(fake_wav(4, rate=8000))
+        return p / f"{name}.wav"
+
+    @unittest.skipUnless(mpc.tool_path("ffmpeg.exe"), "ffmpeg absent")
+    def test_lien_dans_le_wav_suit_un_renommage_a_la_main(self):
+        wav = self.project("Haze [C# min]")
+        tagged = mpc.tag_wav_link(mpc.tool_path("ffmpeg.exe"), wav, self.d / "t.wav", "jNQXAC9IVRw", "Haze")
+        self.assertTrue(tagged and mpc.is_wav(tagged))
+        self.assertEqual(mpc.wav_link(tagged), "jNQXAC9IVRw")
+        os.replace(tagged, wav)
+        # renommé dans l'Explorateur Windows (pas dans le panneau) : le lien suit quand même
+        os.replace(wav, wav.with_name("Brume.wav"))
+        os.replace(wav.parent, self.root / "Brume")
+        it = next(i for i in L.scan_projects() if i.title == "Brume")
+        self.assertEqual(it.extra.get("yt"), "jNQXAC9IVRw")
+
+    def test_lecture_wav_sans_lien(self):
+        wav = self.project("Nuit")
+        self.assertIsNone(mpc.wav_link(wav))
+        self.assertIsNone(mpc.wav_link(self.d / "absent.wav"))
+        (self.d / "faux.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVELIST\xff\xff\xff\x7f")
+        self.assertIsNone(mpc.wav_link(self.d / "faux.wav"))
+
+    def test_lien_garde_a_la_reception_et_au_renommage(self):
+        self.project("Haze [C# min]")
+        L.remember_link("p:haze [c# min]", "jNQXAC9IVRw")
+        it = next(i for i in L.scan_projects() if i.title == "Haze")
+        self.assertEqual(it.extra.get("yt"), "jNQXAC9IVRw")
+        L.rename(it, "Brume")
+        it = next(i for i in L.scan_projects() if i.title == "Brume")
+        self.assertEqual(it.extra.get("yt"), "jNQXAC9IVRw")
+
+    def test_liens_envoyes_par_le_telephone(self):
+        self.project("Haze [C# min]")
+        self.project("Nuit [F min]")
+        it = next(i for i in L.scan_projects() if i.title == "Nuit")
+        L.rename(it, "Lune")  # renommé dans le panneau avant que le téléphone envoie les liens
+        n = L.remember_links({"jNQXAC9IVRw": "Haze [C# min].wav", "AAAAAAAAAA1": "Nuit [F min].wav",
+                              "BBBBBBBBBB1": "inconnu.wav", "pas-un-id": "x.wav", "CCCCCCCCCC1": "pas un wav.mp3"})
+        self.assertEqual(n, 2)
+        got = {i.title: i.extra.get("yt") for i in L.scan_projects()}
+        self.assertEqual(got, {"Haze": "jNQXAC9IVRw", "Lune": "AAAAAAAAAA1"})

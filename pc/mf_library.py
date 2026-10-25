@@ -287,12 +287,17 @@ def scan_projects(cfg=None):
             if d:
                 it.extra["dur"] = d
         out.append(it)
+    # Lien de la vidéo : écrit dans le .wav de la prod, sinon gardé dans les réglages
+    # (à la réception, ou envoyé par le téléphone), sinon retrouvé par le chemin reçu.
     videos = _videos(cfg)
+    links = cfg.get("yt_links") or {}
     for it in out:
-        if it.folder:
+        ip = it.extra.get("instru_path")
+        vid = (C.wav_link(ip) if ip else None) or links.get(it.id)
+        if not vid and it.folder:
             vid = next((videos[k] for k in _forms(it.folder) if k in videos), None)
-            if vid:
-                it.extra["yt"] = vid
+        if vid and C.VIDEO_ID.match(str(vid)):
+            it.extra["yt"] = vid
     return order_projects(out, cfg)
 
 
@@ -315,6 +320,50 @@ def move_project(src_id, dst_id, cfg=None):
     cfg["project_order"] = order[:3000]
     C.save_config(cfg)
     return order
+
+
+def remember_link(project_id, video_id, cfg=None):
+    cfg = cfg if cfg is not None else C.load_config()
+    if not C.VIDEO_ID.match(str(video_id)):
+        return
+    links = dict(cfg.get("yt_links") or {})
+    links[project_id] = video_id
+    cfg["yt_links"] = dict(list(links.items())[-3000:])
+    C.save_config(cfg)
+
+
+def remember_links(pairs, cfg=None):
+    """Liens envoyés par le téléphone pour les prods reçues avant : {vidéo: nom du .wav reçu}.
+    Retrouve le projet par le nom du fichier (aussi après un renommage fait dans le panneau)."""
+    cfg = cfg if cfg is not None else C.load_config()
+    items = scan_projects(cfg)
+    renamed = cfg.get("renamed") or {}
+    links = dict(cfg.get("yt_links") or {})
+    n = 0
+    for vid, fname in pairs.items():
+        if not C.VIDEO_ID.match(str(vid)) or not isinstance(fname, str) or not fname.lower().endswith(".wav"):
+            continue
+        fname = Path(fname.replace("\\", "/")).name.lower()
+        hit = None
+        for it in items:
+            ip = it.extra.get("instru_path")
+            if ip and Path(ip).name.lower() == fname:
+                hit = it
+                break
+        if not hit:  # renommé depuis : on suit les renommages du panneau
+            for old in renamed:
+                if Path(old.replace("\\", "/")).name.lower() == fname:
+                    folder = _forms(C.follow_renames(old, renamed).parent)
+                    hit = next((it for it in items if it.folder and _forms(it.folder) & folder), None)
+                    if hit:
+                        break
+        if hit and links.get(hit.id) != vid and not hit.extra.get("yt"):
+            links[hit.id] = vid
+            n += 1
+    if n:
+        cfg["yt_links"] = dict(list(links.items())[-3000:])
+        C.save_config(cfg)
+    return n
 
 
 def reorder(shown_ids, cfg=None):
@@ -587,6 +636,10 @@ def rename(item, new_title, cfg=None):
     favs = cfg.get(item.fav_key) or []
     if item.id in favs:
         cfg[item.fav_key] = [new_id if f == item.id else f for f in favs]
+    links = cfg.get("yt_links") or {}
+    if item.id in links:  # le lien de la vidéo aussi
+        links[new_id] = links.pop(item.id)
+        cfg["yt_links"] = links
     order = cfg.get("project_order") or []
     if item.id in order:  # sa place dans ton ordre aussi
         cfg["project_order"] = [new_id if x == item.id else x for x in order]

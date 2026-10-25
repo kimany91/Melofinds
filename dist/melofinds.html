@@ -6219,6 +6219,7 @@ async function onPcLib(d, m) {
     savePcLib();
     renderPcView();
     pcSync();
+    pcSendLinks();
   } catch { /* pièce jointe expirée (3 h) : on garde la liste qu'on a */ }
 }
 
@@ -6269,6 +6270,31 @@ function pcSync(force) {
   if (!force && sig === pcSyncState.sig && Date.now() - pcSyncState.at < 10 * 60e3) return;
   Object.assign(pcSyncState, { sig, at: Date.now() });
   ntfyPublish({ cmd: 'sync', f: miss.slice(0, 300) }).catch(() => { pcSyncState.at = 0; });
+}
+
+// Liens YouTube des prods reçues avant que le PC les garde : ce téléphone sait quelle
+// vidéo a donné quel fichier (« Sur ton PC : Haze [C# min].wav ») ; il les envoie au PC.
+function pcVideoByFile() {
+  const out = {};
+  for (const [id, q] of Object.entries(pc.queue)) {
+    if (q.state === 'done' && q.file && /^[\w-]{11}$/.test(id) && /\.wav$/i.test(q.file)) out[String(q.file).toLowerCase()] = id;
+  }
+  return out;
+}
+function pcLocalVideo(p) {
+  const by = pcVideoByFile();
+  const ins = p.files.find((f) => f.i);
+  return (ins && by[`${ins.n}.wav`.toLowerCase()]) || by[`${p.n}.wav`.toLowerCase()] || '';
+}
+function pcSendLinks() {
+  if (!WEB || !pc.info || !pcLib.data || !pcOn() || versionLt(pc.info.version, '3.14.0')) return;
+  if (Date.now() - (Number(local.get('pcLinksAt', 0)) || 0) < 12 * 3600e3) return;
+  if (!pcLib.data.projects.some((p) => !p.y)) return;
+  const v = {};
+  for (const [file, id] of Object.entries(pcVideoByFile()).slice(0, 300)) v[id] = file;
+  if (!Object.keys(v).length) return;
+  local.set('pcLinksAt', Date.now());
+  ntfyPublish({ cmd: 'links', v }).catch(() => local.set('pcLinksAt', 0));
 }
 
 function askPcLib(force) {
@@ -6486,6 +6512,7 @@ function pcCard(p) {
   const other = files.filter((f) => !f.i && !f.v && !f.g);
   const flMade = files.filter((f) => f.g);
   const open = pcLib.open.has(p.p);
+  const yt = p.y || pcLocalVideo(p);
   const chip = (txt, cls) => (txt ? h('span', { class: `pcp-chip ${cls || ''}` }, txt) : null);
   const sec = (title, list) => (list.length ? h('div', { class: 'pcp-sec' }, h('h5', {}, title), ...list.map((f) => pcFileRow(p, f))) : null);
   return h('article', { class: `pcp${p.fav ? ' fav' : ''}${p.pending ? ' pending' : ''}`, style: `--pc:${p.c}` },
@@ -6496,9 +6523,9 @@ function pcCard(p) {
         pcTarget(p) ? h('em', { class: `pcp-off${pcHas(pcTarget(p)) ? ' ok' : ''}` }, pcHas(pcTarget(p)) ? '✓ Écoutable hors ligne' : '↓ Arrive sur ce téléphone') : null),
       h('button', { type: 'button', class: `pcp-star${p.fav ? ' on' : ''}`, 'aria-label': p.fav ? 'Retirer des favoris' : 'Mettre en favori',
         onclick: () => pcCommand({ cmd: 'fav', p: p.p, on: !p.fav }, p.fav ? 'Retiré des favoris' : 'Mis en favori') }, icon('star'))),
-    p.k || p.b || p.lic || p.du || p.y ? h('div', { class: 'pcp-chips' }, chip(p.k, p.tb.includes('key') ? 'tb' : ''), chip(p.b ? `${p.b} BPM` : '', p.tb.includes('bpm') ? 'tb' : ''), chip(p.lic, 'lic'),
+    p.k || p.b || p.lic || p.du || yt ? h('div', { class: 'pcp-chips' }, chip(p.k, p.tb.includes('key') ? 'tb' : ''), chip(p.b ? `${p.b} BPM` : '', p.tb.includes('bpm') ? 'tb' : ''), chip(p.lic, 'lic'),
       chip(p.du ? fmtTime(p.du) : '', 'dur'),
-      p.y ? h('a', { class: 'pcp-yt', href: `https://www.youtube.com/watch?v=${p.y}`, target: '_blank', rel: 'noopener' }, icon('play'), 'YouTube') : null) : null,
+      yt ? h('a', { class: 'pcp-yt', href: `https://www.youtube.com/watch?v=${yt}`, target: '_blank', rel: 'noopener' }, icon('play'), 'YouTube') : null) : null,
     files.length ? null : h('p', { class: 'hint', style: 'margin:0' }, 'Aucun son dans ce projet.'),
     sec('Instru', instru),
     sec(`Versions · ${vers.length}`, vers),

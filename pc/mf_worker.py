@@ -201,6 +201,13 @@ class Remote:
         if cmd == "lib":
             self.want.add(code)
             return
+        if cmd == "links":  # liens des prods reçues avant (gardés par le téléphone)
+            v = msg.get("v")
+            pairs = {str(k): str(x)[:260] for k, x in list(v.items())[:300]} if isinstance(v, dict) else {}
+            n = L.remember_links(pairs, cfg)
+            if n:
+                self.want.add(code)
+            return
         if cmd == "sync":
             f = msg.get("f")
             self.sync_request(code, [x for x in f if isinstance(x, str)][:300] if isinstance(f, list) else [])
@@ -361,6 +368,10 @@ def _handle(msg, code, d, root, cfg, st, recent, seen, done, left, remote=None):
     flp = fl = None
     if ok:
         done.add(vid)
+        try:  # le lien de la vidéo, gardé aussi dans les réglages
+            L.remember_link(f"p:{Path(got.get('path') or detail).parent.name.lower()}", vid)
+        except OSError:
+            pass
         st.setdefault("files", {})[vid] = str(Path(got.get("path") or root / detail).resolve())
         if len(st["files"]) > 3000:
             st["files"] = dict(list(st["files"].items())[-3000:])

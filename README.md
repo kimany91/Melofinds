@@ -219,7 +219,10 @@ Même style que Melofinds Web, avec un menu à gauche :
   dossiers Recorded / Rendered / Sliced beats, samples du projet (sons de moins de 3 s ou
   utilisés par le .flp, comme « Basic 808 Clap »). Dans l'app web : « Créés par FL ».
   Chaque carte montre la **durée** de la prod et, pour une prod envoyée depuis l'app,
-  **« ▶ Voir la vidéo YouTube »** (le lien suit le projet s'il est renommé).
+  **« ▶ Voir la vidéo YouTube »**, qui ouvre la vidéo dans Chrome. Le lien est gardé à
+  la réception : écrit dans le .wav lui-même (commentaire, sans réencoder : il suit la
+  prod même renommée ou déplacée à la main) et dans les réglages. Pour les prods reçues
+  avant, le téléphone envoie au PC les liens qu'il connaît.
   Clé, BPM, instru, date ; **♪ Sons** : l'instru et tous les sons du projet, versions
   (`0.1`, `1.3.3`…) dans l'ordre, à écouter ici ; recherche, **favoris ★**, **ouvrir dans FL** (crée le projet
   FLmake s'il n'y a encore que la prod), écouter l'instru, ouvrir le dossier, et
