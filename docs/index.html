@@ -848,6 +848,23 @@ body.mobile .pcm-time { display: none; }
 body.mobile.pc-playing main { padding-bottom: calc(180px + env(safe-area-inset-bottom, 0px)); }
 body.mobile.pc-playing .toast { bottom: calc(158px + env(safe-area-inset-bottom, 0px)); }
 
+/* ===== Chaîne du beatmaker : logo sur la carte, mode chaîne ===== */
+.chan-tag { display: inline-flex; align-self: flex-start; width: fit-content; align-items: center; gap: 7px; max-width: 100%; margin: 2px 0 4px; padding: 3px 10px 3px 3px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); font: 700 12.5px var(--f-body); cursor: pointer; transition: color .2s, border-color .2s, background .2s; position: relative; z-index: 1; }
+.chan-tag span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.chan-tag:hover, .chan-tag:focus-visible { color: var(--text); border-color: var(--accent); background: var(--panel-3); }
+.chan-av { flex: none; width: 22px; height: 22px; border-radius: 50%; object-fit: cover; display: inline-grid; place-items: center; background: hsl(var(--h, 260) 55% 42%); color: #fff; font: 800 11px var(--f-body); }
+.chan-av.big { width: 48px; height: 48px; font-size: 20px; }
+.chan-bar { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 12px 14px; border-radius: 18px; background: var(--panel); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.chan-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.chan-txt span { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); font-weight: 800; }
+.chan-txt b { font: 800 19px/1.2 var(--f-display); overflow-wrap: anywhere; }
+.chan-txt small { font-size: 12.5px; color: var(--faint); }
+.chan-bar .ghost.sm { display: inline-flex; align-items: center; gap: 5px; padding: 7px 11px; font-size: 13px; text-decoration: none; }
+.chan-bar .ghost.sm svg { width: 12px; height: 12px; }
+body.mobile .chan-bar { gap: 10px; padding: 10px 12px; }
+body.mobile .chan-av.big { width: 40px; height: 40px; }
+body.mobile .chan-txt b { font-size: 17px; }
+
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -908,6 +925,7 @@ body.mobile.pc-playing .toast { bottom: calc(158px + env(safe-area-inset-bottom,
     <div id="notice"></div>
 
     <div class="results" id="results" hidden>
+      <div class="chan-bar" id="chanBar" hidden></div>
       <div class="rbar" id="rbar">
         <div class="pills" id="licPills" role="group" aria-label="Licences affichées"></div>
         <div class="rtools">
@@ -916,6 +934,7 @@ body.mobile.pc-playing .toast { bottom: calc(158px + env(safe-area-inset-bottom,
             <option value="licence">Meilleure licence</option>
             <option value="ratio">Meilleur ratio likes / vues</option>
             <option value="vues">Plus de vues</option>
+            <option value="recent">Plus récentes</option>
             <option value="pertinence">Pertinence</option>
             <option value="bpm-asc">BPM croissant</option>
             <option value="bpm-desc">BPM décroissant</option>
@@ -3583,8 +3602,13 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
   const ratio = ratioOf(item);
   const tier = ratio == null ? '' : ratio >= 5 ? ' hi' : ratio >= 2.5 ? ' mid' : ' lo';
   const meta = [item.duration > 0 ? fmtTime(item.duration) : null, item.views ? `${item.views} vues` : null, item.age].filter(Boolean).join(' · ');
+  const chanTag = item.channel || item.channelId
+    ? h('button', { type: 'button', class: 'chan-tag', title: `Toutes les prods de ${item.channel || 'cette chaîne'}`, 'aria-label': `Voir toutes les prods de ${item.channel || 'cette chaîne'}`,
+      onclick: (e) => { e.stopPropagation(); openChannel(item); } }, chanAvatar(item.channelAvatar || chanAv[item.channelId], item.channel), h('span', {}, item.channel || 'Chaîne'))
+    : null;
   const main = h('div', { class: 'card-main', role: 'button', tabindex: '0', 'aria-label': `Détails de ${item.title}` },
     h('h3', { class: 'title', title: item.title }, displayTitle(item.title)),
+    chanTag,
     line.text ? h('p', { class: `line${line.warn ? ' warn' : ''}` }, line.text) : null,
     h('div', { class: 'meta' },
       h('span', { class: 'meta-txt' }, meta || ' '),
@@ -4903,7 +4927,12 @@ async function webSearch(queries, add, before) {
   await pool(queries, 4, async (q) => {
     try {
       const b = await ytApi('search', { part: 'snippet', type: 'video', videoEmbeddable: 'true', maxResults: '50', q });
-      for (const it of b.items || []) if (it.id?.videoId) add({ id: it.id.videoId, title: decodeHtml(it.snippet?.title || '') }, q);
+      for (const it of b.items || []) {
+        if (!it.id?.videoId) continue;
+        add({ id: it.id.videoId, title: decodeHtml(it.snippet?.title || '') }, q);
+        const cur = session.items.get(it.id.videoId);
+        if (cur && /^UC[\w-]{22}$/.test(it.snippet?.channelId || '')) { cur.channelId = it.snippet.channelId; cur.channel ||= String(it.snippet.channelTitle || '').slice(0, 80); }
+      }
     } catch (e) { if (errorKind(e)) throw e; failures++; firstErr ||= e; }
     doneQ++;
     setStatus(`Je cherche sur YouTube… ${session.items.size - before} vidéos trouvées`, 0.08 + 0.3 * (doneQ / queries.length));
@@ -4914,6 +4943,12 @@ async function webSearch(queries, add, before) {
     setStatus('Aucune nouvelle vidéo pour ces recherches. Essaie d’autres mots.', 1, true);
     return false;
   }
+  await apiReadPending(pending);
+  return true;
+}
+
+// Descriptions complètes, vues, likes, durée et chaîne (API YouTube, 1 unité pour 50 vidéos)
+async function apiReadPending(pending) {
   let read = 0;
   const total = pending.length;
   const progress = () => setStatus(`${total} vidéos trouvées · je lis les descriptions (${read}/${total})`, 0.4 + 0.6 * (read / total));
@@ -4931,9 +4966,12 @@ async function webSearch(queries, add, before) {
         item.description = String(v.snippet?.description || '').slice(0, DESC_MAX);
         applyStats(item, { views: parseCount(v.statistics?.viewCount), likes: parseCount(v.statistics?.likeCount) });
         item.age = ageFrom(v.snippet?.publishedAt);
+        const ts = Date.parse(v.snippet?.publishedAt || '');
+        if (ts > 0) item.ts = ts;
         const dur = isoDuration(v.contentDetails?.duration);
         if (dur > 0) item.duration = dur;
         if (v.snippet?.channelTitle) item.channel = String(v.snippet.channelTitle).slice(0, 80);
+        if (/^UC[\w-]{22}$/.test(v.snippet?.channelId || '')) item.channelId = v.snippet.channelId;
         item.status = 'done';
       } else item.status = 'unread';
       read++;
@@ -4941,7 +4979,27 @@ async function webSearch(queries, add, before) {
     progress();
     renderResults();
   });
-  return true;
+  await apiAvatars(pending);
+}
+
+// Logos des chaînes (API : channels, 1 unité pour 50 chaînes), gardés dans ce navigateur
+const chanAv = local.get('chanAv', {}) || {};
+async function apiAvatars(items) {
+  const ids = [...new Set(items.map((i) => i.channelId).filter((x) => x && !chanAv[x]))].slice(0, 100);
+  for (const batch of chunk(ids, 50)) {
+    try {
+      const b = await ytApi('channels', { part: 'snippet', id: batch.join(','), maxResults: '50' });
+      for (const c of b.items || []) {
+        const u = c.snippet?.thumbnails?.default?.url || c.snippet?.thumbnails?.medium?.url;
+        if (u) chanAv[c.id] = u;
+      }
+    } catch { /* sans logo : l'initiale */ }
+  }
+  const keys = Object.keys(chanAv);
+  if (keys.length > 600) keys.slice(0, keys.length - 600).forEach((k) => delete chanAv[k]);
+  local.set('chanAv', chanAv);
+  for (const i of items) if (i.channelId && chanAv[i.channelId] && !i.channelAvatar) i.channelAvatar = chanAv[i.channelId];
+  renderResults();
 }
 
 // ---------------------------------------------------------------------------
@@ -5044,6 +5102,15 @@ const htmlToText = (html) => {
   return d.textContent || '';
 };
 
+// Chaîne d'une vidéo Piped (nom, identifiant, logo) et date de mise en ligne
+function pipedChannelInfo(cur, it) {
+  if (it.uploaderName) cur.channel = String(it.uploaderName).slice(0, 80);
+  const cid = (String(it.uploaderUrl || '').match(/\/channel\/(UC[\w-]{22})/) || [])[1];
+  if (cid) cur.channelId = cid;
+  if (/^https:\/\//.test(it.uploaderAvatar || '')) cur.channelAvatar = String(it.uploaderAvatar);
+  if (it.uploaded > 0) cur.ts = it.uploaded;
+}
+
 async function pipedSearch(queries, add, before) {
   let doneQ = 0;
   let failures = 0;
@@ -5059,7 +5126,7 @@ async function pipedSearch(queries, add, before) {
           add({ id, title: it.title || '', views: it.views }, q, it.shortDescription || '');
           const cur = session.items.get(id);
           if (cur && it.duration > 0) cur.duration = it.duration;
-          if (cur && it.uploaderName) cur.channel = String(it.uploaderName).slice(0, 80);
+          if (cur) pipedChannelInfo(cur, it);
           if (cur && cur.status === 'pending') {
             if (it.views >= 0) { cur.viewCount = it.views; cur.views = fmtViews(it.views); }
             if (it.uploaded > 0) cur.age = ageFrom(new Date(it.uploaded).toISOString());
@@ -5081,7 +5148,12 @@ async function pipedSearch(queries, add, before) {
     return false;
   }
 
-  // Description complète + likes : on essaie, et on abandonne vite si YouTube bloque.
+  await pipedReadPending(pending);
+  return true;
+}
+
+// Description complète + likes : on essaie, et on abandonne vite si YouTube bloque.
+async function pipedReadPending(pending) {
   let read = 0;
   const total = pending.length;
   const progress = () => setStatus(`${total} vidéos trouvées · je lis les descriptions (${read}/${total})`, 0.4 + 0.6 * (read / total));
@@ -5116,7 +5188,141 @@ async function pipedSearch(queries, add, before) {
   });
   if (streamsWork != null) local.set('pipedStreamsOk', { at: Date.now(), ok: streamsWork });
   session.partialMode = streamsWork === false;
+}
+
+
+// ---------------------------------------------------------------------------
+// Mode chaîne : un appui sur le logo du beatmaker affiche toutes ses vidéos (licences
+// vérifiées, mêmes filtres et tris). API YouTube : liste des mises en ligne (1 unité par
+// 50 vidéos). Sans clé : la page de la chaîne sur Piped. « Plus de résultats » = la suite.
+
+async function channelFetch(add, before) {
+  const ch = session.channel;
+  setStatus(`Je récupère les vidéos de ${ch.name || 'la chaîne'}…`, 0.08);
+  if (!ch.id) await resolveChannelId(ch);
+  if (!ch.id) throw { code: 'channel', message: 'chaîne introuvable' };
+  const found = [];
+  if (ytKey()) {
+    if (!ch.uploads) {
+      const b = await ytApi('channels', { part: 'snippet,contentDetails', id: ch.id });
+      const c = b.items?.[0];
+      ch.uploads = c?.contentDetails?.relatedPlaylists?.uploads || `UU${ch.id.slice(2)}`;
+      ch.name ||= String(c?.snippet?.title || '').slice(0, 80);
+      ch.avatar ||= c?.snippet?.thumbnails?.default?.url || '';
+    }
+    for (let p = 0; p < (device === 'mobile' ? 1 : 2) && !ch.end; p++) {
+      const b = await ytApi('playlistItems', { part: 'snippet', playlistId: ch.uploads, maxResults: '50', ...(ch.next ? { pageToken: ch.next } : {}) });
+      ch.next = b.nextPageToken || null;
+      ch.end = !ch.next;
+      for (const it of b.items || []) {
+        const id = it.snippet?.resourceId?.videoId;
+        if (/^[\w-]{11}$/.test(id || '')) found.push({ id, title: decodeHtml(it.snippet?.title || '') });
+      }
+    }
+  } else {
+    const path = ch.next ? `/nextpage/channel/${ch.id}?nextpage=${encodeURIComponent(ch.next)}` : `/channel/${ch.id}`;
+    const { body } = await pipedGet(path);
+    ch.next = body.nextpage || null;
+    ch.end = !ch.next;
+    ch.name ||= String(body.name || '').slice(0, 80);
+    if (/^https:\/\//.test(body.avatarUrl || '')) ch.avatar ||= body.avatarUrl;
+    for (const it of body.relatedStreams || []) {
+      const id = pipedId(it);
+      if (!id || it.isShort || (it.type && it.type !== 'stream')) continue;
+      found.push({ id, title: it.title || '', views: it.views, raw: it });
+    }
+  }
+  for (const v of found) {
+    add({ id: v.id, title: v.title, views: v.views }, `chaine:${ch.id}`, v.raw?.shortDescription || '');
+    const cur = session.items.get(v.id);
+    if (!cur) continue;
+    if (v.raw) {
+      pipedChannelInfo(cur, v.raw);
+      if (v.raw.duration > 0) cur.duration = v.raw.duration;
+      if (cur.status === 'pending' && v.raw.uploaded > 0) cur.age = ageFrom(new Date(v.raw.uploaded).toISOString());
+    }
+    cur.channel ||= ch.name;
+    cur.channelId ||= ch.id;
+    if (ch.avatar) cur.channelAvatar ||= ch.avatar;
+  }
+  renderChannelBar();
+  const pending = [...session.items.values()].filter((i) => i.status === 'pending');
+  if (!pending.length) {
+    setStatus(ch.end ? 'Toutes les vidéos de la chaîne sont là.' : 'Aucune nouvelle vidéo.', 1, true);
+    return false;
+  }
+  if (ytKey()) await apiReadPending(pending); else await pipedReadPending(pending);
   return true;
+}
+
+// Prod sans identifiant de chaîne (ancienne recherche) : on la retrouve par son nom
+async function resolveChannelId(ch) {
+  try {
+    if (ytKey()) {
+      const b = await ytApi('search', { part: 'snippet', type: 'channel', maxResults: '1', q: ch.name });
+      ch.id = b.items?.[0]?.snippet?.channelId || b.items?.[0]?.id?.channelId || '';
+    } else {
+      const { body } = await pipedGet(`/search?q=${encodeURIComponent(ch.name)}&filter=channels`);
+      const c = (body.items || []).find((x) => x.type === 'channel');
+      ch.id = (String(c?.url || '').match(/\/channel\/(UC[\w-]{22})/) || [])[1] || '';
+      if (/^https:\/\//.test(c?.thumbnail || '')) ch.avatar ||= c.thumbnail;
+    }
+  } catch { ch.id = ''; }
+}
+
+let beforeChannel = null; // la recherche d'avant, pour « Quitter la chaîne »
+function openChannel(item) {
+  const ch = { id: item.channelId || '', name: item.channel || '', avatar: item.channelAvatar || '' };
+  if (!ch.id && !ch.name) { toast('Chaîne inconnue pour cette prod'); return; }
+  if (!WEB) { window.open(ch.id ? `https://www.youtube.com/channel/${ch.id}/videos` : ytSearchUrl(ch.name), '_blank', 'noopener'); return; }
+  if (searching) { toast('Attends la fin de la recherche en cours'); return; }
+  if (!session?.channel) beforeChannel = session ? { session, sort: $('#sort').value } : null;
+  session = { prompt: ch.name, plan: buildPlan(`${ch.name} type beat`, { licenses: searchPrefs.licenses, device, depth: 'rapide' }),
+    done: [], items: new Map(), at: new Date().toISOString(), channel: ch };
+  rendered = new Set();
+  $('#grid').replaceChildren();
+  $('#sort').value = 'recent';
+  showView('search');
+  closeDrawer();
+  renderChannelBar();
+  $('#results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  runSearch(true);
+}
+function leaveChannel() {
+  if (searching) { toast('Attends la fin du chargement'); return; }
+  const back = beforeChannel;
+  beforeChannel = null;
+  session = back?.session || null;
+  $('#sort').value = back?.sort || searchPrefs.sort || 'licence';
+  rendered = new Set();
+  $('#grid').replaceChildren();
+  renderChannelBar();
+  if (session) { renderResults(); setStatus(`${session.items.size} prods`, 1, true); } else { $('#results').hidden = true; $('#hero').classList.remove('compact'); setStatus(null); }
+  saveSession();
+}
+function renderChannelBar() {
+  const bar = $('#chanBar');
+  if (!bar) return;
+  const ch = session?.channel;
+  bar.hidden = !ch;
+  if (!ch) { bar.replaceChildren(); return; }
+  const n = [...session.items.values()].filter((i) => i.status !== 'pending').length;
+  bar.replaceChildren(
+    chanAvatar(ch.avatar, ch.name, 'big'),
+    h('div', { class: 'chan-txt' }, h('span', {}, 'Chaîne'), h('b', {}, ch.name || 'Beatmaker'),
+      h('small', {}, `${n} vidéo${n > 1 ? 's' : ''}${ch.end ? ' · toutes chargées' : ' · « Plus de résultats » pour la suite'}`)),
+    h('a', { class: 'ghost sm', href: ch.id ? `https://www.youtube.com/channel/${ch.id}/videos` : ytSearchUrl(ch.name), target: '_blank', rel: 'noopener' }, 'YouTube', icon('ext')),
+    h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Quitter la chaîne', title: 'Revenir à ta recherche', onclick: leaveChannel }, icon('x')));
+}
+// Logo rond de la chaîne (sinon son initiale sur une couleur tirée du nom)
+function chanAvatar(url, name, size = '') {
+  const letter = (String(name || '?').trim()[0] || '?').toUpperCase();
+  let hue = 0;
+  for (const c of String(name || '')) hue = (hue * 31 + c.charCodeAt(0)) % 360;
+  const fallback = h('span', { class: `chan-av ${size}`, style: `--h:${hue}`, 'aria-hidden': 'true' }, letter);
+  if (!url) return fallback;
+  return h('img', { class: `chan-av ${size}`, src: url, alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer',
+    onerror: (e) => e.currentTarget.replaceWith(fallback) });
 }
 
 function keyNotice(title, text) {
@@ -5353,6 +5559,7 @@ function showNotice(kind, extra, detail) {
 }
 
 function nextQueries(first) {
+  if (session.channel) return first || !session.channel.end ? [`chaine:${session.channel.id || session.channel.name}:${session.done.length}`] : [];
   const lim = LIMITS();
   const done = new Set(session.done);
   if (first) return session.plan.queries.map((q) => q.q).slice(0, lim.firstQueries);
@@ -5373,6 +5580,9 @@ function startSearch() {
   promptEl.blur();
   const plan = buildPlan(prompt, { licenses: searchPrefs.licenses, device, depth: device === 'mobile' ? 'rapide' : 'normal' });
   session = { prompt, plan, done: [], items: new Map(), at: new Date().toISOString() };
+  beforeChannel = null;
+  if ($('#sort').value === 'recent' && searchPrefs.sort !== 'recent') $('#sort').value = searchPrefs.sort || 'licence';
+  renderChannelBar();
   rendered = new Set();
   $('#grid').replaceChildren();
   runSearch(true);
@@ -5382,7 +5592,7 @@ $('#moreBtn').addEventListener('click', () => { if (session) runSearch(false); }
 async function runSearch(first) {
   if (searching || !session) return;
   const queries = nextQueries(first);
-  if (!queries.length) { toast('J’ai fait le tour de cette recherche. Essaie d’autres mots.'); return; }
+  if (!queries.length) { toast(session.channel ? 'Toutes les vidéos de la chaîne sont déjà là' : 'J’ai fait le tour de cette recherche. Essaie d’autres mots.'); return; }
   searching = true;
   showNotice(null);
   $('#hero').classList.add('compact');
@@ -5390,12 +5600,12 @@ async function runSearch(first) {
   $('#goBtn').disabled = true;
   $('#moreBtn').disabled = true;
   session.done.push(...queries);
-  if (first) saveHistory();
+  if (first && !session.channel) saveHistory();
   const before = session.items.size;
   let searchTask = null;
   try {
     // 1) Trouver les vidéos : page de résultats YouTube de chaque recherche (+ recherche web)
-    setStatus(`Je cherche sur YouTube (${queries.length} recherche${queries.length > 1 ? 's' : ''})…`, 0.08);
+    setStatus(session.channel ? `Je récupère les vidéos de ${session.channel.name || 'la chaîne'}…` : `Je cherche sur YouTube (${queries.length} recherche${queries.length > 1 ? 's' : ''})…`, 0.08);
     if (first) showSkeletons(device === 'mobile' ? 4 : 8);
     let failures = 0;
     let firstErr = null;
@@ -5410,7 +5620,9 @@ async function runSearch(first) {
       const viewCount = parseCount(v.views);
       session.items.set(v.id, { id: v.id, url: `https://www.youtube.com/watch?v=${v.id}`, title: v.title || 'Vidéo YouTube', views: viewCount != null ? fmtViews(viewCount) : null, viewCount, likeCount: null, age: v.age || null, foundBy: [q], status: 'pending', description: '', snippet });
     };
-    if (WEB) {
+    if (WEB && session.channel) {
+      if (!(await channelFetch(add, before))) return;
+    } else if (WEB) {
       if (!(await webSearch(queries, add, before))) return;
     } else {
     const objective = `Vidéos YouTube de type beats (instrumentales rap) pour : ${session.prompt}. Avec les conditions de licence écrites dans la description.`;
@@ -5474,7 +5686,8 @@ async function runSearch(first) {
       ? `${all.length} prods · ${partialN} avec seulement le début de la description (YouTube bloque la suite)`
       : `${all.length} prods · ${all.length - unread} descriptions lues et vérifiées${unread ? ` · ${unread} illisibles` : ''}`, 1, true);
     saveSession();
-    updateHistory();
+    if (!session.channel) updateHistory();
+    renderChannelBar();
   } catch (e) {
     await searchTask?.catch?.(() => {});
     const kind = errorKind(e);
@@ -5529,6 +5742,10 @@ function sortRows(rows, how) {
   if (how === 'duree-desc' || how === 'duree-asc') {
     const d = (r) => (r._item.duration > 0 ? r._item.duration : null);
     return [...rows].sort((a, b) => (d(a) == null) - (d(b) == null) || (how === 'duree-desc' ? d(b) - d(a) : d(a) - d(b)) || b.score - a.score);
+  }
+  if (how === 'recent') {
+    const t = (r) => r._item.ts || 0;
+    return [...rows].sort((a, b) => t(b) - t(a) || b.score - a.score);
   }
   if (how === 'vues') {
     const v = (r) => r._item.viewCount ?? parseCount(r._item.views) ?? -1;
@@ -5689,8 +5906,8 @@ $('#howBtn').addEventListener('click', () => {
 function saveSession() {
   if (!session) return;
   const items = [...session.items.values()].filter((i) => i.status !== 'pending')
-    .map(({ id, url, title, views, viewCount, likeCount, age, foundBy, status, description, partial }) => ({ id, url, title, views, viewCount, likeCount, age, foundBy, status, description, partial }));
-  local.set('session', { prompt: session.prompt, done: session.done, at: session.at, items });
+    .map(({ id, url, title, views, viewCount, likeCount, age, foundBy, status, description, partial, duration, channel, channelId, channelAvatar, ts }) => ({ id, url, title, views, viewCount, likeCount, age, foundBy, status, description, partial, duration, channel, channelId, channelAvatar, ts }));
+  local.set('session', { prompt: session.prompt, done: session.done, at: session.at, items, channel: session.channel || null });
 }
 function restoreSession() {
   const s = local.get('session', null);
@@ -5702,7 +5919,9 @@ function restoreSession() {
   promptEl.value = s.prompt;
   syncChips();
   renderRecognized();
-  session = { prompt: s.prompt, plan: buildPlan(s.prompt, { licenses: searchPrefs.licenses, device, depth: device === 'mobile' ? 'rapide' : 'normal' }), done: s.done || [], items: new Map(s.items.map((i) => [i.id, i])), at: s.at };
+  const ch = s.channel && typeof s.channel === 'object' ? { id: String(s.channel.id || ''), name: String(s.channel.name || '').slice(0, 80), avatar: String(s.channel.avatar || ''), next: s.channel.next || null, end: !!s.channel.end, uploads: s.channel.uploads || '' } : null;
+  session = { prompt: s.prompt, plan: buildPlan(ch ? `${ch.name} type beat` : s.prompt, { licenses: searchPrefs.licenses, device, depth: device === 'mobile' ? 'rapide' : 'normal' }), done: s.done || [], items: new Map(s.items.map((i) => [i.id, i])), at: s.at, ...(ch ? { channel: ch } : {}) };
+  if (ch) { promptEl.value = ''; $('#sort').value = 'recent'; renderChannelBar(); }
   rendered = new Set(s.items.map((i) => i.id));
   $('#hero').classList.add('compact');
   $('#results').hidden = false;

@@ -824,3 +824,20 @@ body.mobile .pc-mini { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
 body.mobile .pcm-time { display: none; }
 body.mobile.pc-playing main { padding-bottom: calc(180px + env(safe-area-inset-bottom, 0px)); }
 body.mobile.pc-playing .toast { bottom: calc(158px + env(safe-area-inset-bottom, 0px)); }
+
+/* ===== Chaîne du beatmaker : logo sur la carte, mode chaîne ===== */
+.chan-tag { display: inline-flex; align-self: flex-start; width: fit-content; align-items: center; gap: 7px; max-width: 100%; margin: 2px 0 4px; padding: 3px 10px 3px 3px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); font: 700 12.5px var(--f-body); cursor: pointer; transition: color .2s, border-color .2s, background .2s; position: relative; z-index: 1; }
+.chan-tag span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.chan-tag:hover, .chan-tag:focus-visible { color: var(--text); border-color: var(--accent); background: var(--panel-3); }
+.chan-av { flex: none; width: 22px; height: 22px; border-radius: 50%; object-fit: cover; display: inline-grid; place-items: center; background: hsl(var(--h, 260) 55% 42%); color: #fff; font: 800 11px var(--f-body); }
+.chan-av.big { width: 48px; height: 48px; font-size: 20px; }
+.chan-bar { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 12px 14px; border-radius: 18px; background: var(--panel); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.chan-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.chan-txt span { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); font-weight: 800; }
+.chan-txt b { font: 800 19px/1.2 var(--f-display); overflow-wrap: anywhere; }
+.chan-txt small { font-size: 12.5px; color: var(--faint); }
+.chan-bar .ghost.sm { display: inline-flex; align-items: center; gap: 5px; padding: 7px 11px; font-size: 13px; text-decoration: none; }
+.chan-bar .ghost.sm svg { width: 12px; height: 12px; }
+body.mobile .chan-bar { gap: 10px; padding: 10px 12px; }
+body.mobile .chan-av.big { width: 40px; height: 40px; }
+body.mobile .chan-txt b { font-size: 17px; }

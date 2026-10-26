@@ -160,6 +160,15 @@ ouvre le site dans Chrome) :
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
+## Chaîne du beatmaker (version web)
+
+Chaque prod affiche le **logo de la chaîne** qui l'a postée. Un appui dessus lance le
+**mode chaîne** : toutes les vidéos de ce beatmaker, licences vérifiées comme une recherche
+normale, avec les mêmes filtres (licences, BPM, durée, texte) et tris, dont **« Plus
+récentes »**. « Plus de résultats » charge la suite ; le bandeau en haut donne le lien de la
+chaîne YouTube et ✕ ramène à ta recherche. Avec une clé YouTube : liste des mises en ligne
+de la chaîne (quelques unités de quota seulement) ; sans clé : la page de la chaîne sur Piped.
+
 ## Onglet « File d'attente » (version web)
 
 - **En cours** : la prod que le PC télécharge en ce moment ; **En attente** : celles qui
