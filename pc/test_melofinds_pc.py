@@ -1090,3 +1090,61 @@ class LienYouTubeGarde(unittest.TestCase):
         self.assertEqual(n, 2)
         got = {i.title: i.extra.get("yt") for i in L.scan_projects()}
         self.assertEqual(got, {"Haze": "jNQXAC9IVRw", "Lune": "AAAAAAAAAA1"})
+
+
+class AppWebAJourEtVersions(unittest.TestCase):
+    """Un changement fait dans le panneau part tout de suite vers l'app web ; une version
+    reste « la suivante » même si le projet a changé de nom (Project Core 0.6 → Vertige 0.7)."""
+    CODE = "melofinds-" + "d" * 32
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp(prefix="mf-ajour-"))
+        mpc.P.set(self.d / "prog")
+        self.root = self.d / "Projets FL"
+        self.root.mkdir()
+        mpc.save_config({"dossier": str(self.root), "devices": [{"id": "d1", "name": "Tel", "code": self.CODE, "cle": "b" * 64}],
+                         "flmake": {"on": False, "dossier": str(self.root)}})
+        p = self.root / "Project Core"
+        p.mkdir()
+        (p / "Project Core.flp").write_bytes(fake_flp())
+        for n in ("Project Core 0.5", "Project Core 0.6"):
+            (p / f"{n}.wav").write_bytes(fake_wav(4, rate=8000))
+
+    def test_changement_dans_le_panneau_reveille_le_programme(self):
+        it = next(i for i in L.scan_projects() if i.title == "Project Core")
+        L.set_style(it, L.PALETTE[2], L.ICONS[3])
+        self.assertTrue(mpc.P.kick.exists())
+        mpc.P.kick.unlink()
+        L.rename(it, "Vertige")
+        self.assertTrue(mpc.P.kick.exists())
+        # le programme en ligne se réveille et envoie la liste à tous les appareils, sans attendre
+        sent = []
+        with mock.patch.object(mpc, "ensure_tools", lambda *a: []), mock.patch.object(mpc, "update_ytdlp", lambda: None), \
+                mock.patch.object(mpc, "reply", lambda c, m: True), mock.patch.object(mpc, "poll", lambda c, s: []), \
+                mock.patch.object(mpc, "publish_attachment", lambda c, data, fn, meta, timeout=60: sent.append(json.loads(data)) or True), \
+                mock.patch.object(mpc, "resolve_install_dir", lambda: self.d / "prog"):
+            W.worker(once=True)
+        self.assertFalse(mpc.P.kick.exists())
+        self.assertEqual([p["t"] for p in sent[-1]["projects"]], ["Vertige"])
+        self.assertEqual(sent[-1]["projects"][0]["c"], L.PALETTE[2])
+
+    def test_version_suivante_meme_avec_un_autre_nom(self):
+        it = next(i for i in L.scan_projects() if i.title == "Project Core")
+        L.rename(it, "Vertige")
+        (self.root / "Vertige" / "Vertige 0.7.wav").write_bytes(fake_wav(4, rate=8000))
+        it = next(i for i in L.scan_projects() if i.title == "Vertige")
+        files = L.audio_files(it)
+        self.assertEqual([f["label"] for f in files if f["kind"] == "version"], ["v0.5", "v0.6", "v0.7"])
+        self.assertEqual([f["name"] for f in files if f.get("main")], ["Vertige 0.7"])
+        # même sans renommer les anciennes versions (exportées sous l'ancien nom)
+        (self.root / "Vertige" / "Vertige 0.6.wav").rename(self.root / "Vertige" / "Core old 0.6.wav")
+        files = L.audio_files(next(i for i in L.scan_projects() if i.title == "Vertige"))
+        self.assertEqual([f["name"] for f in files if f.get("main")], ["Vertige 0.7"])
+
+    def test_envois_gardes_apres_un_redemarrage(self):
+        st = mpc.load_state()
+        r = W.Remote(st)
+        r._note(15_000_000)
+        r2 = W.Remote(st)  # programme redémarré (mise à jour) : il se souvient des 15 Mo envoyés
+        self.assertFalse(r2._budget(1_000_000 + W.Remote.LIB_RESERVE))
+        self.assertTrue(r2._budget(1_000_000))  # la liste et les sons demandés passent encore

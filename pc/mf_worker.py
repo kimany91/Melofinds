@@ -35,7 +35,7 @@ def _sleep(seconds):
     """Attend, mais réagit tout de suite à une demande d'arrêt."""
     end = time.time() + seconds
     while time.time() < end:
-        if P.stop.exists():
+        if P.stop.exists() or P.kick.exists():
             return
         time.sleep(0.5)
 
@@ -96,19 +96,28 @@ class Remote:
         self.sent_at = {}        # appareil → dernier envoi de la liste
         self.sig = {}            # appareil → empreinte de la dernière liste envoyée
         self.checked = 0.0
-        self.audio = []          # (heure, octets) des copies d'écoute envoyées
+        # (heure, octets) envoyés en pièces jointes ces 3 dernières heures : gardé dans l'état,
+        # pour ne pas l'oublier à un redémarrage ou une mise à jour (ntfy.sh, lui, s'en souvient)
+        self.audio = [tuple(x) for x in (st.get("uploads") or []) if isinstance(x, (list, tuple)) and len(x) == 2]
 
     @staticmethod
     def enabled(cfg):
         return cfg.get("remote", True) is not False
 
+    LIB_RESERVE = 3_000_000  # place gardée pour la liste des projets et les sons demandés
+
+    def _note(self, size):
+        self.audio.append((time.time(), size))
+        self.st["uploads"] = [list(x) for x in self.audio[-400:]]
+
     def _budget(self, size):
         now = time.time()
         self.audio = [(t, n) for t, n in self.audio if t > now - 3 * 3600]
+        self.st["uploads"] = [list(x) for x in self.audio]
         last_hour = sum(1 for t, n in self.audio if t > now - 3600 and n > 300_000)
         return last_hour < self.AUDIO_PER_HOUR and sum(n for _, n in self.audio) + size <= self.BYTES_3H
 
-    def next_free(self, size=1_900_000):
+    def next_free(self, size=1_900_000 + 3_000_000):
         """Heure à laquelle ntfy.sh acceptera de nouveau un son (les pièces jointes expirent après 3 h)."""
         now = time.time()
         if self._budget(size):
@@ -124,7 +133,8 @@ class Remote:
         """Copie d'écoute d'un son du projet, découpée en pièces jointes de 1,9 Mo."""
         """Renvoie "ok", "budget" (limite ntfy.sh : à refaire plus tard) ou "error"."""
         meta = {"aud": f["id"], "p": it.id, "n": f["name"][:140], "v": f["label"], "m": int(f["mtime"])}
-        if not self._budget(1_000_000):
+        reserve = self.LIB_RESERVE if auto else 0  # la synchro laisse toujours de la place à la liste
+        if not self._budget(1_000_000 + reserve):
             if not auto:
                 C.reply(code, {"aud": f["id"], "err": "limite d'envoi atteinte (ntfy.sh) : réessaie dans un moment"})
             return "budget"
@@ -135,7 +145,7 @@ class Remote:
             if not auto:
                 C.reply(code, {"aud": f["id"], "err": f"copie d'écoute impossible : {e}"[:200]})
             return "error"
-        if not self._budget(len(data)):
+        if not self._budget(len(data) + reserve):
             if not auto:
                 C.reply(code, {"aud": f["id"], "err": "limite d'envoi atteinte (ntfy.sh) : réessaie dans un moment"})
             return "budget"
@@ -147,7 +157,7 @@ class Remote:
                 self.blocked_until = time.time() + 900  # ntfy.sh refuse : on réessaie dans 15 min
                 return "budget"
         now = time.time()
-        self.audio.append((now, len(data)))
+        self._note(len(data))
         pushed = self.st.setdefault("pushed", {})
         pushed[f["id"]] = int(now)
         self.st["pushed"] = dict(list(pushed.items())[-500:])
@@ -281,7 +291,7 @@ class Remote:
             if C.publish_attachment(code, body, "projets.json", {"lib": 1, "n": len(lib["projects"]), "at": lib["at"]}):
                 self.sig[code], self.sent_at[code] = sig, now
                 self.want.discard(code)
-                self.audio.append((now, len(body)))  # compte aussi dans les 20 Mo de ntfy.sh
+                self._note(len(body))  # compte aussi dans les 20 Mo de ntfy.sh
         self.fmap = fmap
         if not final:
             self.new_sounds(devices, fmap, now)
@@ -454,6 +464,13 @@ def worker(once=False):
                 log({"update": "Arrêt pour mise à jour.", "shutdown": "Arrêt de Windows."}.get(reason, "Mis hors ligne."))
                 break
             C.beat()
+            if P.kick.exists():  # le panneau a changé un projet : liste envoyée tout de suite
+                try:
+                    P.kick.unlink()
+                except OSError:
+                    pass
+                for d in C.load_config()["devices"]:
+                    remote.want.add(d["code"])
             if time.time() - last_cycle > 180:  # retour de veille : on se réannonce
                 announced.clear()
             last_cycle = time.time()
@@ -546,7 +563,7 @@ def worker(once=False):
             except Exception:
                 pass
         stop_watch()
-        for f in (P.heartbeat, P.pid, P.progress) if reason == "update" else (P.heartbeat, P.pid, P.stop, P.progress):
+        for f in (P.heartbeat, P.pid, P.progress, P.kick) if reason == "update" else (P.heartbeat, P.pid, P.stop, P.progress, P.kick):
             try:
                 f.unlink(missing_ok=True)
             except OSError:

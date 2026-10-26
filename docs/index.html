@@ -551,6 +551,10 @@ body.mobile.has-mini main { padding-bottom: 170px; }
 .card .meta .more { display: none; }
 .card .meta { padding-right: 96px; min-height: 26px; align-items: center; }
 .mini-ext { display: inline-flex; align-items: center; gap: 6px; }
+.loop-btn { flex: none; display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel-3); color: var(--muted); transition: color .2s, background .2s, border-color .2s; }
+.loop-btn svg { width: 18px; height: 18px; }
+.loop-btn.on { color: var(--on-accent); background: var(--accent-strong); border-color: var(--accent-strong); }
+body.mobile .loop-btn { width: 36px; height: 36px; }
 .mini-ext svg { width: 13px; height: 13px; }
 .mini.loading .mini-toggle { animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .55; } }
@@ -862,6 +866,7 @@ body.mobile.pc-playing .toast { bottom: calc(158px + env(safe-area-inset-bottom,
   <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5.5c0 4.3 3 7.9 7 9.5 4-1.6 7-5.2 7-9.5V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m9 12 2.2 2.2L15.5 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3.5Z" fill="currentColor"/></symbol>
   <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-loop" viewBox="0 0 24 24"><path d="M4 11V9a3 3 0 0 1 3-3h11M15 3l3 3-3 3M20 13v2a3 3 0 0 1-3 3H6M9 21l-3-3 3-3" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 </svg>
 
@@ -1022,6 +1027,7 @@ body.mobile.pc-playing .toast { bottom: calc(158px + env(safe-area-inset-bottom,
     <div class="mini-text"><b id="miniTitle"></b><span id="miniSub"></span></div>
     <div class="mini-bar" id="miniBar" role="slider" aria-label="Position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0"><i id="miniFill"></i></div>
   </div>
+  <button type="button" class="loop-btn" id="miniLoop" aria-label="Lire en boucle" aria-pressed="false" title="Lire en boucle"><svg aria-hidden="true"><use href="#i-loop"/></svg></button>
   <button type="button" class="mini-rec" id="miniRec" aria-label="Rec : rapper sur cette prod" hidden><svg aria-hidden="true"><use href="#i-mic"/></svg><span>Rec</span></button>
   <a class="mini-ext" id="miniExt" target="_blank" rel="noopener" aria-label="Ouvrir sur YouTube">YouTube<svg aria-hidden="true"><use href="#i-ext"/></svg></a>
   <button type="button" class="icon-btn mini-close" id="miniClose" aria-label="Arrêter la lecture"><svg><use href="#i-x"/></svg></button>
@@ -3696,6 +3702,25 @@ function onPlayerReady() {
   renderMini();
 }
 
+// Lecture en boucle (prods YouTube et sons du PC), gardée d'une visite à l'autre. Elle
+// continue téléphone verrouillé : le son du PC boucle tout seul (audio.loop), la prod
+// YouTube repart au début dès qu'elle se termine.
+let loopOn = Boolean(local.get('loop', false));
+function syncLoopUi() {
+  $$('.loop-btn').forEach((b) => {
+    b.classList.toggle('on', loopOn);
+    b.setAttribute('aria-pressed', loopOn ? 'true' : 'false');
+    b.title = loopOn ? 'Boucle activée' : 'Lire en boucle';
+  });
+  if (pcPlayer.audio) pcPlayer.audio.loop = loopOn;
+}
+function toggleLoop() {
+  loopOn = !loopOn;
+  local.set('loop', loopOn);
+  syncLoopUi();
+  toast(loopOn ? 'Lecture en boucle : le son recommence tout seul, même téléphone verrouillé' : 'Boucle désactivée');
+}
+
 function togglePlay() {
   if (!player.item) return;
   if (!player.frame || player.status === 'blocked') { const it = player.item; player.item = null; playItem(it); return; }
@@ -3753,17 +3778,22 @@ function mediaSessionFor(item) {
       artwork: vid ? [{ src: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' }] : [],
     });
   } catch { /* navigateur ancien */ }
-  if (msHandlersSet) return;
+  msHandlers();
+}
+function msHandlers() {
+  if (msHandlersSet || !('mediaSession' in navigator)) return;
   msHandlersSet = true;
   const on = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch { /* action non gérée */ } };
-  on('play', () => { if (player.item && !isPlaying()) togglePlay(); });
-  on('pause', () => { if (player.item && isPlaying()) togglePlay(); });
-  on('stop', () => stopPlayer());
-  on('nexttrack', () => playNeighbour(1));
-  on('previoustrack', () => { if (playerNow() > 5) seekBeat(0); else playNeighbour(-1); });
-  on('seekto', (e) => { if (e?.seekTime != null && player.frame) seekBeat(e.seekTime); });
-  on('seekforward', () => seekBeat(playerNow() + 10));
-  on('seekbackward', () => seekBeat(Math.max(0, playerNow() - 10)));
+  // Commandes de l'écran verrouillé : le son du PC s'il joue, sinon la prod YouTube
+  const pa = () => pcPlayer.audio;
+  on('play', () => { if (pa()) { pa().play().catch(() => {}); return; } if (player.item && !isPlaying()) togglePlay(); });
+  on('pause', () => { if (pa()) { pa().pause(); return; } if (player.item && isPlaying()) togglePlay(); });
+  on('stop', () => { if (pa()) { pcStop(); return; } stopPlayer(); });
+  on('nexttrack', () => { if (!pa()) playNeighbour(1); });
+  on('previoustrack', () => { if (pa()) { pa().currentTime = 0; return; } if (playerNow() > 5) seekBeat(0); else playNeighbour(-1); });
+  on('seekto', (e) => { if (e?.seekTime == null) return; if (pa()) { pa().currentTime = e.seekTime; return; } if (player.frame) seekBeat(e.seekTime); });
+  on('seekforward', () => { if (pa()) { pa().currentTime = Math.min(pa().duration || 0, pa().currentTime + 10); return; } seekBeat(playerNow() + 10); });
+  on('seekbackward', () => { if (pa()) { pa().currentTime = Math.max(0, pa().currentTime - 10); return; } seekBeat(Math.max(0, playerNow() - 10)); });
 }
 function msState() {
   if (!('mediaSession' in navigator)) return;
@@ -3784,7 +3814,8 @@ function playNeighbour(dir) {
 function onStateChanged(was, st) {
   msState();
   if (!player.item || player.status === 'blocked' || rec.state !== 'idle' || take.id) return;
-  if (st === 0) { // fin de la prod : on enchaîne sur la suivante de la liste
+  if (st === 0) { // fin de la prod : en boucle on la relance, sinon la suivante de la liste
+    if (loopOn) { ytSend('seekTo', [0, true]); ytSend('playVideo'); return; }
     if (!playNeighbour(1)) { bgPause(); }
     return;
   }
@@ -3871,6 +3902,7 @@ function renderMini() {
 }
 
 $('#miniToggle').addEventListener('click', togglePlay);
+$('#miniLoop').addEventListener('click', toggleLoop);
 $('#miniRec').addEventListener('click', () => { if (player.item) openStudio(player.item); });
 $('#miniClose').addEventListener('click', stopPlayer);
 function seekFromBar(clientX) {
@@ -6352,7 +6384,7 @@ function pcSendLinks() {
 
 function askPcLib(force) {
   if (!WEB || !pc.info) return;
-  if (!force && (Date.now() - pcLib.askedAt < 90e3 || (pcLib.data && Date.now() - pcLib.data.at * 1000 < 5 * 60e3))) return;
+  if (!force && (Date.now() - pcLib.askedAt < 60e3 || (pcLib.data && Date.now() - pcLib.data.at * 1000 < 60e3))) return;
   pcLib.askedAt = Date.now();
   ntfyPublish({ cmd: 'lib' }).then(() => { if (force) toast(pcOn() ? 'Le PC envoie sa liste…' : 'PC éteint : la liste arrivera quand il se rallume'); }).catch(() => { if (force) toast('Pas de réseau'); });
 }
@@ -6407,6 +6439,7 @@ function pcStop(silent) {
   const a = pcPlayer.audio;
   if (a) { a.pause(); a.onended = null; a.ontimeupdate = null; a.onplay = null; a.onpause = null; URL.revokeObjectURL(pcPlayer.url); }
   Object.assign(pcPlayer, { audio: null, fid: null, url: '' });
+  if (a && !player.item && 'mediaSession' in navigator) { try { navigator.mediaSession.playbackState = 'none'; } catch { /* rien */ } }
   renderPcMini();
   if (!silent) renderPcView();
 }
@@ -6433,11 +6466,22 @@ function playPcBlob(fid, blob) {
   const url = URL.createObjectURL(blob);
   const a = pcAudioEl();
   a.src = url;
-  a.onended = () => pcStop();
-  a.ontimeupdate = pcProgress;
-  a.onplay = () => { renderPcMini(); renderPcView(); };
-  a.onpause = () => { renderPcMini(); renderPcView(); };
+  a.loop = loopOn;
+  a.onended = () => {
+    if (loopOn) { a.currentTime = 0; a.play().catch(() => pcStop()); return; } // si le navigateur ignore « loop »
+    pcStop();
+  };
+  a.ontimeupdate = () => {
+    pcProgress();
+    if ('mediaSession' in navigator && a.duration) {
+      try { navigator.mediaSession.setPositionState({ duration: a.duration, position: Math.min(a.duration, a.currentTime), playbackRate: 1 }); } catch { /* non géré */ }
+    }
+  };
+  const ms = (st) => { try { if ('mediaSession' in navigator) navigator.mediaSession.playbackState = st; } catch { /* rien */ } };
+  a.onplay = () => { ms('playing'); renderPcMini(); renderPcView(); };
+  a.onpause = () => { ms('paused'); renderPcMini(); renderPcView(); };
   Object.assign(pcPlayer, { audio: a, fid, url });
+  pcMediaSession(fid);
   a.play().catch(() => {
     // le son est arrivé longtemps après le toucher : le navigateur demande un nouveau toucher
     if (pcPlayer.audio === a) pcStop();
@@ -6446,6 +6490,21 @@ function playPcBlob(fid, blob) {
   renderPcMini();
   renderPcView();
 }
+// Écran verrouillé : titre du son, projet, et les mêmes commandes que dans l'app
+function pcMediaSession(fid) {
+  if (!('mediaSession' in navigator)) return;
+  const hit = pcFindFile(fid);
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: hit ? (hit.f.i ? pcName(hit.p.t) : pcName(hit.f.n)) : 'Son du PC',
+      artist: hit ? `${hit.f.i ? 'Instru' : hit.f.v || 'Son'} · ${pcName(hit.p.t)}` : 'Melofinds',
+      album: 'Mes projets FL',
+    });
+    navigator.mediaSession.playbackState = 'playing';
+  } catch { /* navigateur ancien */ }
+  msHandlers();
+}
+
 // Barre de lecture en bas de l'écran : reste visible quand on fait défiler
 function renderPcMini() {
   let bar = $('#pcMini');
@@ -6465,6 +6524,7 @@ function renderPcMini() {
       h('span', {}, hit ? `${hit.f.i ? 'Instru' : hit.f.v || hit.f.e.toUpperCase()} · ${pcName(hit.p.t)}` : ''),
       h('div', { class: 'pcm-bar', onclick: pcSeek }, h('i'))),
     h('span', { class: 'pcm-time' }, '0:00'),
+    h('button', { type: 'button', class: `loop-btn${loopOn ? ' on' : ''}`, 'aria-label': 'Lire en boucle', 'aria-pressed': loopOn ? 'true' : 'false', title: loopOn ? 'Boucle activée' : 'Lire en boucle', onclick: toggleLoop }, icon('loop')),
     h('button', { type: 'button', class: 'pcm-btn', 'aria-label': a.paused ? 'Lecture' : 'Pause', onclick: () => (a.paused ? a.play().catch(() => {}) : a.pause()) }, icon(a.paused ? 'play' : 'pause')),
     h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Arrêter', onclick: () => pcStop() }, icon('x')));
   bar.hidden = false;
@@ -6775,6 +6835,7 @@ function setupTarget() {
 }
 
 applyDevice();
+syncLoopUi();
 syncBpmPill();
 syncVerifiedPill();
 restoreSession();

@@ -32,7 +32,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.15.0"
+VERSION = "3.16.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -93,6 +93,7 @@ class Paths:
         self.heartbeat, self.lock, self.pid, self.stop = b / "heartbeat", b / "worker.lock", b / "worker.pid", b / "stop"
         self.tools = b / "tools"
         self.progress = b / "progress.json"  # téléchargement en cours (affiché par le panneau)
+        self.kick = b / "kick"  # le panneau a changé un projet : le programme en ligne prévient l'app tout de suite
         return self
 
 
@@ -1165,6 +1166,15 @@ class SingleInstance:
             _unlock(self.f)
         self.f.close()
         self.ok = False
+
+
+def kick_worker():
+    """Réveille le programme en ligne : un projet a changé (nom, icône, couleur, favori,
+    ordre), la liste part tout de suite vers l'app web."""
+    try:
+        P.kick.write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def beat():

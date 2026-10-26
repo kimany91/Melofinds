@@ -219,6 +219,7 @@ def set_style(item, color=None, icon=None, cfg=None):
         styles[item.id] = {k: v for k, v in (("color", color), ("icon", icon)) if v}
     cfg["project_style"] = dict(list(styles.items())[-3000:])
     C.save_config(cfg)
+    C.kick_worker()
     item.extra["color"], item.extra["icon"], item.extra["styled"] = style_of(item, cfg)
 
 
@@ -319,6 +320,7 @@ def move_project(src_id, dst_id, cfg=None):
     order.insert(order.index(dst_id) + (1 if down else 0), src_id)
     cfg["project_order"] = order[:3000]
     C.save_config(cfg)
+    C.kick_worker()
     return order
 
 
@@ -377,6 +379,7 @@ def reorder(shown_ids, cfg=None):
         full[n] = pid
     cfg["project_order"] = full[:3000]
     C.save_config(cfg)
+    C.kick_worker()
     return full
 
 
@@ -450,6 +453,7 @@ def toggle_fav(item, cfg=None):
         favs.insert(0, item.id)
     cfg[item.fav_key] = favs[:2000]
     C.save_config(cfg)
+    C.kick_worker()
     item.fav = not item.fav
     return item.fav
 
@@ -654,6 +658,7 @@ def rename(item, new_title, cfg=None):
         ren[old] = newp
     cfg["renamed"] = dict(list(ren.items())[-1000:])
     C.save_config(cfg)
+    C.kick_worker()
     return new
 
 

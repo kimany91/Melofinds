@@ -437,6 +437,25 @@ function onPlayerReady() {
   renderMini();
 }
 
+// Lecture en boucle (prods YouTube et sons du PC), gardée d'une visite à l'autre. Elle
+// continue téléphone verrouillé : le son du PC boucle tout seul (audio.loop), la prod
+// YouTube repart au début dès qu'elle se termine.
+let loopOn = Boolean(local.get('loop', false));
+function syncLoopUi() {
+  $$('.loop-btn').forEach((b) => {
+    b.classList.toggle('on', loopOn);
+    b.setAttribute('aria-pressed', loopOn ? 'true' : 'false');
+    b.title = loopOn ? 'Boucle activée' : 'Lire en boucle';
+  });
+  if (pcPlayer.audio) pcPlayer.audio.loop = loopOn;
+}
+function toggleLoop() {
+  loopOn = !loopOn;
+  local.set('loop', loopOn);
+  syncLoopUi();
+  toast(loopOn ? 'Lecture en boucle : le son recommence tout seul, même téléphone verrouillé' : 'Boucle désactivée');
+}
+
 function togglePlay() {
   if (!player.item) return;
   if (!player.frame || player.status === 'blocked') { const it = player.item; player.item = null; playItem(it); return; }
@@ -494,17 +513,22 @@ function mediaSessionFor(item) {
       artwork: vid ? [{ src: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' }] : [],
     });
   } catch { /* navigateur ancien */ }
-  if (msHandlersSet) return;
+  msHandlers();
+}
+function msHandlers() {
+  if (msHandlersSet || !('mediaSession' in navigator)) return;
   msHandlersSet = true;
   const on = (action, fn) => { try { navigator.mediaSession.setActionHandler(action, fn); } catch { /* action non gérée */ } };
-  on('play', () => { if (player.item && !isPlaying()) togglePlay(); });
-  on('pause', () => { if (player.item && isPlaying()) togglePlay(); });
-  on('stop', () => stopPlayer());
-  on('nexttrack', () => playNeighbour(1));
-  on('previoustrack', () => { if (playerNow() > 5) seekBeat(0); else playNeighbour(-1); });
-  on('seekto', (e) => { if (e?.seekTime != null && player.frame) seekBeat(e.seekTime); });
-  on('seekforward', () => seekBeat(playerNow() + 10));
-  on('seekbackward', () => seekBeat(Math.max(0, playerNow() - 10)));
+  // Commandes de l'écran verrouillé : le son du PC s'il joue, sinon la prod YouTube
+  const pa = () => pcPlayer.audio;
+  on('play', () => { if (pa()) { pa().play().catch(() => {}); return; } if (player.item && !isPlaying()) togglePlay(); });
+  on('pause', () => { if (pa()) { pa().pause(); return; } if (player.item && isPlaying()) togglePlay(); });
+  on('stop', () => { if (pa()) { pcStop(); return; } stopPlayer(); });
+  on('nexttrack', () => { if (!pa()) playNeighbour(1); });
+  on('previoustrack', () => { if (pa()) { pa().currentTime = 0; return; } if (playerNow() > 5) seekBeat(0); else playNeighbour(-1); });
+  on('seekto', (e) => { if (e?.seekTime == null) return; if (pa()) { pa().currentTime = e.seekTime; return; } if (player.frame) seekBeat(e.seekTime); });
+  on('seekforward', () => { if (pa()) { pa().currentTime = Math.min(pa().duration || 0, pa().currentTime + 10); return; } seekBeat(playerNow() + 10); });
+  on('seekbackward', () => { if (pa()) { pa().currentTime = Math.max(0, pa().currentTime - 10); return; } seekBeat(Math.max(0, playerNow() - 10)); });
 }
 function msState() {
   if (!('mediaSession' in navigator)) return;
@@ -525,7 +549,8 @@ function playNeighbour(dir) {
 function onStateChanged(was, st) {
   msState();
   if (!player.item || player.status === 'blocked' || rec.state !== 'idle' || take.id) return;
-  if (st === 0) { // fin de la prod : on enchaîne sur la suivante de la liste
+  if (st === 0) { // fin de la prod : en boucle on la relance, sinon la suivante de la liste
+    if (loopOn) { ytSend('seekTo', [0, true]); ytSend('playVideo'); return; }
     if (!playNeighbour(1)) { bgPause(); }
     return;
   }
@@ -612,6 +637,7 @@ function renderMini() {
 }
 
 $('#miniToggle').addEventListener('click', togglePlay);
+$('#miniLoop').addEventListener('click', toggleLoop);
 $('#miniRec').addEventListener('click', () => { if (player.item) openStudio(player.item); });
 $('#miniClose').addEventListener('click', stopPlayer);
 function seekFromBar(clientX) {
@@ -3093,7 +3119,7 @@ function pcSendLinks() {
 
 function askPcLib(force) {
   if (!WEB || !pc.info) return;
-  if (!force && (Date.now() - pcLib.askedAt < 90e3 || (pcLib.data && Date.now() - pcLib.data.at * 1000 < 5 * 60e3))) return;
+  if (!force && (Date.now() - pcLib.askedAt < 60e3 || (pcLib.data && Date.now() - pcLib.data.at * 1000 < 60e3))) return;
   pcLib.askedAt = Date.now();
   ntfyPublish({ cmd: 'lib' }).then(() => { if (force) toast(pcOn() ? 'Le PC envoie sa liste…' : 'PC éteint : la liste arrivera quand il se rallume'); }).catch(() => { if (force) toast('Pas de réseau'); });
 }
@@ -3148,6 +3174,7 @@ function pcStop(silent) {
   const a = pcPlayer.audio;
   if (a) { a.pause(); a.onended = null; a.ontimeupdate = null; a.onplay = null; a.onpause = null; URL.revokeObjectURL(pcPlayer.url); }
   Object.assign(pcPlayer, { audio: null, fid: null, url: '' });
+  if (a && !player.item && 'mediaSession' in navigator) { try { navigator.mediaSession.playbackState = 'none'; } catch { /* rien */ } }
   renderPcMini();
   if (!silent) renderPcView();
 }
@@ -3174,11 +3201,22 @@ function playPcBlob(fid, blob) {
   const url = URL.createObjectURL(blob);
   const a = pcAudioEl();
   a.src = url;
-  a.onended = () => pcStop();
-  a.ontimeupdate = pcProgress;
-  a.onplay = () => { renderPcMini(); renderPcView(); };
-  a.onpause = () => { renderPcMini(); renderPcView(); };
+  a.loop = loopOn;
+  a.onended = () => {
+    if (loopOn) { a.currentTime = 0; a.play().catch(() => pcStop()); return; } // si le navigateur ignore « loop »
+    pcStop();
+  };
+  a.ontimeupdate = () => {
+    pcProgress();
+    if ('mediaSession' in navigator && a.duration) {
+      try { navigator.mediaSession.setPositionState({ duration: a.duration, position: Math.min(a.duration, a.currentTime), playbackRate: 1 }); } catch { /* non géré */ }
+    }
+  };
+  const ms = (st) => { try { if ('mediaSession' in navigator) navigator.mediaSession.playbackState = st; } catch { /* rien */ } };
+  a.onplay = () => { ms('playing'); renderPcMini(); renderPcView(); };
+  a.onpause = () => { ms('paused'); renderPcMini(); renderPcView(); };
   Object.assign(pcPlayer, { audio: a, fid, url });
+  pcMediaSession(fid);
   a.play().catch(() => {
     // le son est arrivé longtemps après le toucher : le navigateur demande un nouveau toucher
     if (pcPlayer.audio === a) pcStop();
@@ -3187,6 +3225,21 @@ function playPcBlob(fid, blob) {
   renderPcMini();
   renderPcView();
 }
+// Écran verrouillé : titre du son, projet, et les mêmes commandes que dans l'app
+function pcMediaSession(fid) {
+  if (!('mediaSession' in navigator)) return;
+  const hit = pcFindFile(fid);
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: hit ? (hit.f.i ? pcName(hit.p.t) : pcName(hit.f.n)) : 'Son du PC',
+      artist: hit ? `${hit.f.i ? 'Instru' : hit.f.v || 'Son'} · ${pcName(hit.p.t)}` : 'Melofinds',
+      album: 'Mes projets FL',
+    });
+    navigator.mediaSession.playbackState = 'playing';
+  } catch { /* navigateur ancien */ }
+  msHandlers();
+}
+
 // Barre de lecture en bas de l'écran : reste visible quand on fait défiler
 function renderPcMini() {
   let bar = $('#pcMini');
@@ -3206,6 +3259,7 @@ function renderPcMini() {
       h('span', {}, hit ? `${hit.f.i ? 'Instru' : hit.f.v || hit.f.e.toUpperCase()} · ${pcName(hit.p.t)}` : ''),
       h('div', { class: 'pcm-bar', onclick: pcSeek }, h('i'))),
     h('span', { class: 'pcm-time' }, '0:00'),
+    h('button', { type: 'button', class: `loop-btn${loopOn ? ' on' : ''}`, 'aria-label': 'Lire en boucle', 'aria-pressed': loopOn ? 'true' : 'false', title: loopOn ? 'Boucle activée' : 'Lire en boucle', onclick: toggleLoop }, icon('loop')),
     h('button', { type: 'button', class: 'pcm-btn', 'aria-label': a.paused ? 'Lecture' : 'Pause', onclick: () => (a.paused ? a.play().catch(() => {}) : a.pause()) }, icon(a.paused ? 'play' : 'pause')),
     h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Arrêter', onclick: () => pcStop() }, icon('x')));
   bar.hidden = false;
@@ -3516,6 +3570,7 @@ function setupTarget() {
 }
 
 applyDevice();
+syncLoopUi();
 syncBpmPill();
 syncVerifiedPill();
 restoreSession();
