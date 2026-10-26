@@ -1919,7 +1919,7 @@ async function channelFetch(add, before) {
       ch.name ||= String(c?.snippet?.title || '').slice(0, 80);
       ch.avatar ||= c?.snippet?.thumbnails?.default?.url || '';
     }
-    for (let p = 0; p < (device === 'mobile' ? 1 : 2) && !ch.end; p++) {
+    for (let p = 0; p < 2 && !ch.end; p++) {
       const b = await ytApi('playlistItems', { part: 'snippet', playlistId: ch.uploads, maxResults: '50', ...(ch.next ? { pageToken: ch.next } : {}) });
       ch.next = b.nextPageToken || null;
       ch.end = !ch.next;
@@ -1929,16 +1929,18 @@ async function channelFetch(add, before) {
       }
     }
   } else {
-    const path = ch.next ? `/nextpage/channel/${ch.id}?nextpage=${encodeURIComponent(ch.next)}` : `/channel/${ch.id}`;
-    const { body } = await pipedGet(path);
-    ch.next = body.nextpage || null;
-    ch.end = !ch.next;
-    ch.name ||= String(body.name || '').slice(0, 80);
-    if (/^https:\/\//.test(body.avatarUrl || '')) ch.avatar ||= body.avatarUrl;
-    for (const it of body.relatedStreams || []) {
-      const id = pipedId(it);
-      if (!id || it.isShort || (it.type && it.type !== 'stream')) continue;
-      found.push({ id, title: it.title || '', views: it.views, raw: it });
+    for (let p = 0; p < 2 && !ch.end; p++) {
+      const path = ch.next ? `/nextpage/channel/${ch.id}?nextpage=${encodeURIComponent(ch.next)}` : `/channel/${ch.id}`;
+      const { body } = await pipedGet(path);
+      ch.next = body.nextpage || null;
+      ch.end = !ch.next;
+      ch.name ||= String(body.name || '').slice(0, 80);
+      if (/^https:\/\//.test(body.avatarUrl || '')) ch.avatar ||= body.avatarUrl;
+      for (const it of body.relatedStreams || []) {
+        const id = pipedId(it);
+        if (!id || it.isShort || (it.type && it.type !== 'stream')) continue;
+        found.push({ id, title: it.title || '', views: it.views, raw: it });
+      }
     }
   }
   for (const v of found) {
@@ -1991,6 +1993,7 @@ function openChannel(item) {
   rendered = new Set();
   $('#grid').replaceChildren();
   $('#sort').value = 'recent';
+  $('#findInput').value = '';
   showView('search');
   closeDrawer();
   renderChannelBar();
@@ -2471,27 +2474,33 @@ function renderResults() {
   if (!session) return;
   const plan = session.plan;
   const items = [...session.items.values()].filter((i) => i.status === 'done' || i.status === 'unread');
-  const rows = items.map((item) => safeRow(item, plan)).filter((r) => r && (r.isBeat || r._item.status === 'unread'));
+  // Mode chaîne : tous les sons du beatmaker, sans les filtres de ta recherche (type beat,
+  // licences cochées, BPM, durée) ; seules ses licences à lui (toutes cochées au départ).
+  const ch = session.channel;
+  $('#results').classList.toggle('in-channel', !!ch);
+  const rows = items.map((item) => safeRow(item, plan)).filter((r) => r && (ch || r.isBeat || r._item.status === 'unread'));
   $('#results').hidden = !rows.length && !searching;
   const counts = Object.fromEntries(LIC_ORDER.map((c) => [c, 0]));
   rows.forEach((r) => counts[r.license.category]++);
-  renderPills($('#licPills'), counts, searchPrefs.licenses, (c) => {
-    const set = new Set(searchPrefs.licenses);
+  if (ch && !Array.isArray(ch.lics)) ch.lics = LIC_ORDER.slice();
+  const lics = ch ? ch.lics : searchPrefs.licenses;
+  renderPills($('#licPills'), counts, lics, (c) => {
+    const set = new Set(lics);
     if (set.has(c)) set.delete(c); else set.add(c);
-    searchPrefs.licenses = LIC_ORDER.filter((x) => set.has(x));
-    local.set('searchPrefs', searchPrefs);
+    if (ch) ch.lics = LIC_ORDER.filter((x) => set.has(x));
+    else { searchPrefs.licenses = LIC_ORDER.filter((x) => set.has(x)); local.set('searchPrefs', searchPrefs); }
     renderResults();
   });
   const text = $('#findInput').value.trim();
-  const bpm = searchPrefs.bpm;
+  const bpm = ch ? null : searchPrefs.bpm;
   const filtered = filterResults(rows.map((r) => ({ ...r, isBeat: true })), {
-    licenses: searchPrefs.licenses.length ? searchPrefs.licenses : LIC_ORDER,
+    licenses: lics.length ? lics : LIC_ORDER,
     text,
     bpm: bpm ? { enabled: true, min: bpm.min, max: bpm.max, requireBpm: false } : undefined,
   });
-  const minDur = Number(searchPrefs.minDur) || 0;
+  const minDur = ch ? 0 : Number(searchPrefs.minDur) || 0;
   const byDur = minDur ? filtered.filter((r) => !(r._item.duration > 0) || r._item.duration >= minDur) : filtered;
-  const shown = searchPrefs.verifiedOnly ? byDur.filter((r) => r._item.status !== 'unread') : byDur;
+  const shown = searchPrefs.verifiedOnly && !ch ? byDur.filter((r) => r._item.status !== 'unread') : byDur;
   const sorted = sortRows(shown, $('#sort').value);
   const pendingN = [...session.items.values()].filter((i) => i.status === 'pending').length;
   const hiddenN = rows.length - sorted.length;
