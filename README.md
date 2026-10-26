@@ -33,6 +33,14 @@ si tu peux vraiment sortir ton son sur Spotify sans payer.
    description dit « for Spotify you need to buy a lease », « Spotify ❌ »,
    « YouTube only », « DM me before releasing »… la prod est **retirée de
    Free for profit** et signalée.
+   La lecture se fait phrase par phrase : « A license must be purchased to use for
+   profit (Spotify, Apple Music…) », « free for profit for YouTube or SoundCloud
+   placement », « youtube monetization only », « only applies to YouTube », « usage
+   non lucratif », « this beat is not free »… Une pub pour la lease (fichier sans tag,
+   exclu, « je conseille d'acheter ») ne retire pas une prod de Free for profit.
+   Si seul le titre dit « free for profit » et que YouTube n'a donné que le début de
+   la description, la prod est marquée **« FFP ? à vérifier »**.
+   Testé sur ~60 vraies descriptions YouTube / SoundCloud (`test/fixtures/real-licenses.json`).
 4. **Range et filtre** : cases de licences, limite « Up to » minimum, crédit
    obligatoire, tri/filtre **BPM** (à activer), style de rap, et **recherche dans
    les descriptions** (`spotify`, `wav`, `"free for profit"`, `-lease` pour exclure).
@@ -163,9 +171,10 @@ ouvre le site dans Chrome) :
 ## Chaîne du beatmaker (version web)
 
 Chaque prod affiche le **logo de la chaîne** qui l'a postée. Un appui dessus lance le
-**mode chaîne** : toutes les vidéos de ce beatmaker, licences vérifiées comme une recherche
-normale, avec les mêmes filtres (licences, BPM, durée, texte) et tris, dont **« Plus
-récentes »**. « Plus de résultats » charge la suite ; le bandeau en haut donne le lien de la
+**mode chaîne** : **toutes** les vidéos de ce beatmaker, sans les filtres de la recherche
+(titres sans « type beat » compris, toutes licences cochées, pas de filtre BPM / durée /
+vérifiées). Licences toujours vérifiées ; filtre texte, cases de licences (propres à la
+chaîne) et tris restent dispo, dont **« Plus récentes »**. « Plus de résultats » charge la suite ; le bandeau en haut donne le lien de la
 chaîne YouTube et ✕ ramène à ta recherche. Avec une clé YouTube : liste des mises en ligne
 de la chaîne (quelques unités de quota seulement) ; sans clé : la page de la chaîne sur Piped.
 

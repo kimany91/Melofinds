@@ -179,12 +179,16 @@ function highlight(text, terms = []) {
   return frag;
 }
 
-function chipLabel(L) {
+// « Free for profit » vu seulement dans le titre, et description lue à moitié :
+// la fin peut tout changer (« YouTube / SoundCloud only », « licence pour Spotify »).
+const ffpUnsure = (L, partial) => L.category === 'ffp' && partial && L.confidence !== 'haute';
+function chipLabel(L, partial = false) {
+  if (ffpUnsure(L, partial)) return 'FFP ? à vérifier';
   if (L.category === 'upto') return `Up to ${formatCount(L.limit)}`;
   if (L.misleading) return 'Payant · titre trompeur';
   return SHORT[L.category];
 }
-function verdictCopy(L, unread) {
+function verdictCopy(L, unread, partial = false) {
   let t; let s;
   switch (L.category) {
     case 'ffp': t = 'Free for profit'; s = 'Tu peux sortir ton son sur Spotify sans payer.'; break;
@@ -193,6 +197,7 @@ function verdictCopy(L, unread) {
     case 'paid': t = 'Payant'; s = 'Il faut acheter une licence, ou la prod est déjà vendue.'; break;
     default: t = 'À vérifier'; s = 'La description ne dit rien de clair sur les droits.';
   }
+  if (ffpUnsure(L, partial)) { t = 'Free for profit ? À vérifier'; s = 'Seul le titre dit « free for profit » et je n’ai lu que le début de la description. Souvent la suite limite à YouTube / SoundCloud ou demande une licence pour Spotify.'; }
   if (unread) s = 'Description illisible : verdict d’après le titre seulement. Ouvre la vidéo pour vérifier.';
   return { t, s };
 }
@@ -299,7 +304,7 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
     : { class: 'cover', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Écouter « ${item.title} » sur YouTube` };
   card.append(h(WEB ? 'button' : 'a', coverAttrs,
     WEB && vid ? h('img', { class: 'thumb', src: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`, alt: '', loading: 'lazy', decoding: 'async', onerror: (e) => { e.currentTarget.closest('.cover')?.classList.remove('has-thumb'); e.currentTarget.remove(); } }) : null,
-    h('span', { class: 'lic-chip' }, chipLabel(L)),
+    h('span', { class: 'lic-chip' }, chipLabel(L, !!item.partial)),
     item.status === 'unread' ? h('span', { class: 'unread-chip' }, 'non vérifiée') : null,
     h('span', { class: 'play' }, icon('play'), icon('pause'), h('span', { class: 'eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'))),
     h('span', { class: 'cover-meta' }, style, r.key ? h('small', { class: r.keyTb ? 'tb' : null, title: r.keyTb ? 'Trouvé avec Tunebat' : null }, r.key) : null),
@@ -1444,9 +1449,9 @@ $('#drawerClose').addEventListener('click', closeDrawer);
 $('#scrim').addEventListener('click', closeDrawer);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#drawer').classList.contains('open')) closeDrawer(); });
 
-function verdictBox(L, unread) {
-  const v = verdictCopy(L, unread);
-  return h('div', { class: `verdict cat-${L.category}` }, h('span', { class: 'verdict-ico', 'aria-hidden': 'true' }, CAT_ICON[L.category]), h('div', {}, h('b', {}, v.t), h('span', {}, v.s)));
+function verdictBox(L, unread, partial = false) {
+  const v = verdictCopy(L, unread, partial);
+  return h('div', { class: `verdict cat-${L.category}` }, h('span', { class: 'verdict-ico', 'aria-hidden': 'true' }, ffpUnsure(L, partial) ? '?' : CAT_ICON[L.category]), h('div', {}, h('b', {}, v.t), h('span', {}, v.s)));
 }
 function beatDetails(item, r, terms = []) {
   const L = r.license;
@@ -1475,7 +1480,7 @@ function openBeat(item, plan) {
   });
   const claude = sampleFn && item.description ? h('div', { class: 'claude-ask' }, 'Une tournure bizarre ? ', h('button', { type: 'button', class: 'link', onclick: (e) => askClaude(item, e.currentTarget.parentElement) }, 'Demander l’avis de Claude')) : null;
   openDrawer('Détails de la prod', [
-    verdictBox(r.license, item.status === 'unread'),
+    verdictBox(r.license, item.status === 'unread', !!item.partial),
     partialNote(item),
     h('div', {}, h('h3', { class: 'd-title' }, item.title), h('p', { class: 'd-meta' }, [item.views ? `${item.views} vues` : null, item.likeCount != null ? `${fmtViews(item.likeCount)} likes` : null, ratioOf(item) != null ? `ratio ${fmtPct(ratioOf(item))}` : null, item.age].filter(Boolean).join(' · ') || 'YouTube')),
     h('div', { class: 'd-actions' },

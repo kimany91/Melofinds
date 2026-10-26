@@ -215,3 +215,61 @@ test('« only free for profit on YouTube and SoudCloud » + licence pour Spotify
   // la citation affichée reste juste (positions inchangées)
   assert.match(r.reasons.map((x) => x.quote).join(' '), /only free for profit on YouTube and SoudCloud/);
 });
+
+// ---------------------------------------------------------------------------
+// Vraies descriptions YouTube / SoundCloud (octobre 2026), verdict vérifié à la main.
+import { readFileSync } from 'node:fs';
+const REAL = JSON.parse(readFileSync(new URL('./fixtures/real-licenses.json', import.meta.url), 'utf8'));
+
+test(`vraies descriptions : ${REAL.length} prods classées comme un humain le ferait`, () => {
+  for (const c of REAL) {
+    const r = analyzeLicense(c.title, c.desc);
+    assert.equal(r.category, c.cat, `${c.title} (${c.url})`);
+    if (c.limit) assert.equal(r.limit, c.limit, c.title);
+    if (c.credit) assert.equal(r.creditRequired, true, `crédit : ${c.title}`);
+    if (c.misleading) assert.equal(r.misleading, true, `trompeur : ${c.title}`);
+  }
+});
+
+test('« free for profit » limité à SoundCloud / YouTube, écrit de plein de façons', () => {
+  const T = '/FREE FOR PROFIT/ lucki type beat "still feels close"';
+  for (const d of [
+    'This beat is free for profit use on SOUNDCLOUD and YT ONLY.',
+    'A License Must Be Purchased To Use For Profit (Streaaming Services, SPOTIFY,APPLE MUSIC, DEEZER etc.)',
+    'BPM 144 A MIN\n⚠️A License Must Be Purchased To Use For Profit (Streaaming Services, SPOTIFY,APPLE MUSIC, DEEZER etc.)\nIMPORTANT: free for profit use on SOUNDCLOUD and YT ONLY.',
+    'Free for profit on YT & SC. For Spotify / Apple Music a lease must be bought.',
+    'free 4 profit (youtube + soundcloud). streaming platforms = paid license',
+    'FFP for youtube and soundcloud placement',
+    'Gratuit pour YouTube et SoundCloud. Pour Spotify et les plateformes, il faut acheter une licence.',
+    'Free for profit sur YouTube uniquement, achat de licence obligatoire pour le streaming.',
+    'paid license required for spotify, apple music & deezer',
+    'You need to purchase a license to distribute on DistroKid / Spotify',
+  ]) {
+    const r = analyzeLicense(T, d);
+    assert.equal(r.category, 'fnp', d);
+    assert.equal(r.misleading, true, d);
+  }
+});
+
+test('vrais free for profit : une pub pour la lease ne les déclasse pas', () => {
+  for (const d of [
+    'FREE FOR PROFIT. Purchase a lease for the untagged WAV: bsta.rs/x',
+    'Free for profit on all platforms (Spotify, Apple Music, YouTube). Buy the exclusive rights here.',
+    'free for profit, use it on spotify, soundcloud, youtube. credit (prod. x)',
+    'Free for profit as long as you credit. If you want to be 100% safe, I recommend buying a lease.',
+    'Free for profit and non-profit use, just credit me',
+    'Free for commercial and non-commercial use',
+  ]) assert.equal(cat('[FREE FOR PROFIT] Type Beat', d), 'ffp', d);
+});
+
+test('« this beat is not free » → payant ; « not free for all plats » → free non-profit', () => {
+  assert.equal(cat('[FREE] Ninho Type Beat', 'This beat is not free, you must purchase the beat for any use.'), 'paid');
+  assert.equal(cat('Type beat', 'Cette instru n’est pas gratuite. #instrupayante'), 'paid');
+  assert.equal(cat('[free for profit] type beat', 'This beat is NOT free for all plats. You can only use for profit on Soundcloud and YouTube.'), 'fnp');
+});
+
+test('crédit obligatoire, formulations variées', () => {
+  for (const d of ['You MUST GIVE ME CREDIT either in the title', 'Mention obligatoire « Prod.Elmaa »', 'obligation de mentionner (prod. X)', 'Make sure to credit ARAM', 'please give me credit for the composition', 'veuillez bien mentionner : (prod. Claro)']) {
+    assert.equal(analyzeLicense('[FREE] type beat', d).creditRequired, true, d);
+  }
+});

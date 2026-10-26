@@ -2100,6 +2100,10 @@ const FNP = [
   /not\s*(?:free\s*)?for\s*(?:profit|commercial)/g,
   /(?:pas|non)\s*(?:libre|gratuit)e?\s*(?:pour|en)?\s*(?:usage|utilisation)?\s*commercial/g,
   /usage\s*non\s*-?\s*commercial/g,
+  // « usage non lucratif », « projets non commerciaux », « free to use for non-commercial purposes »
+  // (pas « for profit or nonprofit », « commercial and non-commercial »)
+  /(?<!(?:profit|commercial|lucratif)\s*(?:or|and|&|\/|ou|et)\s*(?:for\s*|pour\s*)?)\bnon\s*-?\s*(?:profit|commercial\w*|commerciaux|lucrati\w*)\b(?!\s*(?:or|and|&|\/|ou|et)\s*(?:for\s*|pour\s*)?(?:profit|commercial|lucratif))/g,
+  /\bbut\s*non\s*lucratif|\bsans\s*(?:but\s*lucratif|monetisation)\b/g,
 ];
 
 const BUY_REQUIRED = [
@@ -2117,6 +2121,8 @@ const BUY_REQUIRED = [
 const SPOTIFY_NO = [
   // Spotify ❌ / streaming: no / apple music - not allowed
   /(?:spotify|streaming|apple\s*music|dsps?|distribution|plateformes?)\s*[:\-=]?\s*(?:❌|✖|✗|⛔|🚫|no\b|nope|non\b|not\s*(?:allowed|permitted|included)|interdit|pas\s*autorise)/g,
+  // « NOT free for all plats », « not free for profit on Spotify »
+  /\bnot\s*(?:free\s*)?(?:for\s*profit\s*)?(?:for|on|to)\s*(?:all\s*plat\w*|spotify|streaming|apple\s*music|dsps?|other\s*plat\w*)/g,
   // not allowed on spotify / can't upload to spotify
   /(?:not\s*(?:allowed|permitted)|can'?t|cannot|can\s*not|do\s*not|don'?t|forbidden\s*to)\s*(?:to\s*)?(?:upload\w*|releas\w*|put\w*|us\w*|drop\w*|distribut\w*|moneti[sz]\w*)?\s*(?:it\s*|this\s*(?:beat)?\s*)?(?:on|to|for)\s*(?:spotify|streaming|apple\s*music|dsps?|all\s*platforms)/g,
   // free for profit ... youtube only / ffp (soundcloud only)
@@ -2143,13 +2149,43 @@ const PLAT = String.raw`(?:youtube|yt|(?:soundcloud|soudcloud|souncloud|sondclou
 const PLAT_LIST = String.raw`${PLAT}(?:\s*(?:,|and|&|\/|\+|-|or|et|ou|n|'n')\s*${PLAT})*`;
 const PLATFORM_ONLY = [
   // « soundcloud and youtube only », « youtube/soundcloud use only », « for youtube videos only »
-  new RegExp(String.raw`(?<!not\s{0,3}(?:for\s*)?)\b${PLAT_LIST}\s*(?:\(?\s*(?:non[\s-]*moneti[sz]ed\s*)?(?:use|usage|videos?|uploads?|content|purposes?|releases?|posts?)\s*\)?\s*)?(?:only|uniquement|seulement)\b`, 'g'),
+  new RegExp(String.raw`(?<!not\s{0,3}(?:for\s*)?)\b${PLAT_LIST}\s*(?:\(?\s*(?:non[\s-]*moneti[sz]ed\s*)?(?:use|usage|videos?|uploads?|content|purposes?|releases?|posts?|moneti[sz]\w*|placements?)\s*\)?\s*)?(?:only|uniquement|seulement)\b`, 'g'),
   // « only for youtube », « only allowed on youtube and soundcloud », « can only use it on yt »
-  new RegExp(String.raw`(?<!not\s{0,3})(?:only|uniquement|seulement|exclusivement)\s*(?:be\s*)?(?:allowed|permitted|authori[sz]ed|autorise|usable|used|use(?:\s*(?:it|this|the\s*beat))?|upload\w*|post\w*|releas\w*|utilisable|valable)?\s*(?:on|for|to|in|sur|pour|en)?\s*(?:non[\s-]*moneti[sz]ed\s*)?${PLAT_LIST}\b`, 'g'),
+  new RegExp(String.raw`(?<!not\s{0,3})(?:only|uniquement|seulement|exclusivement)\s*(?:be\s*)?(?:allowed|permitted|authori[sz]ed|autorise|usable|used|use(?:\s*(?:it|this|the\s*beat))?(?:\s*(?:for\s*profit|commercially))?|upload\w*|post\w*|releas\w*|utilisable|valable|appl(?:y|ies)|valid|works?)?\s*(?:on|for|to|in|sur|pour|en)?\s*(?:non[\s-]*moneti[sz]ed\s*)?${PLAT_LIST}\b`, 'g'),
   // « free for non-monetized use », « in non monetized videos »
   /(?:for|in|on|pour|en)\s*(?:non|not|un)\s*-?\s*moneti[sz]ed\b/g,
   // « buy a lease for spotify » / « purchase a license to release on spotify »
   /(?:buy|purchase|grab|get)\s*(?:a|an|the|my)?\s*(?:lease|licen[cs]e|licence)\s*(?:for|to\s*(?:release|upload|put|drop|use)\s*(?:it\s*)?(?:on|to))\s*(?:spotify|apple\s*music|streaming|dsps?|all\s*platforms|distrokid)/g,
+];
+
+// « Free (for profit) for YouTube or SoundCloud placement », « free on YouTube & SoundCloud » :
+// gratuit, mais seulement cité pour YouTube / SoundCloud (gardé si la phrase ne cite pas
+// aussi Spotify & co sans restriction, voir platformFree()).
+const PLATFORM_FREE = new RegExp(String.raw`(?:${FFP}|\bffp|\bf4p|\bfree|\bgratuit\w*)\s*(?:to\s*use\s*)?(?:use\s*)?(?:(?:on|for|in|sur|pour)\s*(?:the\s*)?|[(\[]\s*)${PLAT_LIST}\b`, 'g');
+const BROAD = /spotify|apple\s*music|itunes|deezer|tidal|amazon\s*music|all\s*plat\w*|toutes?\s*les\s*plateformes|stream\w*\s*(?:services?|platforms?|sites?)|streaming|dsps?\b|distrib/;
+const RESTRICT_WORDS = /\bonly\b|uniquement|seulement|\bnot\b|n't|\bno\b|\bpas\b|purchase|\bbuy|lease|licen[cs]e|licence|\bneed|\bmust|\bpay|acheter|payer|sauf|except/;
+
+// Achat obligatoire pour sortir le son / usage commercial, lu PHRASE PAR PHRASE :
+// « A License Must Be Purchased To Use For Profit (Streaming Services, SPOTIFY…) »,
+// « Purchase a lease to distribute your music on platforms like Spotify »,
+// « Pour pouvoir monétiser veuillez acheter une licence ».
+const PURCHASE_REQ = [
+  /(?:licen[cs]e|licence|lease|beat)\s*(?:must|has\s*to|have\s*to|needs?\s*to|should|is\s*to)\s*be\s*(?:purchased|bought|acquired|obtained|leased)/,
+  /(?:paid|commercial|purchased?)\s*(?:licen[cs]e|licence|lease)\s*(?:is\s*)?(?:required|needed|necessary|mandatory)/,
+  /(?:licen[cs]e|licence|lease)\s*(?:is\s*)?(?:required|needed|necessary|mandatory)/,
+  /\b(?:purchase|buy|grab|get|acquire)\s*(?:a|an|the|my|this|our)?\s*(?:paid\s*)?(?:lease|licen[cs]e|licence|beat)\b/,
+  /\bpaid\s*(?:lease|licen[cs]e|licence)\b|(?:=|->|→)\s*(?:a\s*)?(?:lease|licen[cs]e|licence)\b/,
+  /\b(?:must|need(?:s)?(?:\s*to)?|have\s*to|has\s*to|will\s*need\s*to|gotta|required\s*to|please)\s*(?:to\s*)?(?:purchase|buy|lease|pay|acquire)\b/,
+  /(?:veuillez|merci\s*d'?|vous\s*devez|tu\s*dois|il\s*faut|faut|obligation\s*d'?|devez\s*l'?)\s*(?:l'?\s*)?(?:acheter|payer|louer|prendre\s*une\s*licence)/,
+  /achat\s*(?:d'?\s*une\s*|de\s*(?:la\s*)?)?(?:licence\s*)?obligatoire/,
+];
+const PURCHASE_TARGET = /spotify|apple\s*music|itunes|deezer|tidal|amazon\s*music|stre+aming|all\s*plat\w*|other\s*plat\w*|any\s*plat\w*|plateformes?|dsps?\b|distrib\w*|distrokid|tunecore|for\s*profit|commercial\w*|moneti[sz]\w*|monetis\w*|lucrati\w*|any\s*(?:other\s*)?use|for\s*any\s*use|toutes?\s*autres?\s*utilisations?|toute\s*utilisation|release\s*(?:it|your\s*(?:song|music))?\s*(?:on|to)/;
+const SOFT = /recommend|recommande|optional|optionnel|to\s*be\s*(?:100\s*%\s*)?(?:safe|sure)|if\s*you\s*want\s*to\s*be\s*(?:100\s*%\s*)?sure|support\s*(?:me|the\s*channel)/;
+
+// « This beat is not free », « instru payante » → payant
+const NOT_FREE = [
+  /(?:beat|instru\w*|prod|it|this|track)\s*(?:is|est)?\s*(?:not|n'?est\s*pas|pas)\s*(?:free|gratuite?)\b(?!\s*(?:for|to|on|pour|sur)\b)/g,
+  /#?\s*instru(?:mentale?)?\s*payante|\bbeat\s*payant|\bprod\s*payante/g,
 ];
 
 // « no lease needed », « sans licence »… : annule une clause d'achat
@@ -2171,7 +2207,10 @@ const PAID = [
 ];
 
 const CREDIT = [
-  /(?:must|need\s*to|have\s*to|please|you\s*should|required\s*to)\s*(?:give\s*)?credit/g,
+  /(?:must|need\s*to|have\s*to|please|you\s*should|required\s*to)\s*(?:give\s*(?:me|us|the\s*producer|production)?\s*)?(?:a\s*)?credit/g,
+  /(?:make\s*sure\s*(?:to|you)|don'?t\s*forget\s*to|essential\s*to|include)\s*(?:give\s*)?(?:a\s*|proper\s*)?credit/g,
+  /\bgive\s*(?:me|us)\s*(?:a\s*)?credit|\bcredit\s*me\b|ask\s*for\s*(?:a\s*)?credit/g,
+  /mention\s*obligatoire|obligation\s*de\s*mentionner|(?:veuillez|merci\s*de|il\s*faut)\s*(?:bien\s*)?(?:me\s*)?(?:mentionner|crediter)/g,
   /credit\s*(?:is\s*)?[("'\[]?\s*(?:required|needed|mandatory|me\b|the\s*producer|prod)/g,
   /\b(?:just|simply|only|juste)\s*(?:give\s*)?credit/g,
   /(?:as\s*long\s*as|if|provided)\s*you\s*(?:give\s*(?:me\s*)?|include\s*)?credit/g,
@@ -2231,6 +2270,40 @@ function findAll(patterns, text, { skipNegated = false } = {}) {
   }
   hits.sort((a, b) => a.start - b.start);
   return hits;
+}
+
+// Phrase qui contient la position i (coupée sur . ! ? retour à la ligne, puces).
+const SENT_END = /[.!?\n•▷○|]/;
+function sentenceAt(text, i) {
+  let a = i;
+  while (a > 0 && !SENT_END.test(text[a - 1])) a--;
+  let b = i;
+  while (b < text.length && !SENT_END.test(text[b])) b++;
+  return { start: a, end: b, text: text.slice(a, b) };
+}
+
+/** Achat obligatoire pour Spotify / usage commercial, phrase par phrase. */
+function findPurchaseRequired(text) {
+  const hits = [];
+  const re = /[^.!?\n•▷○|]+/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const s = m[0];
+    if (!PURCHASE_TARGET.test(s) || SOFT.test(s) || NO_NEED.test(s)) continue;
+    const req = PURCHASE_REQ.map((r) => s.match(r)).find(Boolean);
+    if (!req) continue;
+    const start = m.index + req.index;
+    hits.push({ start, end: start + req[0].length, match: req, negated: false });
+  }
+  return hits;
+}
+
+/** « free (for profit) on YouTube & SoundCloud » quand la phrase ne cite pas aussi Spotify & co. */
+function findPlatformFree(text) {
+  return findAll([PLATFORM_FREE], text).filter((h) => {
+    const s = sentenceAt(text, h.start).text;
+    return !(BROAD.test(s) && !RESTRICT_WORDS.test(s));
+  });
 }
 
 function formatCount(n) {
@@ -2297,14 +2370,17 @@ function analyzeLicense(title = '', description = '') {
   const buyHits = findAll(BUY_REQUIRED, t).filter((h) => !noNeed(h));
   // « can't upload to Spotify without a lease » : la négation confirme la restriction.
   const spotifyNo = findAll(SPOTIFY_NO, t).filter((h) => /not|n't|cannot|forbidden|interdit|pas|❌|✖|✗|⛔|🚫/.test(h.match[0]) || !noNeed(h));
-  const platformOnly = findAll(PLATFORM_ONLY, t).filter((h) => !noNeed(h));
+  const platformOnly = [...findAll(PLATFORM_ONLY, t).filter((h) => !noNeed(h)), ...findPlatformFree(t)]
+    .sort((a, b) => a.start - b.start);
+  const purchaseReq = findPurchaseRequired(t);
+  const notFree = findAll(NOT_FREE, t);
   const limit = findStreamLimit(t);
   const creditHits = findAll(CREDIT, t);
   const paidHits = findAll(PAID, t);
   const soldInTitle = paidHits.some((h) => inTitle(h) && /sold|vendu/.test(h.match[0]));
 
   // Ce qui restreint l'usage commercial (surtout dans la description)
-  const restrict = [...platformOnly, ...spotifyNo, ...buyHits, ...fnpHits].sort((a, b) => a.start - b.start);
+  const restrict = [...platformOnly, ...spotifyNo, ...buyHits, ...purchaseReq, ...fnpHits].sort((a, b) => a.start - b.start);
   const ffpTitle = ffpHits.filter(inTitle);
   const ffpDesc = ffpHits.filter(inDesc);
 
@@ -2324,6 +2400,10 @@ function analyzeLicense(title = '', description = '') {
     category = 'paid';
     confidence = 'haute';
     reasons.push({ text: 'Prod marquée « SOLD » / vendue dans le titre.', quote: quote(paidHits.find(inTitle)) });
+  } else if (notFree.length && !ffpHits.some(inDesc) && !fnpHits.length && !platformOnly.length) {
+    category = 'paid';
+    confidence = 'haute';
+    reasons.push({ text: 'La description dit que la prod n’est PAS gratuite : il faut l’acheter.', quote: quote(notFree[0]) });
   } else if (ffpNegated.length && !ffpHits.length) {
     category = freeHits.length || fnpHits.length ? 'fnp' : 'paid';
     confidence = 'haute';
@@ -2372,7 +2452,7 @@ function analyzeLicense(title = '', description = '') {
     confidence = fnpHits.length || spotifyNo.length || platformOnly.length ? 'haute' : 'moyenne';
     if (fnpHits.length) reasons.push({ text: 'Gratuit seulement pour un usage non-commercial.', quote: quote(fnpHits[0]) });
     if (platformOnly.length) reasons.push({ text: 'Usage limité à YouTube / SoundCloud : pas libre pour Spotify & co.', quote: quote(platformOnly[0]) });
-    const pay = [...spotifyNo, ...buyHits].sort((a, b) => a.start - b.start)[0];
+    const pay = [...spotifyNo, ...buyHits, ...purchaseReq].sort((a, b) => a.start - b.start)[0];
     if (pay) reasons.push({ text: 'Il faut payer une licence pour sortir le son (Spotify, streaming…).', quote: quote(pay) });
   } else if (ffpWeak.length) {
     category = 'ffp';
@@ -3455,12 +3535,16 @@ function highlight(text, terms = []) {
   return frag;
 }
 
-function chipLabel(L) {
+// « Free for profit » vu seulement dans le titre, et description lue à moitié :
+// la fin peut tout changer (« YouTube / SoundCloud only », « licence pour Spotify »).
+const ffpUnsure = (L, partial) => L.category === 'ffp' && partial && L.confidence !== 'haute';
+function chipLabel(L, partial = false) {
+  if (ffpUnsure(L, partial)) return 'FFP ? à vérifier';
   if (L.category === 'upto') return `Up to ${formatCount(L.limit)}`;
   if (L.misleading) return 'Payant · titre trompeur';
   return SHORT[L.category];
 }
-function verdictCopy(L, unread) {
+function verdictCopy(L, unread, partial = false) {
   let t; let s;
   switch (L.category) {
     case 'ffp': t = 'Free for profit'; s = 'Tu peux sortir ton son sur Spotify sans payer.'; break;
@@ -3469,6 +3553,7 @@ function verdictCopy(L, unread) {
     case 'paid': t = 'Payant'; s = 'Il faut acheter une licence, ou la prod est déjà vendue.'; break;
     default: t = 'À vérifier'; s = 'La description ne dit rien de clair sur les droits.';
   }
+  if (ffpUnsure(L, partial)) { t = 'Free for profit ? À vérifier'; s = 'Seul le titre dit « free for profit » et je n’ai lu que le début de la description. Souvent la suite limite à YouTube / SoundCloud ou demande une licence pour Spotify.'; }
   if (unread) s = 'Description illisible : verdict d’après le titre seulement. Ouvre la vidéo pour vérifier.';
   return { t, s };
 }
@@ -3575,7 +3660,7 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
     : { class: 'cover', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Écouter « ${item.title} » sur YouTube` };
   card.append(h(WEB ? 'button' : 'a', coverAttrs,
     WEB && vid ? h('img', { class: 'thumb', src: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`, alt: '', loading: 'lazy', decoding: 'async', onerror: (e) => { e.currentTarget.closest('.cover')?.classList.remove('has-thumb'); e.currentTarget.remove(); } }) : null,
-    h('span', { class: 'lic-chip' }, chipLabel(L)),
+    h('span', { class: 'lic-chip' }, chipLabel(L, !!item.partial)),
     item.status === 'unread' ? h('span', { class: 'unread-chip' }, 'non vérifiée') : null,
     h('span', { class: 'play' }, icon('play'), icon('pause'), h('span', { class: 'eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'))),
     h('span', { class: 'cover-meta' }, style, r.key ? h('small', { class: r.keyTb ? 'tb' : null, title: r.keyTb ? 'Trouvé avec Tunebat' : null }, r.key) : null),
@@ -4720,9 +4805,9 @@ $('#drawerClose').addEventListener('click', closeDrawer);
 $('#scrim').addEventListener('click', closeDrawer);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#drawer').classList.contains('open')) closeDrawer(); });
 
-function verdictBox(L, unread) {
-  const v = verdictCopy(L, unread);
-  return h('div', { class: `verdict cat-${L.category}` }, h('span', { class: 'verdict-ico', 'aria-hidden': 'true' }, CAT_ICON[L.category]), h('div', {}, h('b', {}, v.t), h('span', {}, v.s)));
+function verdictBox(L, unread, partial = false) {
+  const v = verdictCopy(L, unread, partial);
+  return h('div', { class: `verdict cat-${L.category}` }, h('span', { class: 'verdict-ico', 'aria-hidden': 'true' }, ffpUnsure(L, partial) ? '?' : CAT_ICON[L.category]), h('div', {}, h('b', {}, v.t), h('span', {}, v.s)));
 }
 function beatDetails(item, r, terms = []) {
   const L = r.license;
@@ -4751,7 +4836,7 @@ function openBeat(item, plan) {
   });
   const claude = sampleFn && item.description ? h('div', { class: 'claude-ask' }, 'Une tournure bizarre ? ', h('button', { type: 'button', class: 'link', onclick: (e) => askClaude(item, e.currentTarget.parentElement) }, 'Demander l’avis de Claude')) : null;
   openDrawer('Détails de la prod', [
-    verdictBox(r.license, item.status === 'unread'),
+    verdictBox(r.license, item.status === 'unread', !!item.partial),
     partialNote(item),
     h('div', {}, h('h3', { class: 'd-title' }, item.title), h('p', { class: 'd-meta' }, [item.views ? `${item.views} vues` : null, item.likeCount != null ? `${fmtViews(item.likeCount)} likes` : null, ratioOf(item) != null ? `ratio ${fmtPct(ratioOf(item))}` : null, item.age].filter(Boolean).join(' · ') || 'YouTube')),
     h('div', { class: 'd-actions' },
