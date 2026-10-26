@@ -39,7 +39,7 @@ si tu peux vraiment sortir ton son sur Spotify sans payer.
    non lucratif », « this beat is not free »… Une pub pour la lease (fichier sans tag,
    exclu, « je conseille d'acheter ») ne retire pas une prod de Free for profit.
    Si seul le titre dit « free for profit » et que YouTube n'a donné que le début de
-   la description, la prod est marquée **« FFP ? à vérifier »**.
+   la description, la prod est marquée **« FFP ? à vérifier »** et rangée dans « À vérifier » (plus dans Free for profit). La date de version est affichée en bas de la page de recherche.
    Testé sur ~60 vraies descriptions YouTube / SoundCloud (`test/fixtures/real-licenses.json`).
 4. **Range et filtre** : cases de licences, limite « Up to » minimum, crédit
    obligatoire, tri/filtre **BPM** (à activer), style de rap, et **recherche dans

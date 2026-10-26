@@ -843,3 +843,6 @@ body.mobile .chan-bar { gap: 10px; padding: 10px 12px; }
 .results.in-channel #bpmPill, .results.in-channel #durPill, .results.in-channel #verifiedPill { display: none; }
 body.mobile .chan-av.big { width: 40px; height: 40px; }
 body.mobile .chan-txt b { font-size: 17px; }
+
+/* Version de l'app (pour vérifier qu'on a bien la dernière) */
+.build-stamp { margin: 28px 0 8px; text-align: center; font-size: 12px; color: var(--muted, #888); opacity: .7; }

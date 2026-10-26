@@ -867,6 +867,9 @@ body.mobile .chan-bar { gap: 10px; padding: 10px 12px; }
 body.mobile .chan-av.big { width: 40px; height: 40px; }
 body.mobile .chan-txt b { font-size: 17px; }
 
+/* Version de l'app (pour vérifier qu'on a bien la dernière) */
+.build-stamp { margin: 28px 0 8px; text-align: center; font-size: 12px; color: var(--muted, #888); opacity: .7; }
+
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -972,6 +975,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
+    <p class="build-stamp">Version du 26/10/2026 à 20:38</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -3522,7 +3526,7 @@ $('#brand').addEventListener('click', () => showView('search'));
 // Outils d'affichage
 
 const CAT_ICON = { ffp: '✓', upto: '⏳', fnp: '♪', paid: '$', unknown: '?' };
-const SHORT = { ffp: 'Free for profit', upto: 'Up to', fnp: 'Free', paid: 'Payant', unknown: 'Inconnu' };
+const SHORT = { ffp: 'Free for profit', upto: 'Up to', fnp: 'Free', paid: 'Payant', unknown: 'À vérifier' };
 const KW_RE = /(free\s*(?:for|4)\s*profit|non[\s-]*profit|spotify|apple\s*music|streaming(?:\s*services)?|youtube\s*only|lease|licen[cs]e|licence|cr[eé]dit|untagged|purchase|buy|[\d.,]+\s*k?\s*(?:\([^)]*\)\s*)?(?:monetized\s*)?(?:streams?|plays?|écoutes))/gi;
 const strip = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
 const ytSearchUrl = (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
@@ -3552,16 +3556,13 @@ function highlight(text, terms = []) {
   return frag;
 }
 
-// « Free for profit » vu seulement dans le titre, et description lue à moitié :
-// la fin peut tout changer (« YouTube / SoundCloud only », « licence pour Spotify »).
-const ffpUnsure = (L, partial) => L.category === 'ffp' && partial && L.confidence !== 'haute';
-function chipLabel(L, partial = false) {
-  if (ffpUnsure(L, partial)) return 'FFP ? à vérifier';
+function chipLabel(L) {
+  if (L.titleOnly) return 'FFP ? à vérifier';
   if (L.category === 'upto') return `Up to ${formatCount(L.limit)}`;
   if (L.misleading) return 'Payant · titre trompeur';
   return SHORT[L.category];
 }
-function verdictCopy(L, unread, partial = false) {
+function verdictCopy(L, unread) {
   let t; let s;
   switch (L.category) {
     case 'ffp': t = 'Free for profit'; s = 'Tu peux sortir ton son sur Spotify sans payer.'; break;
@@ -3570,7 +3571,7 @@ function verdictCopy(L, unread, partial = false) {
     case 'paid': t = 'Payant'; s = 'Il faut acheter une licence, ou la prod est déjà vendue.'; break;
     default: t = 'À vérifier'; s = 'La description ne dit rien de clair sur les droits.';
   }
-  if (ffpUnsure(L, partial)) { t = 'Free for profit ? À vérifier'; s = 'Seul le titre dit « free for profit » et je n’ai lu que le début de la description. Souvent la suite limite à YouTube / SoundCloud ou demande une licence pour Spotify.'; }
+  if (L.titleOnly) { t = 'Free for profit ? À vérifier'; s = 'Seul le titre dit « free for profit » et YouTube ne m’a pas laissé lire toute la description. Souvent la suite limite à YouTube / SoundCloud ou demande une licence pour Spotify : ouvre la vidéo avant de sortir ton son.'; return { t, s }; }
   if (unread) s = 'Description illisible : verdict d’après le titre seulement. Ouvre la vidéo pour vérifier.';
   return { t, s };
 }
@@ -3621,9 +3622,22 @@ function refreshItem(item) {
 
 function analyzed(item, plan) {
   const tb = tbFor(item.id);
-  const key = `${(item.description || '').length}|${item.title}|${plan ? 1 : 0}|${tb ? `${tb.bpm}/${tb.key}` : ''}`;
+  const key = `${(item.description || '').length}|${item.title}|${plan ? 1 : 0}|${tb ? `${tb.bpm}/${tb.key}` : ''}|${item.partial ? 1 : 0}|${item.status}`;
   if (item._r && item._key === key) return item._r;
   const r = analyzeVideo({ id: item.id, title: item.title, description: item.description || '', foundBy: item.foundBy }, plan || null);
+  // « Free for profit » vu SEULEMENT dans le titre, description pas lue en entier
+  // (YouTube bloque, quota, mode sans clé) : on ne le range pas en Free for profit.
+  // La fin de la description dit souvent « YouTube & SoundCloud only » ou « licence pour Spotify ».
+  const descMissing = item.partial || item.status === 'unread' || !String(item.description || '').trim();
+  if (r.license.category === 'ffp' && r.license.confidence !== 'haute' && descMissing) {
+    r.license = {
+      ...r.license, category: 'unknown', label: 'À vérifier', spotify: '?', confidence: 'faible', titleOnly: true,
+      reasons: [
+        { text: '« Free for profit » seulement dans le titre.', quote: r.license.reasons[0]?.quote || '' },
+        { text: 'Description pas lue en entier (YouTube a bloqué la suite) : impossible de savoir si c’est limité à YouTube / SoundCloud ou s’il faut une licence pour Spotify. Rangée dans « À vérifier ».', quote: '' },
+      ],
+    };
+  }
   if (tb) {
     if (!r.bpm && tb.bpm) { r.bpm = tb.bpm; r.bpmTb = true; }
     if (!r.key && tb.key) { r.key = tb.key; r.keyTb = true; }
@@ -3677,7 +3691,7 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
     : { class: 'cover', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Écouter « ${item.title} » sur YouTube` };
   card.append(h(WEB ? 'button' : 'a', coverAttrs,
     WEB && vid ? h('img', { class: 'thumb', src: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`, alt: '', loading: 'lazy', decoding: 'async', onerror: (e) => { e.currentTarget.closest('.cover')?.classList.remove('has-thumb'); e.currentTarget.remove(); } }) : null,
-    h('span', { class: 'lic-chip' }, chipLabel(L, !!item.partial)),
+    h('span', { class: 'lic-chip' }, chipLabel(L)),
     item.status === 'unread' ? h('span', { class: 'unread-chip' }, 'non vérifiée') : null,
     h('span', { class: 'play' }, icon('play'), icon('pause'), h('span', { class: 'eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'))),
     h('span', { class: 'cover-meta' }, style, r.key ? h('small', { class: r.keyTb ? 'tb' : null, title: r.keyTb ? 'Trouvé avec Tunebat' : null }, r.key) : null),
@@ -4822,9 +4836,9 @@ $('#drawerClose').addEventListener('click', closeDrawer);
 $('#scrim').addEventListener('click', closeDrawer);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#drawer').classList.contains('open')) closeDrawer(); });
 
-function verdictBox(L, unread, partial = false) {
-  const v = verdictCopy(L, unread, partial);
-  return h('div', { class: `verdict cat-${L.category}` }, h('span', { class: 'verdict-ico', 'aria-hidden': 'true' }, ffpUnsure(L, partial) ? '?' : CAT_ICON[L.category]), h('div', {}, h('b', {}, v.t), h('span', {}, v.s)));
+function verdictBox(L, unread) {
+  const v = verdictCopy(L, unread);
+  return h('div', { class: `verdict cat-${L.category}` }, h('span', { class: 'verdict-ico', 'aria-hidden': 'true' }, L.titleOnly ? '?' : CAT_ICON[L.category]), h('div', {}, h('b', {}, v.t), h('span', {}, v.s)));
 }
 function beatDetails(item, r, terms = []) {
   const L = r.license;
@@ -4853,7 +4867,7 @@ function openBeat(item, plan) {
   });
   const claude = sampleFn && item.description ? h('div', { class: 'claude-ask' }, 'Une tournure bizarre ? ', h('button', { type: 'button', class: 'link', onclick: (e) => askClaude(item, e.currentTarget.parentElement) }, 'Demander l’avis de Claude')) : null;
   openDrawer('Détails de la prod', [
-    verdictBox(r.license, item.status === 'unread', !!item.partial),
+    verdictBox(r.license, item.status === 'unread'),
     partialNote(item),
     h('div', {}, h('h3', { class: 'd-title' }, item.title), h('p', { class: 'd-meta' }, [item.views ? `${item.views} vues` : null, item.likeCount != null ? `${fmtViews(item.likeCount)} likes` : null, ratioOf(item) != null ? `ratio ${fmtPct(ratioOf(item))}` : null, item.age].filter(Boolean).join(' · ') || 'YouTube')),
     h('div', { class: 'd-actions' },

@@ -38,6 +38,7 @@ function stripModule(src, name) {
 
 const core = MODULES.map((m) => stripModule(read(m), m)).join('\n\n');
 const html = read('artifact/template.html')
+  .replace('__BUILD__', () => new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(' ', ' à '))
   .replace('/*__STYLE__*/', () => read('artifact/style.css'))
   .replace('/*__CORE__*/', () => core.replace(/<\/script/gi, '<\\/script'))
   .replace('/*__APP__*/', () => read('artifact/app.js').replace(/<\/script/gi, '<\\/script'));
