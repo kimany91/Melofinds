@@ -194,3 +194,24 @@ test('YouTube / SoundCloud cités sans « only » → reste free for profit', ()
   assert.equal(cat(T, 'Subscribe to my youtube! Follow my soundcloud. Free for profit, no credit needed'), 'ffp');
   assert.equal(cat(T, 'Free for profit: allowed on Spotify, Apple Music, YouTube, SoundCloud. Not for youtube only'), 'ffp');
 });
+
+test('« only free for profit on YouTube and SoudCloud » + licence pour Spotify → pas free for profit', () => {
+  const d = `• this is only free for profit on YouTube and SoudCloud.
+• do not use YouTube's Content ID on your songs.
+• must credit (prod.geesyn).
+• to use this beat for profit on all platforms (Spotify, Apple Music, etc..) you need to purchase a license`;
+  for (const T of ['[FREE] Nettspend Type Beat "Glow" (prod. geesyn)', 'Nettspend Type Beat "Glow"']) {
+    assert.equal(cat(T, d), 'fnp', T);
+  }
+  const r = analyzeLicense('[FREE FOR PROFIT] Nettspend Type Beat', d);
+  assert.equal(r.category, 'fnp');
+  assert.equal(r.misleading, true);  // titre trompeur signalé
+  assert.equal(r.creditRequired, true);
+  // chaque morceau du piège, seul
+  assert.equal(cat('[FREE FOR PROFIT] Type Beat', 'This is only free for profit on YouTube.'), 'fnp');
+  assert.equal(cat('[FREE FOR PROFIT] Type Beat', 'Free for profit only on SoundCloud'), 'fnp');
+  assert.equal(cat('[FREE FOR PROFIT] Type Beat', 'To use this beat for profit on all platforms (Spotify, Apple Music, etc..) you need to purchase a license'), 'fnp');
+  assert.equal(cat('[FREE FOR PROFIT] Type Beat', 'youtube & souncloud only'), 'fnp');
+  // la citation affichée reste juste (positions inchangées)
+  assert.match(r.reasons.map((x) => x.quote).join(' '), /only free for profit on YouTube and SoudCloud/);
+});

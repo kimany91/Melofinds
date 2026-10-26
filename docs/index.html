@@ -2091,8 +2091,8 @@ const FNP = [
   /(?:free|gratuit)\s*[-_]?\s*(?:for|4|pour)?\s*[-_]?\s*(?:non|not)\s*[-_]?\s*(?:profit|commercial|lucratif)/g,
   /\bfnp\b/g,
   /non\s*-?\s*(?:profit|commercial)\s*(?:use\s*)?only/g,
-  /(?:only|uniquement)\s*(?:for\s*|pour\s*)?(?:non\s*-?\s*(?:profit|commercial)|youtube|soundcloud)/g,
-  /free\s*(?:for|on)\s*(?:youtube|soundcloud)(?:\s*(?:and|&|\/)\s*(?:youtube|soundcloud))?\s*only/g,
+  /(?:only|uniquement)\s*(?:for\s*|pour\s*)?(?:non\s*-?\s*(?:profit|commercial)|youtube|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod))/g,
+  /free\s*(?:for|on)\s*(?:youtube|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod))(?:\s*(?:and|&|\/)\s*(?:youtube|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod)))?\s*only/g,
   /not\s*(?:free\s*)?for\s*(?:profit|commercial)/g,
   /(?:pas|non)\s*(?:libre|gratuit)e?\s*(?:pour|en)?\s*(?:usage|utilisation)?\s*commercial/g,
   /usage\s*non\s*-?\s*commercial/g,
@@ -2116,8 +2116,11 @@ const SPOTIFY_NO = [
   // not allowed on spotify / can't upload to spotify
   /(?:not\s*(?:allowed|permitted)|can'?t|cannot|can\s*not|do\s*not|don'?t|forbidden\s*to)\s*(?:to\s*)?(?:upload\w*|releas\w*|put\w*|us\w*|drop\w*|distribut\w*|moneti[sz]\w*)?\s*(?:it\s*|this\s*(?:beat)?\s*)?(?:on|to|for)\s*(?:spotify|streaming|apple\s*music|dsps?|all\s*platforms)/g,
   // free for profit ... youtube only / ffp (soundcloud only)
-  /(?:free\s*(?:for|4)?\s*profit|ffp|f4p)[^.\n]{0,40}(?:youtube|soundcloud|tiktok|instagram)\s*only/g,
-  /(?:only|uniquement|seulement)\s*(?:on|for|sur|pour)\s*(?:youtube|soundcloud|tiktok)/g,
+  /(?:free\s*(?:for|4)?\s*profit|ffp|f4p)[^.\n]{0,40}(?:youtube|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod)|tiktok|instagram)\s*only/g,
+  /(?:only|uniquement|seulement)\s*(?:on|for|sur|pour)\s*(?:youtube|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod)|tiktok)/g,
+  // « only free for profit on youtube and soundcloud », « ffp only for youtube »
+  /(?:only|just|uniquement|seulement)\s*(?:free\s*(?:for|4)?\s*profit|ffp|f4p|monetiz\w*|monetis\w*)\s*(?:on|for|in|sur|pour)\s*(?:youtube|yt|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod)|tiktok|instagram)/g,
+  /(?:free\s*(?:for|4)?\s*profit|ffp|f4p)\s*(?:only|uniquement|seulement)\s*(?:on|for|in|sur|pour)\s*(?:youtube|yt|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod)|tiktok|instagram)/g,
   // pas sur spotify / interdit sur spotify
   /(?:pas|interdit|non\s*autorise)\s*(?:de\s*(?:le\s*)?(?:sortir|mettre|publier)\s*)?(?:sur|pour)\s*(?:spotify|les\s*plateformes|le\s*streaming)/g,
   // contact me before releasing on spotify
@@ -2131,7 +2134,8 @@ const SPOTIFY_NO = [
 // Usage limité à YouTube / SoundCloud / TikTok… = pas libre pour Spotify & co.
 // « soundcloud and youtube only », « youtube & sc only », « only for youtube »,
 // « uniquement youtube et soundcloud », « for non-monetized videos »…
-const PLAT = String.raw`(?:youtube|yt|soundcloud|tiktok|tik\s*tok|instagram|insta|reels?|twitch|facebook|social\s*media|reseaux\s*sociaux)`;
+// SoundCloud, aussi mal écrit (« SoudCloud », « Souncloud »…)
+const PLAT = String.raw`(?:youtube|yt|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod)|tiktok|tik\s*tok|instagram|insta|reels?|twitch|facebook|social\s*media|reseaux\s*sociaux)`;
 const PLAT_LIST = String.raw`${PLAT}(?:\s*(?:,|and|&|\/|\+|-|or|et|ou|n|'n')\s*${PLAT})*`;
 const PLATFORM_ONLY = [
   // « soundcloud and youtube only », « youtube/soundcloud use only », « for youtube videos only »
@@ -2268,7 +2272,10 @@ function findStreamLimit(text) {
 function analyzeLicense(title = '', description = '') {
   const full = `${title}\n${description}`;
   const norm = normalizeWithMap(full);
-  const t = norm.text;
+  // Même longueur, pour garder les positions des citations : « etc.. » / « e.g. » ne
+  // coupent plus une phrase.
+  const t = norm.text
+    .replace(/\b(etc|e\.g|i\.e|ex|vs)\.+/g, (m) => m.replace(/\./g, ' '));
   const titleLen = normalizeWithMap(title).text.length;
   const inTitle = (h) => h.start < titleLen;
   const inDesc = (h) => h.start > titleLen;
@@ -2409,7 +2416,7 @@ function analyzeLicense(title = '', description = '') {
 // tempo, contact… (pour ne pas avoir à lire tout le pavé).
 
 const KEY_LINE_TYPES = [
-  { type: 'licence', re: /spotify|stream|profit|lease|licen[cs]e|licence|commercial|monetiz|monetis|royalty|droits?|purchase|buy\b|acheter|payer|free|gratuit|sold|exclusive|apple\s*music|distrib|youtube\s*only|soundcloud\s*only|untagged/ },
+  { type: 'licence', re: /spotify|stream|profit|lease|licen[cs]e|licence|commercial|monetiz|monetis|royalty|droits?|purchase|buy\b|acheter|payer|free|gratuit|sold|exclusive|apple\s*music|distrib|youtube\s*only|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod)\s*only|untagged/ },
   { type: 'credit', re: /credit|prod\.?\s*(?:by|par)|produced\s*by|tag\b/ },
   { type: 'tempo', re: /\bbpm\b|tempo|\bkey\b|tonalite|scale|\b[a-g](?:#|b)?\s*(?:minor|major|min|maj)\b/ },
   { type: 'contact', re: /contact|e-?mail|@[a-z0-9._-]+\.[a-z]{2,}|business|dm\b|instagram|insta\b/ },
