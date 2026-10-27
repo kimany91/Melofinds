@@ -32,7 +32,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.16.0"
+VERSION = "3.17.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -378,6 +378,97 @@ def licence_tag(lic, limit=None):
             n = 0
         return f"FFP, UPTO {n}" if 0 < n < 10**10 else "FFP, UPTO"
     return None  # payant / inconnu : pas d'étiquette
+
+
+# ---------------------------------------------------------------------------
+# Deuxième vérification de la licence, sur le PC, avec la description COMPLÈTE lue par
+# yt-dlp. L'app juge parfois sur le titre seul (YouTube lui a caché la description) :
+# « [FREE FOR PROFIT] » dans le titre mais « SoundCloud and YT ONLY » / « a license must be
+# purchased for Spotify » dans la description → la prod est rangée en [F], jamais en [FFP].
+
+def _lic_norm(text):
+    t = unicodedata.normalize("NFKC", str(text or ""))
+    t = unicodedata.normalize("NFD", t)
+    t = "".join(c for c in t if not unicodedata.combining(c)).lower()
+    t = t.replace("’", "'").replace("‘", "'")
+    return re.sub(r"\b(etc|e\.g|i\.e|ex|vs)\.+", lambda m: m.group(0).replace(".", " "), t)
+
+
+_PLAT = r"(?:youtube|yt|soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod|sc|tiktok|tik\s*tok|instagram|insta|reels?|twitch|facebook|social\s*media)"
+_PLAT_LIST = rf"{_PLAT}(?:\s*(?:,|and|&|/|\+|or|et|ou|n)\s*{_PLAT})*"
+_FFP_RE = re.compile(r"(?:free|fr33|gratuit)\s*[-_]?\s*(?:to\s*use\s*)?(?:for|4|pour)?\s*[-_]?\s*(?:profit|commercial)\b|\bffp\b|\bf4p\b")
+_LIC_ONLY = [
+    re.compile(rf"\b{_PLAT_LIST}\s*\(?\s*(?:(?:non[\s-]*moneti[sz]ed\s*)?(?:use|usage|videos?|uploads?|placements?|content|moneti[sz]\w*)\s*)?\)?\s*[\"']?\s*(?:only|uniquement|seulement)\b"),
+    re.compile(rf"(?:only|uniquement|seulement|exclusivement)\s*(?:be\s*)?(?:applies\s*to|apply\s*to|allowed\s*(?:on|for)|valid\s*(?:on|for)|use(?:\s*(?:it|this|the\s*beat))?(?:\s*for\s*profit)?\s*(?:on|for|in)|for|on|in|sur|pour|en)\s*(?:non[\s-]*moneti[sz]ed\s*)?{_PLAT_LIST}\b"),
+    re.compile(r"\bnot\s*(?:free\s*)?(?:for\s*profit\s*)?(?:for|on|to)\s*(?:all\s*plat\w*|spotify|streaming|apple\s*music|dsps?|other\s*plat\w*)"),
+    re.compile(r"\b(?:not|n'?est\s*pas)\s*(?:free\s*for\s*profit|ffp)\b"),
+    re.compile(r"(?:spotify|streaming|apple\s*music|dsps?|distribution|plateformes?)\s*[:\-=]?\s*(?:❌|✖|✗|⛔|\U0001f6ab|no\b|non\b|not\s*(?:allowed|permitted))"),
+]
+_LIC_PLATFREE = re.compile(rf"(?:(?:free|gratuit\w*)\s*(?:for|4)?\s*(?:profit\s*)?(?:to\s*use\s*)?(?:use\s*)?(?:(?:on|for|in|sur|pour)\s*(?:the\s*)?|[(\[]\s*)){_PLAT_LIST}\b")
+_LIC_NONPROFIT = re.compile(r"\bnon\s*-?\s*(?:profit|commercial\w*|commerciaux|lucrati\w*)\b")
+_LIC_BROAD = re.compile(r"spotify|apple\s*music|itunes|deezer|tidal|amazon\s*music|all\s*plat\w*|toutes?\s*les\s*plateformes|streaming|dsps?\b|distrib")
+_LIC_RESTRICT_WORDS = re.compile(r"\bonly\b|uniquement|seulement|\bnot\b|n't|\bno\b|\bpas\b|purchase|\bbuy|lease|licen[cs]e|\bneed|\bmust|\bpay|acheter|payer|sauf|except")
+_LIC_REQ = [
+    re.compile(r"(?:licen[cs]e|lease|beat)\s*(?:must|has\s*to|have\s*to|needs?\s*to|should|is\s*to)\s*be\s*(?:purchased|bought|acquired|obtained|leased)"),
+    re.compile(r"(?:licen[cs]e|lease)\s*(?:is\s*)?(?:required|needed|necessary|mandatory)"),
+    re.compile(r"\b(?:purchase|buy|grab|get|acquire)\s*(?:a|an|the|my|this|our)?\s*(?:paid\s*)?(?:lease|licen[cs]e|beat)\b"),
+    re.compile(r"\bpaid\s*(?:lease|licen[cs]e)\b|(?:=|->|→)\s*(?:a\s*)?(?:lease|licen[cs]e)\b"),
+    re.compile(r"\b(?:must|need(?:s)?(?:\s*to)?|have\s*to|has\s*to|will\s*need\s*to|gotta|required\s*to|please)\s*(?:to\s*)?(?:purchase|buy|lease|pay|acquire)\b"),
+    re.compile(r"(?:veuillez|merci\s*d'?|vous\s*devez|tu\s*dois|il\s*faut|faut|obligation\s*d'?)\s*(?:l'?\s*)?(?:acheter|payer|louer|prendre\s*une\s*licence)"),
+    re.compile(r"achat\s*(?:d'?\s*une\s*|de\s*(?:la\s*)?)?(?:licence\s*)?obligatoire"),
+]
+_LIC_TARGET = re.compile(r"spotify|apple\s*music|itunes|deezer|tidal|amazon\s*music|stre+aming|all\s*plat\w*|other\s*plat\w*|any\s*plat\w*|plateformes?|dsps?\b|distrib\w*|distrokid|tunecore|for\s*profit|commercial\w*|moneti[sz]\w*|monetis\w*|lucrati\w*|any\s*(?:other\s*)?use|toutes?\s*autres?\s*utilisations?|toute\s*utilisation")
+_LIC_SOFT = re.compile(r"recommend|recommande|optional|optionnel|to\s*be\s*(?:100\s*%\s*)?(?:safe|sure)|support\s*(?:me|the\s*channel)")
+_LIC_NO_NEED = re.compile(r"no\s*(?:need|lease|licen[cs]e)|without\s*(?:a\s*)?(?:lease|licen[cs]e|buying|paying)|don'?t\s*(?:need|have)\s*to|pas\s*besoin|sans\s*(?:pay|achet|licen|rien\s*payer)|not\s*required")
+_LIC_SENT = re.compile(r"[^.!?\n•▷○|]+")
+
+
+def licence_restriction(text):
+    """Phrase de la description qui interdit Spotify & co sans payer, ou None."""
+    t = _lic_norm(text)
+    for rx in _LIC_ONLY:
+        m = rx.search(t)
+        if m and not re.search(r"\bnot\s*$", t[max(0, m.start() - 6):m.start()]):
+            return m.group(0)
+    for m in _LIC_PLATFREE.finditer(t):
+        sent = next((s.group(0) for s in _LIC_SENT.finditer(t) if s.start() <= m.start() < s.end()), m.group(0))
+        if not (_LIC_BROAD.search(sent) and not _LIC_RESTRICT_WORDS.search(sent)):
+            return m.group(0)
+    for m in _LIC_NONPROFIT.finditer(t):
+        before = t[max(0, m.start() - 22):m.start()]
+        after = t[m.end():m.end() + 22]
+        if re.search(r"(?:profit|commercial|lucratif)\s*(?:or|and|&|/|ou|et)\s*(?:for\s*|pour\s*)?$", before):
+            continue
+        if re.match(r"\s*(?:or|and|&|/|ou|et)\s*(?:for\s*|pour\s*)?(?:profit|commercial|lucratif)", after):
+            continue
+        return m.group(0)
+    for s in _LIC_SENT.finditer(t):
+        sent = s.group(0)
+        if not _LIC_TARGET.search(sent) or _LIC_SOFT.search(sent) or _LIC_NO_NEED.search(sent):
+            continue
+        for rx in _LIC_REQ:
+            m = rx.search(sent)
+            if m:
+                return sent.strip()[:160]
+    return None
+
+
+def check_licence(title, desc, lic, limit=None):
+    """Licence envoyée par l'app, revue avec la description complète → (licence, limite, raison).
+    Ne rend jamais une prod plus « libre » que l'app ne l'a dit, sauf une prod que l'app n'a
+    pas pu lire (licence inconnue) et que la description dit clairement free for profit."""
+    lic = str(lic or "")
+    desc = str(desc or "")
+    if not desc.strip() or lic in ("fnp", "paid"):
+        return lic, limit, None
+    why = licence_restriction(desc)
+    if why and lic in ("ffp", "upto", "unknown", ""):
+        return "fnp", None, why
+    if lic in ("unknown", "") and not why:
+        d = _lic_norm(desc)
+        if _FFP_RE.search(d) and not re.search(r"up\s*-?\s*to|\bmax|limit|\bfirst\s*\d|after\s*\d|streams?\b", d):
+            return "ffp", None, "free for profit dans la description"
+    return lic, limit, None
 
 
 def build_name(title, key=None, bpm=None, lic=None, limit=None, tb_key=False, tb_bpm=False):
@@ -947,7 +1038,10 @@ def download(video_id, root, info, out=None, progress=None):
         if hit and not bpm and hit.get("bpm"):
             bpm, tb_b = hit["bpm"], True
     # Chaque prod arrive dans son propre dossier de projet : « Nom/Nom.wav »
-    final = unique_project(root, build_name(vt or info.get("t") or video_id, key, bpm, info.get("lic"), info.get("limit"), tb_k, tb_b))
+    lic, limit, why = check_licence(vt, desc, info.get("lic"), info.get("limit"))
+    if lic != str(info.get("lic") or "") and out is not None:
+        out["lic"] = {"from": str(info.get("lic") or ""), "to": lic, "why": str(why or "")[:160]}
+    final = unique_project(root, build_name(vt or info.get("t") or video_id, key, bpm, lic, limit, tb_k, tb_b))
     if not inside(final, root) or final.suffix.lower() != ".wav" or final.parent.parent.resolve() != Path(root).resolve():
         return False, "nom de fichier refusé"
 

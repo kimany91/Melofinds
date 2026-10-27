@@ -623,8 +623,14 @@ body.mobile .pc-head ~ #openVerify { margin-left: 0; }
 .pc-status span { font-size: 13px; color: var(--muted); }
 .pc-led { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--faint); }
 .pc-status.ok .pc-led { background: var(--ffp); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ffp) 25%, transparent); }
-.pc-list { display: grid; gap: 8px; }
+.pc-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
 .pc-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); }
+/* Ligne de la file : un appui ouvre la fiche de la prod ; ✕ l'annule */
+.pc-row-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.pc-row-open .pc-row-main b { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.pcq-x { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--panel-3); color: var(--muted); cursor: pointer; }
+.pcq-x svg { width: 15px; height: 15px; }
+.pcq-x:hover, .pcq-x:focus-visible { color: var(--paid); border-color: var(--paid); }
 .pc-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pc-row-main b { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pc-row-main span { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -712,7 +718,8 @@ body.mobile .mini-rec { padding: 9px; }
 body.mobile .nav-lg { display: none; }
 body.mobile .nav-sm { display: inline; }
 #view-pc { overflow-wrap: anywhere; min-width: 0; overflow-x: clip; }
-.pc-live { display: grid; gap: 12px; min-width: 0; }
+.pc-live { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.pc-live > *, .pcq-sec { min-width: 0; }
 .pc-status > div { min-width: 0; }
 .pc-sync { display: grid; gap: 8px; margin: 2px 0 10px; padding: 12px 14px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); }
 .pcs-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
@@ -735,9 +742,10 @@ body.mobile .nav-sm { display: inline; }
 .pcq-sec h4 { margin: 4px 0 8px; font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
 .pcq-empty { margin: 0; }
 .pcq-n { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--panel-3); color: var(--muted); font: 700 12px var(--f-mono); }
-.pcq-cur { display: grid; gap: 3px; padding: 14px 16px; border-radius: 16px; background: color-mix(in srgb, var(--accent) 10%, var(--panel-2)); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.pcq-cur { display: grid; gap: 3px; width: 100%; min-width: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; padding: 14px 16px; border-radius: 16px; background: color-mix(in srgb, var(--accent) 10%, var(--panel-2)); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); }
 .pcq-k { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); font-weight: 800; }
-.pcq-cur b { font-size: 15px; }
+.pcq-cur b { font-size: 15px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.pcq-bar { display: block; }
 .pcq-cur span:not(.pcq-k) { font-size: 13px; color: var(--muted); }
 .pcq-bar { position: relative; height: 6px; margin-top: 8px; border-radius: 3px; background: var(--panel-3); overflow: hidden; }
 .pcq-bar i { position: absolute; inset: 0 auto 0 0; width: 35%; border-radius: 3px; background: var(--grad); animation: pcq-slide 1.4s var(--ease) infinite; }
@@ -958,7 +966,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 26/10/2026 à 20:38</p>
+    <p class="build-stamp">Version du 27/10/2026 à 09:25</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -3649,8 +3657,8 @@ function toggleSaved(item) {
     state.beats = state.beats.filter((b) => b.id !== item.id);
     toast('Retirée des favoris');
   } else {
-    const { id, url, title, description, views, viewCount, likeCount, age, status } = item;
-    state.beats = [{ id, url, title, description, views, viewCount, likeCount, age, status, savedAt: new Date().toISOString() }, ...state.beats];
+    const { id, url, title, description, views, viewCount, likeCount, age, status, partial } = item;
+    state.beats = [{ id, url, title, description, views, viewCount, likeCount, age, status, partial, savedAt: new Date().toISOString() }, ...state.beats];
     toast('Ajoutée aux favoris', { label: 'Voir', run: () => { showView('saved'); setSeg('prods'); } });
   }
   persist.save('beats');
@@ -6312,6 +6320,10 @@ function listenPc() {
     }
     const id = String(m.v || '');
     if (!/^[\w-]{11}$/.test(id)) return;
+    if (m.cancel) {  // le PC a bien sauté la prod annulée
+      if (pc.queue[id] && pc.queue[id].state !== 'done' && (pc.queue[id].lastSent || 0) <= (d.time || 0) * 1000 + 5000) { delete pc.queue[id]; savePc(); syncPcUi(); }
+      return;
+    }
     const cur = pc.queue[id] || { t: id, at: (d.time || 0) * 1000 };
     // Réponse à un envoi plus ancien (relue au rechargement de la page) : on l'ignore,
     // sinon une vieille réponse « téléchargée » validerait un nouvel envoi pas encore fait.
@@ -6328,18 +6340,59 @@ function listenPc() {
         if (it) refreshItem(it);
       }
     }
-    pc.queue[id] = { ...cur, state: m.ok ? 'done' : 'error', file: m.file ? String(m.file) : cur.file, err: m.err ? String(m.err) : null };
+    pc.queue[id] = { ...cur, state: m.ok ? 'done' : 'error', file: m.file ? String(m.file) : cur.file, err: m.err ? String(m.err) : null, ...(m.lic ? { lic: String(m.lic) } : {}) };
     if (pc.cur?.v === id) pc.cur = null;
     pc.info = { ...(pc.info || {}), at: Math.max(pc.info?.at || 0, (d.time || 0) * 1000) };
     local.set('pcInfo', pc.info);
     savePc();
     syncPcUi();
     if (fresh && was !== pc.queue[id].state) {
-      toast(m.ok ? (m.deja ? `Déjà sur ton PC : ${String(m.file || displayTitle(cur.t)).slice(0, 80)}` : `Sur ton PC : ${displayTitle(cur.t)}`)
+      toast(m.ok ? (m.deja ? `Déjà sur ton PC : ${String(m.file || displayTitle(cur.t)).slice(0, 80)}` : m.lic === 'fnp' ? `Sur ton PC : ${displayTitle(cur.t)} · le PC a lu toute la description : pas libre pour Spotify, rangée en [F]` : `Sur ton PC : ${displayTitle(cur.t)}`)
         : `Le PC n’a pas pu télécharger : ${String(m.err || '').slice(0, 80)}`);
     }
   };
   es.onerror = () => { /* EventSource se reconnecte tout seul */ };
+}
+
+// Fiche gardée avec chaque envoi : on peut l'ouvrir depuis la file d'attente, même après
+// une autre recherche ou un rechargement de la page.
+function pcSnapshot(item, id) {
+  const pick = ({ url, title, description, views, viewCount, likeCount, age, partial, status, duration, channel, channelId, channelAvatar }) =>
+    ({ id, url: url || `https://www.youtube.com/watch?v=${id}`, title, description: String(description || '').slice(0, 2500), views, viewCount, likeCount, age, partial, status, duration, channel, channelId, channelAvatar });
+  return pick(item || {});
+}
+function pcQueueItem(id, q) {
+  return session?.items?.get(id) || state.beats.find((b) => b.id === id)
+    || (q?.it ? { ...q.it } : { id, url: `https://www.youtube.com/watch?v=${id}`, title: q?.t || id, description: '', status: 'unread' });
+}
+function openPcQueueItem(id) {
+  openBeat(pcQueueItem(id, pc.queue[id]), session?.plan || null);
+}
+async function cancelPc(id) {
+  const q = pc.queue[id];
+  if (!q) return;
+  const back = { ...q };
+  if (q.state === 'unsent') delete pc.queue[id];  // jamais partie : rien à dire au PC
+  else {
+    pc.queue[id] = { ...q, state: 'cancel' };
+    try { await ntfyPublish({ cancel: id }); delete pc.queue[id]; } catch { /* partira avec le réseau (resendPending) */ }
+  }
+  if (pc.cur?.v === id) pc.cur = null;
+  savePc();
+  syncPcUi();
+  const old = pc.info?.version && versionLt(pc.info.version, '3.17.0');
+  toast(old ? `Retirée de la file. Ton PC (${pc.info.version}) ne sait pas encore annuler : mets-le à jour` : 'Retirée de la file d’attente', { label: 'Annuler', run: () => sendToPc(pcQueueItem(id, back)) });
+}
+function pcQueueRow([id, q], n) {
+  const waiting = q.state === 'sent' || q.state === 'unsent' || q.state === 'sending';
+  const sub = q.state === 'done' ? pcName(String(q.file || 'Sur ton PC').replace(/\.wav$/i, ''))
+    : q.state === 'error' ? (q.err || 'Erreur') : q.state === 'unsent' ? 'Partira dès que tu as du réseau' : pcOn() ? 'En file d’attente sur le PC' : 'Arrivera dès que le PC se rallume';
+  return h('div', { class: `pc-row ${q.state}` },
+    h('button', { type: 'button', class: 'pc-row-open', 'aria-label': `Fiche de « ${displayTitle(q.t || id)} »`, onclick: () => openPcQueueItem(id) },
+      n != null ? h('span', { class: 'pcq-n' }, String(n + 1)) : h('span', { class: 'pc-ico' }, icon(q.state === 'done' ? 'check' : q.state === 'error' ? 'x' : 'clock')),
+      h('span', { class: 'pc-row-main' }, h('b', {}, displayTitle(q.t || id)), h('span', {}, sub))),
+    waiting ? h('button', { type: 'button', class: 'pcq-x', 'aria-label': 'Annuler', title: 'Annuler', onclick: () => cancelPc(id) }, icon('x'))
+      : q.state === 'error' ? h('button', { type: 'button', class: 'ghost sm', onclick: () => sendToPc(pcQueueItem(id, q)) }, 'Renvoyer') : null);
 }
 
 async function sendToPc(item) {
@@ -6353,7 +6406,7 @@ async function sendToPc(item) {
   // Licence → étiquette du fichier sur le PC : [FFP], [F] ou [FFP, UPTO 5000]
   const msg = { v: id, t: String(item.title || '').slice(0, 200), bpm: r?.bpm || null, key: r?.key || null, tbBpm: r?.bpmTb || undefined, tbKey: r?.keyTb || undefined,
     lic: r?.license?.category || null, limit: r?.license?.limit || null, force: pc.queue[id]?.state === 'error' || undefined };
-  pc.queue[id] = { t: item.title || id, at: Date.now(), lastSent: Date.now(), state: 'sending', msg };
+  pc.queue[id] = { t: item.title || id, at: Date.now(), lastSent: Date.now(), state: 'sending', msg, it: pcSnapshot(item, id) };
   syncPcUi();
   try {
     await ntfyPublish(msg);
@@ -6379,9 +6432,14 @@ async function resendPending() {
   if (!WEB || !pc.info || resending || !navigator.onLine) return;
   resending = true;
   try {
-    const todo = Object.entries(pc.queue).filter(([, q]) => q.state === 'unsent' || (q.state === 'sent' && Date.now() - (q.lastSent || q.at || 0) > 10 * 3600e3)).slice(0, 25);
+    const todo = Object.entries(pc.queue).filter(([, q]) => q.state === 'unsent' || q.state === 'cancel' || (q.state === 'sent' && Date.now() - (q.lastSent || q.at || 0) > 10 * 3600e3)).slice(0, 25);
     for (const [id, q] of todo) {
       try {
+        if (q.state === 'cancel') {
+          await ntfyPublish({ cancel: id });
+          delete pc.queue[id];
+          continue;
+        }
         await ntfyPublish({ ...(q.msg || { v: id, t: String(q.t || '').slice(0, 200) }), force: undefined });
         pc.queue[id] = { ...q, state: 'sent', lastSent: Date.now() };
       } catch { break; }
@@ -6392,15 +6450,16 @@ async function resendPending() {
 }
 
 const PC_LABEL = { sending: 'Envoi…', sent: 'En file d’attente pour ton PC', unsent: 'Partira dès que tu as du réseau', done: 'Sur ton PC', error: 'Erreur' };
+const pcState = (id) => (pc.queue[id]?.state === 'cancel' ? '' : pc.queue[id]?.state || '');
 function pcButton(item) {
   const id = ytIdOf(item);
-  const st = pc.queue[id]?.state || '';
+  const st = pcState(id);
   return h('button', { type: 'button', class: `pc-btn${st ? ` ${st}` : ''}`, 'data-pc': id, 'aria-label': st ? PC_LABEL[st] : 'Télécharger sur mon PC', title: st ? PC_LABEL[st] : 'Télécharger sur mon PC',
     onclick: (e) => { e.stopPropagation(); sendToPc(item); } }, icon(st === 'done' ? 'check' : 'down'));
 }
 function syncPcUi() {
   $$('.pc-btn[data-pc]').forEach((b) => {
-    const st = pc.queue[b.dataset.pc]?.state || '';
+    const st = pcState(b.dataset.pc);
     b.className = `pc-btn${st ? ` ${st}` : ''}`;
     const label = st ? PC_LABEL[st] : 'Télécharger sur mon PC';
     b.setAttribute('aria-label', label);
@@ -6430,13 +6489,10 @@ function pcStatusText(short) {
 function renderPcStatus() {
   const st = pcStatusText();
   $('#pcStatus').replaceChildren(h('div', { class: `pc-status${st.ok ? ' ok' : ''}${st.off ? ' off' : ''}` }, h('span', { class: 'pc-led', 'aria-hidden': 'true' }), h('div', {}, h('b', {}, st.t), h('span', {}, st.s))));
-  const list = Object.entries(pc.queue).sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 30);
+  const list = Object.entries(pc.queue).filter(([, q]) => q.state !== 'cancel').sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 30);
   const box = $('#pcList');
   if (!box) return;
-  box.replaceChildren(...(list.length ? list.map(([id, q]) => h('div', { class: `pc-row ${q.state}` },
-    h('span', { class: 'pc-ico' }, icon(q.state === 'done' ? 'check' : q.state === 'error' ? 'x' : 'clock')),
-    h('div', { class: 'pc-row-main' }, h('b', {}, displayTitle(q.t || id)), h('span', {}, q.state === 'done' ? (q.file || 'Téléchargée') : q.state === 'error' ? (q.err || 'Erreur') : q.state === 'unsent' ? 'Partira dès que tu as du réseau' : pcOn() ? 'Le PC s’en occupe…' : 'En file d’attente : arrivera dès que le PC se rallume')),
-    q.state !== 'done' ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc({ id, url: `https://www.youtube.com/watch?v=${id}`, title: q.t }) }, 'Renvoyer') : null))
+  box.replaceChildren(...(list.length ? list.map((e) => pcQueueRow(e))
     : [h('p', { class: 'muted' }, 'Aucune prod envoyée pour l’instant. Touche ', icon('down'), ' sur une prod.')]));
 }
 
@@ -7010,19 +7066,15 @@ function renderPcView() {
   const waiting = Object.entries(pc.queue).filter(([id, q]) => (q.state === 'sent' || q.state === 'unsent' || q.state === 'sending') && id !== pc.cur?.v)
     .sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
   const recent = Object.entries(pc.queue).filter(([, q]) => q.state === 'done' || q.state === 'error').sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 3);
-  const row = ([id, q], n) => h('div', { class: `pc-row ${q.state}` },
-    n != null ? h('span', { class: 'pcq-n' }, String(n + 1)) : h('span', { class: 'pc-ico' }, icon(q.state === 'done' ? 'check' : 'x')),
-    h('div', { class: 'pc-row-main' }, h('b', {}, displayTitle(q.t || id)),
-      h('span', {}, q.state === 'done' ? pcName(String(q.file || 'Sur ton PC').replace(/\.wav$/i, '')) : q.state === 'error' ? (q.err || 'Erreur') : q.state === 'unsent' ? 'Partira dès que tu as du réseau' : pcOn() ? 'En file d’attente sur le PC' : 'Arrivera dès que le PC se rallume')),
-    q.state !== 'done' ? h('button', { type: 'button', class: 'ghost sm', onclick: () => sendToPc({ id, url: `https://www.youtube.com/watch?v=${id}`, title: q.t }) }, 'Renvoyer') : null);
+  const row = pcQueueRow;
   const old = pc.info?.version && versionLt(pc.info.version, '3.11.0');
   $('#pcLive').replaceChildren(...[
     h('div', { class: `pc-status${st.ok ? ' ok' : ''}${st.off ? ' off' : ''}` }, h('span', { class: 'pc-led', 'aria-hidden': 'true' }), h('div', {}, h('b', {}, st.t), h('span', {}, st.s))),
     !pc.info ? h('div', { class: 'actions' }, h('button', { type: 'button', class: 'primary', onclick: () => openPcSetup() }, 'Connecter mon PC')) : null,
     old ? h('div', { class: 'pc-old' }, h('div', {}, h('b', {}, `Ton PC a la version ${pc.info.version}`),
       h('span', {}, 'Mets-le à jour : tes projets et la dernière version de chacun arrivent alors tout seuls sur ce téléphone, écoutables même PC éteint.')), pcUpdateBtn()) : null,
-    pc.cur ? h('div', { class: 'pcq-cur' }, h('span', { class: 'pcq-k' }, 'En cours'), h('b', {}, displayTitle(pc.cur.t)),
-      h('span', {}, `Téléchargement et conversion en WAV sur ton PC${pc.cur.left ? ` · +${pc.cur.left} derrière` : ''}`), h('div', { class: 'pcq-bar' }, h('i'))) : null,
+    pc.cur ? h('button', { type: 'button', class: 'pcq-cur', 'aria-label': `Fiche de « ${displayTitle(pc.cur.t)} »`, onclick: () => openPcQueueItem(pc.cur.v) }, h('span', { class: 'pcq-k' }, 'En cours'), h('b', {}, displayTitle(pc.cur.t)),
+      h('span', {}, `Téléchargement et conversion en WAV sur ton PC${pc.cur.left ? ` · +${pc.cur.left} derrière` : ''}`), h('span', { class: 'pcq-bar' }, h('i'))) : null,
     waiting.length ? h('div', { class: 'pcq-sec' }, h('h4', {}, `En attente · ${waiting.length}`), h('div', { class: 'pc-list' }, waiting.map((e, n) => row(e, n)))) : null,
     !pc.cur && !waiting.length && pc.info ? h('p', { class: 'hint pcq-empty' }, 'Rien en cours ni en attente. Touche ', icon('down'), ' sur une prod pour l’envoyer sur ton PC.') : null,
     recent.length ? h('div', { class: 'pcq-sec' }, h('h4', {}, 'Dernières arrivées'), h('div', { class: 'pc-list' }, recent.map((e) => row(e)))) : null,

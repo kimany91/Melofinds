@@ -141,6 +141,11 @@ ouvre le site dans Chrome) :
 - Nom du fichier : `Titre [Clé, BPM] [Licence].wav`, avec la licence lue par l'app :
   `[FFP]` (free for profit), `[F]` (free) ou `[FFP, UPTO 5000]` ; le titre YouTube est
   nettoyé de ses « FREE », « free for profit », « FFP »…
+- **Licence revérifiée par le PC** (3.17) : il lit la description complète avec yt-dlp.
+  Si elle limite à YouTube / SoundCloud, exige une licence pour Spotify & co ou parle
+  d'usage non lucratif, la prod est rangée en `[F]` même si l'app disait free for profit
+  (titre « FREE FOR PROFIT », description que YouTube lui avait cachée). Une prod que l'app
+  n'avait pas pu lire passe en `[FFP]` si la description le dit clairement.
 - Clé ou BPM manquants : le PC les cherche sur Tunebat et les range à part dans le nom :
   `Titre [C# min] [TB 150 BPM] [FFP].wav`, `Titre [TB C# min, 150 BPM].wav`. Ce que tu as
   précisé ou ce que dit la description passe toujours avant Tunebat. FLmake utilise aussi
@@ -182,6 +187,10 @@ de la chaîne (quelques unités de quota seulement) ; sans clé : la page de la 
 
 - **En cours** : la prod que le PC télécharge en ce moment ; **En attente** : celles qui
   attendent leur tour (ou que le PC recevra en se rallumant) ; **Dernières arrivées**.
+  Un appui sur une prod ouvre **sa fiche** (licence, description, lien de la vidéo YouTube
+  d'origine). **✕ annule** une prod en attente : le PC la saute (PC 3.17 ou plus), même si
+  l'annulation arrive pendant qu'il télécharge la précédente. « Annuler » dans le message
+  la remet dans la file.
 - **Sur ton PC** : tous les projets du dossier des projets, en cartes à leur couleur et
   avec leur icône. Clé / BPM (en bleu si trouvés avec Tunebat), licence, favori ★.
   **Renommer** (tout le projet, comme dans le panneau du PC), **Icône et couleur**.

@@ -322,6 +322,18 @@ class Remote:
         self.st["known"] = {k: v for k, v in known.items() if k in cur}
 
 
+def note_cancels(cancels, msgs):
+    """Retient les prods annulées depuis l'app : {id vidéo: heure de l'annulation}.
+    Un envoi plus ancien que l'annulation est sauté ; un nouvel envoi (« Renvoyer ») passe."""
+    for ev, msg in msgs:
+        vid = str((msg or {}).get("cancel") or "")
+        if C.VIDEO_ID.match(vid):
+            cancels[vid] = max(cancels.get(vid, 0), int(ev.get("time") or time.time()))
+    if len(cancels) > 300:
+        for k in sorted(cancels, key=cancels.get)[:-300]:
+            cancels.pop(k, None)
+
+
 def phone_targets(fmap):
     """Le son de chaque projet que le téléphone garde : la dernière version, sinon l'instru,
     sinon ton export le plus récent (jamais un enregistrement ou un sample de FL)."""
@@ -380,6 +392,10 @@ def _handle(msg, code, d, root, cfg, st, recent, seen, done, left, remote=None):
         log(traceback.format_exc())
         ok, detail = False, f"erreur inattendue : {e}"[:200]
     log(f"  {'OK' if ok else 'Erreur'} : {detail}")
+    if ok and got.get("lic"):
+        fix = got["lic"]
+        log(f"  Licence revue avec la description complète : {fix['from'] or '?'} → {fix['to']}"
+            + (f" (« {fix['why']} »)" if fix.get("why") else ""))
     flp = fl = None
     if ok:
         done.add(vid)
@@ -404,7 +420,8 @@ def _handle(msg, code, d, root, cfg, st, recent, seen, done, left, remote=None):
                              "device": d.get("name", ""), **({"flp": flp} if flp else {})})
     st["history"] = st["history"][:50]
     show_progress(None)
-    C.reply(code, {"v": vid, "ok": ok, "file" if ok else "err": detail, **({"tb": got["tb"]} if ok and got.get("tb") else {})})
+    C.reply(code, {"v": vid, "ok": ok, "file" if ok else "err": detail, **({"tb": got["tb"]} if ok and got.get("tb") else {}),
+                   **({"lic": got["lic"]["to"]} if ok and got.get("lic") else {})})
     if ok and remote is not None and Remote.enabled(cfg):
         # la nouvelle prod est gardée sur le téléphone : écoutable même quand le PC sera éteint
         try:
@@ -514,6 +531,9 @@ def worker(once=False):
                         announced.discard(code)  # se réannoncer quand le réseau revient
                         break
                     msgs = [(ev, C.verify(ev.get("message") or "", key)) for ev in events]
+                    cancels = st.setdefault("cancel", {})
+                    note_cancels(cancels, msgs)
+                    peeked = time.time()
                     for n, (ev, msg) in enumerate(msgs):
                         since = ev.get("id") or since
                         st["since"][code] = since
@@ -522,9 +542,28 @@ def worker(once=False):
                             continue
                         if msg["n"] in seen:
                             continue
+                        if msg.get("cancel"):  # « Annuler » dans la file d'attente de l'app
+                            seen.add(msg["n"])
+                            vid = str(msg.get("cancel") or "")
+                            if C.VIDEO_ID.match(vid):
+                                C.reply(code, {"v": vid, "cancel": True})
+                            continue
+                        vid = str(msg.get("v") or "")
+                        if vid and time.time() - peeked > 3 and msgs[-1][0].get("id"):
+                            # une annulation envoyée pendant le téléchargement d'avant
+                            try:
+                                note_cancels(cancels, [(e, C.verify(e.get("message") or "", key)) for e in C.poll(code, msgs[-1][0]["id"])])
+                            except NET_ERRORS:
+                                pass
+                            peeked = time.time()
+                        if vid in cancels and cancels[vid] >= (ev.get("time") or 0):
+                            seen.add(msg["n"])
+                            log(f"Annulée depuis l'app : {msg.get('t') or vid}")
+                            C.reply(code, {"v": vid, "cancel": True})
+                            continue
                         # prods qui attendent derrière celle-ci (file d'attente du panneau)
-                        left = [C.clean_title(m.get("t") or m.get("v"))[:120] for _, m in msgs[n + 1:]
-                                if m and m.get("v") and m["n"] not in seen]
+                        left = [C.clean_title(m.get("t") or m.get("v"))[:120] for e2, m in msgs[n + 1:]
+                                if m and m.get("v") and m["n"] not in seen and not (str(m.get("v")) in cancels and cancels[str(m.get("v"))] >= (e2.get("time") or 0))]
                         try:
                             fl = _handle(msg, code, d, root, cfg, st, recent, seen, done, left, remote)
                         except Exception:

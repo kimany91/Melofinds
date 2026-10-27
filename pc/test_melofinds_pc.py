@@ -1148,3 +1148,92 @@ class AppWebAJourEtVersions(unittest.TestCase):
         r2 = W.Remote(st)  # programme redémarré (mise à jour) : il se souvient des 15 Mo envoyés
         self.assertFalse(r2._budget(1_000_000 + W.Remote.LIB_RESERVE))
         self.assertTrue(r2._budget(1_000_000))  # la liste et les sons demandés passent encore
+
+
+class LicenceEtAnnulation(unittest.TestCase):
+    """Le PC relit la licence avec la description complète, et saute les prods annulées dans l'app."""
+    CODE = Reconnexion.CODE
+    LUCKI = ("IMPORTANT: This beat is free for profit use on SOUNDCLOUD and YT ONLY. \n\n"
+             "You MUST GIVE ME CREDIT either in the title or the credit section.\n \n"
+             "⚠️A License Must Be Purchased To Use For Profit (Streaaming Services, SPOTIFY,APPLE MUSIC, DEEZER etc.)\n\nBPM 148 F# MIN")
+    setUp = Reconnexion.setUp
+    tearDown = Reconnexion.tearDown
+
+    def test_free_for_profit_du_titre_corrige(self):
+        t = '/FREE FOR PROFIT/ lucki type beat "city lights"'
+        self.assertEqual(mpc.check_licence(t, self.LUCKI, "ffp")[0], "fnp")
+        self.assertEqual(mpc.check_licence(t, self.LUCKI.split("\n\n")[-2], "ffp")[0], "fnp")  # la ligne « license must be purchased » seule
+        self.assertEqual(mpc.check_licence(t, self.LUCKI, "unknown")[0], "fnp")
+        self.assertEqual(mpc.build_name(t, "F# min", 148, "fnp"), "lucki type beat 'city lights' [F# min, 148 BPM] [F]")
+        for d in ("This beat is free for profit ONLY on youtube and soundcloud.",
+                  "Free for profit for Youtube or Soundcloud placement.",
+                  "Free for profit and you can use the beat in youtube monetization only !",
+                  "\"FREE FOR PROFIT\" only applies to YouTube and soundcloud.",
+                  "This beat is NOT free for all plats. You can only use for profit on Soundcloud and YouTube.",
+                  "Purchase a lease to distribute your music on platforms like Spotify and Apple Music.",
+                  "Ce beat est GRATUIT pour un usage NON LUCRATIF"):
+            self.assertEqual(mpc.check_licence("[FREE FOR PROFIT] Type Beat", d, "ffp")[0], "fnp", d)
+
+    def test_vrais_free_for_profit_gardes(self):
+        for d in ("This beat is free for profit on all platforms! You must credit me in the title (prod. BEAN!)",
+                  "FREE FOR PROFIT. Purchase a lease for the untagged WAV: bsta.rs/x",
+                  "Free for profit on all platforms (Spotify, Apple Music, YouTube). Buy the exclusive rights here.",
+                  "[FREE FOR PROFIT] - this means you can use it for profit or nonprofit purposes such as spotify, soundcloud, youtube, etc.",
+                  "This beat is free to use on all platforms as long as you credit me but if you want to be 100% sure "
+                  "that your song won't get taken down, or if your distributor requires a license for the beat then i recommend buying lease",
+                  "Free for commercial and non-commercial use"):
+            self.assertEqual(mpc.check_licence("[FREE FOR PROFIT] Type Beat", d, "ffp")[0], "ffp", d)
+        # l'app n'avait pas pu lire la description : le PC la lit et confirme
+        self.assertEqual(mpc.check_licence("[FREE FOR PROFIT] Type Beat", "FREE FOR PROFIT, just credit (prod. x)", "unknown")[0], "ffp")
+        self.assertEqual(mpc.check_licence("Type Beat", "free for profit up to 5k streams", "unknown")[0], "unknown")
+        self.assertEqual(mpc.check_licence("Type Beat", "", "ffp")[0], "ffp")  # rien à relire
+
+    def test_corpus_de_vraies_descriptions(self):
+        cases = json.loads((Path(__file__).parent.parent / "test" / "fixtures" / "real-licenses.json").read_text(encoding="utf-8"))
+        for c in cases:
+            got = mpc.check_licence(c["title"], c["desc"], "ffp")[0]
+            if c["cat"] in ("ffp", "upto"):
+                self.assertEqual(got, "ffp", c["title"])  # jamais déclassée à tort
+        bad = [c["title"] for c in cases if c["cat"] in ("fnp", "paid") and mpc.check_licence(c["title"], c["desc"], "ffp")[0] != "fnp"]
+        # seules restent les prods « [FREE] » sans restriction écrite (l'app les range déjà en Free)
+        self.assertLessEqual(len(bad), 2, bad)
+
+    def test_prod_annulee_sautee(self):
+        e = lambda i, t, m: {"id": i, "time": t, "event": "message", "message": json.dumps(m)}
+        now = int(time.time())
+        events = [e("e1", now - 30, {"mf": 2, "n": "1" * 16, "v": "jNQXAC9IVRw", "t": "Prod A"}),
+                  e("e2", now - 20, {"mf": 2, "n": "2" * 16, "v": "dQw4w9WgXcQ", "t": "Prod B"}),
+                  e("e3", now - 10, {"mf": 2, "n": "3" * 16, "cancel": "jNQXAC9IVRw"})]
+        got = []
+        with mock.patch.object(mpc, "poll", lambda c, s: events if s != "e3" else []), \
+                mock.patch.object(mpc, "verify", lambda raw, key: json.loads(raw)), \
+                mock.patch.object(mpc, "download", lambda vid, root, msg, out, prog: (got.append(vid), (False, "test"))[1]):
+            W.worker(once=True)
+        self.assertEqual(got, ["dQw4w9WgXcQ"])  # A annulée, B téléchargée
+        self.assertIn({"v": "jNQXAC9IVRw", "cancel": True}, self.replies)
+        # renvoyée après l'annulation : elle repart
+        events[:] = [e("e4", now + 5, {"mf": 2, "n": "4" * 16, "v": "jNQXAC9IVRw", "t": "Prod A"})]
+        with mock.patch.object(mpc, "poll", lambda c, s: events if s != "e4" else []), \
+                mock.patch.object(mpc, "verify", lambda raw, key: json.loads(raw)), \
+                mock.patch.object(mpc, "download", lambda vid, root, msg, out, prog: (got.append(vid), (False, "test"))[1]):
+            W.worker(once=True)
+        self.assertEqual(got, ["dQw4w9WgXcQ", "jNQXAC9IVRw"])
+
+    def test_annulation_pendant_un_telechargement(self):
+        e = lambda i, t, m: {"id": i, "time": t, "event": "message", "message": json.dumps(m)}
+        now = int(time.time())
+        first = [e("e1", now - 30, {"mf": 2, "n": "5" * 16, "v": "jNQXAC9IVRw", "t": "Prod A"}),
+                 e("e2", now - 20, {"mf": 2, "n": "6" * 16, "v": "dQw4w9WgXcQ", "t": "Prod B"})]
+        later = [e("e3", now - 5, {"mf": 2, "n": "7" * 16, "cancel": "dQw4w9WgXcQ"})]
+        got = []
+        clock = {"t": time.time()}
+
+        def download(vid, root, msg, out, prog):
+            got.append(vid)
+            clock["t"] += 60  # le téléchargement de A dure une minute
+            return False, "test"
+        with mock.patch.object(mpc, "poll", lambda c, s: later if s == "e2" else first if s != "e3" else []), \
+                mock.patch.object(mpc, "verify", lambda raw, key: json.loads(raw)), \
+                mock.patch.object(mpc, "download", download), mock.patch.object(W.time, "time", lambda: clock["t"]):
+            W.worker(once=True)
+        self.assertEqual(got, ["jNQXAC9IVRw"])  # B annulée pendant le téléchargement de A
