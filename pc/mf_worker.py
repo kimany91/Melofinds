@@ -210,6 +210,9 @@ class Remote:
         """Commande signée venue de l'app (déjà vérifiée)."""
         cmd = str(msg.get("cmd") or "")
         self.active[code] = time.time()
+        if cmd == "desc":  # descriptions que YouTube cache à l'app (rien du PC n'est partagé)
+            self.send_descriptions(code, msg.get("v"))
+            return
         if not self.enabled(cfg):
             C.reply(code, {"cmd": cmd, "ok": False, "err": "écoute et gestion à distance désactivées dans Melofinds PC"})
             return
@@ -266,6 +269,16 @@ class Remote:
         slim = [{**{k: v for k, v in p.items() if k != "d"}, "files": [{k: v for k, v in f.items() if k not in ("m", "s")} for f in p["files"]]}
                 for p in lib["projects"]]
         return hashlib.sha1(json.dumps(slim, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+    def send_descriptions(self, code, ids):
+        ids = [str(x) for x in ids if isinstance(x, str)][:60] if isinstance(ids, list) else []
+        if not ids:
+            return
+        found = C.video_descriptions(ids)
+        body = json.dumps({"d": found, "miss": [v for v in ids if v not in found]}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if C.publish_attachment(code, body, "descriptions.json", {"desc": 1, "n": len(found)}):
+            self._note(len(body))
+        log(f"Descriptions lues pour l'app : {len(found)}/{len(ids)}")
 
     def tick(self, devices, cfg, final=False):
         """Liste des projets envoyée à l'app : au démarrage, à chaque changement (au plus

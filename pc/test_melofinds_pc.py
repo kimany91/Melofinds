@@ -1237,3 +1237,39 @@ class LicenceEtAnnulation(unittest.TestCase):
                 mock.patch.object(mpc, "download", download), mock.patch.object(W.time, "time", lambda: clock["t"]):
             W.worker(once=True)
         self.assertEqual(got, ["jNQXAC9IVRw"])  # B annulée pendant le téléchargement de A
+
+
+class DescriptionsPourLApp(unittest.TestCase):
+    """L'app ne peut pas lire une description (YouTube la cache) : le PC la lit et la renvoie."""
+    CODE = Reconnexion.CODE
+    setUp = Reconnexion.setUp
+    tearDown = Reconnexion.tearDown
+
+    def page(self, desc):
+        body = ('<html><script>var ytInitialPlayerResponse = {"videoDetails":{"videoId":"x","title":"t",'
+                f'"shortDescription":{json.dumps(desc)},"isLive":false}}}};</script></html>').encode("utf-8")
+
+        class Res:
+            def __enter__(s): return s
+            def __exit__(s, *a): return False
+            def read(s, n=-1): return body
+        return Res()
+
+    def test_lecture_de_la_page(self):
+        d = LicenceEtAnnulation.LUCKI
+        with mock.patch.object(mpc.urllib.request, "urlopen", lambda req, timeout=15: self.page(d)):
+            self.assertEqual(mpc.video_description("jNQXAC9IVRw"), d)  # retours à la ligne, ⚠️ et « " » gardés
+            self.assertIsNone(mpc.video_description("pas un id"))
+            got = mpc.video_descriptions(["jNQXAC9IVRw", "dQw4w9WgXcQ", "jNQXAC9IVRw", "../etc"])
+        self.assertEqual(sorted(got), ["dQw4w9WgXcQ", "jNQXAC9IVRw"])
+
+    def test_commande_desc(self):
+        files = []
+        r = W.Remote(mpc.load_state())
+        with mock.patch.object(mpc, "video_descriptions", lambda ids: {i: "FREE FOR PROFIT" for i in ids if i != "dQw4w9WgXcQ"}), \
+                mock.patch.object(mpc, "publish_attachment", lambda code, data, fn, meta, timeout=60: files.append((fn, meta, json.loads(data))) or True):
+            # même avec « Écouter et gérer depuis l'app web » coupé : rien du PC n'est partagé
+            r.command(self.CODE, {"cmd": "desc", "v": ["jNQXAC9IVRw", "dQw4w9WgXcQ", 5]}, {**mpc.load_config(), "remote": False})
+        fn, meta, body = files[0]
+        self.assertEqual((fn, meta), ("descriptions.json", {"desc": 1, "n": 1}))
+        self.assertEqual(body, {"d": {"jNQXAC9IVRw": "FREE FOR PROFIT"}, "miss": ["dQw4w9WgXcQ"]})

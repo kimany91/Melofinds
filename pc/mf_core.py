@@ -32,7 +32,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.17.0"
+VERSION = "3.18.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -669,6 +669,49 @@ def reply(code, payload, timeout=15):
 
 ATTACH_MAX = 1_900_000
 PREVIEW_MAX_SECONDS = 6 * 60
+
+
+# Description d'une vidéo YouTube, lue par le PC (depuis ta connexion, YouTube ne la cache
+# pas) quand l'app ne peut pas la lire elle-même : mode sans clé, chaîne d'un beatmaker…
+_YT_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+               "Accept-Language": "en-US,en;q=0.9,fr;q=0.8", "Cookie": "SOCS=CAI; CONSENT=YES+cb"}
+_YT_DESC = re.compile(r'"shortDescription":"((?:[^"\\]|\\.)*)"')
+DESC_MAX = 5000
+
+
+def video_description(vid, timeout=15):
+    """Texte complet de la description (page YouTube, sinon yt-dlp), ou None."""
+    if not VIDEO_ID.match(str(vid or "")):
+        return None
+    try:
+        req = urllib.request.Request(f"https://www.youtube.com/watch?v={vid}&hl=en", headers=_YT_HEADERS)
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            html = res.read(4_000_000).decode("utf-8", "replace")
+        m = _YT_DESC.search(html)
+        if m:
+            return json.loads(f'"{m.group(1)}"')[:DESC_MAX]
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError):
+        pass
+    ytdlp = tool_path("yt-dlp.exe")
+    if not ytdlp:
+        return None
+    try:
+        r = run_tool([ytdlp, "--skip-download", "--no-playlist", "--no-warnings", "--print", "description",
+                      f"https://www.youtube.com/watch?v={vid}"], 60)
+        if r.returncode == 0:
+            return decode(r.stdout).strip()[:DESC_MAX]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def video_descriptions(ids, workers=6):
+    """{id: description} pour les vidéos lisibles (60 au plus)."""
+    from concurrent.futures import ThreadPoolExecutor
+    ids = [v for v in dict.fromkeys(str(x) for x in ids) if VIDEO_ID.match(v)][:60]
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        found = dict(zip(ids, ex.map(video_description, ids)))
+    return {k: v for k, v in found.items() if v is not None}
 
 
 def publish_attachment(code, data, filename, meta, timeout=60):

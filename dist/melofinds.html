@@ -966,7 +966,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 27/10/2026 à 09:25</p>
+    <p class="build-stamp">Version du 27/10/2026 à 18:28</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -3562,7 +3562,12 @@ function verdictCopy(L, unread) {
     case 'paid': t = 'Payant'; s = 'Il faut acheter une licence, ou la prod est déjà vendue.'; break;
     default: t = 'À vérifier'; s = 'La description ne dit rien de clair sur les droits.';
   }
-  if (L.titleOnly) { t = 'Free for profit ? À vérifier'; s = 'Seul le titre dit « free for profit » et YouTube ne m’a pas laissé lire toute la description. Souvent la suite limite à YouTube / SoundCloud ou demande une licence pour Spotify : ouvre la vidéo avant de sortir ton son.'; return { t, s }; }
+  if (L.titleOnly) {
+    t = 'Free for profit ? À vérifier';
+    s = 'Seul le titre dit « free for profit » : YouTube ne m’a pas laissé lire la description. Souvent elle limite à YouTube / SoundCloud ou demande une licence pour Spotify. '
+      + (pcOn() ? 'Ton PC la lit, le verdict va se mettre à jour.' : pc.info ? 'Allume Melofinds PC (3.18 ou plus) : il la lira pour moi.' : 'Avec Melofinds PC allumé ou ta clé YouTube, je la lis en entier.');
+    return { t, s };
+  }
   if (unread) s = 'Description illisible : verdict d’après le titre seulement. Ouvre la vidéo pour vérifier.';
   return { t, s };
 }
@@ -4849,6 +4854,7 @@ function beatDetails(item, r, terms = []) {
 }
 function openBeat(item, plan) {
   const r = analyzed(item, plan);
+  if (needsDesc(item)) pcAskDesc([item]);
   if (!r.bpm || !r.key) tbLookup(item);
   const saveBtn = h('button', { type: 'button', class: `ghost${isSaved(item.id) ? ' on' : ''}` }, icon('heart'), isSaved(item.id) ? 'Dans tes favoris' : 'Ajouter aux favoris');
   saveBtn.addEventListener('click', () => {
@@ -5040,6 +5046,63 @@ async function webSearch(queries, add, before) {
 }
 
 // Descriptions complètes, vues, likes, durée et chaîne (API YouTube, 1 unité pour 50 vidéos)
+// ---------------------------------------------------------------------------
+// Descriptions que YouTube cache à l'app (mode sans clé, chaîne d'un beatmaker, quota…) :
+// Melofinds PC (3.18+) les lit depuis ta connexion et les renvoie. Le verdict se met à jour.
+const needsDesc = (item) => !!item && (item.partial || item.status === 'unread' || !String(item.description || '').trim());
+const pcDescAsked = new Map();
+const pcDescCache = new Map();  // descriptions déjà lues par le PC (réutilisées en mode chaîne, favoris…)
+function applyPcDesc(it, id) {
+  const desc = pcDescCache.get(id);
+  if (!it || desc == null || !needsDesc(it)) return false;
+  it.description = desc;
+  it.partial = false;
+  it.status = 'done';
+  it.byPc = true;
+  return true;
+}
+async function pcAskDesc(items) {
+  if (!WEB || !pc.info || !pcCode()) return 0;
+  const now = Date.now();
+  if (items.some((i) => applyPcDesc(i, ytIdOf(i) || i.id))) { renderResults(); saveSession(); }
+  const ids = [...new Set(items.filter(needsDesc).map((i) => ytIdOf(i) || i.id))]
+    .filter((id) => /^[\w-]{11}$/.test(id) && !(now - (pcDescAsked.get(id) || 0) < 10 * 60e3)).slice(0, 60);
+  if (!ids.length) return 0;
+  ids.forEach((id) => pcDescAsked.set(id, now));
+  try { await ntfyPublish({ cmd: 'desc', v: ids }); } catch { ids.forEach((id) => pcDescAsked.delete(id)); return 0; }
+  listenPc();
+  return ids.length;
+}
+async function pcFillDescriptions(items) {
+  const n = await pcAskDesc(items);
+  if (n && pcOn()) setStatus(`${n} description${n > 1 ? 's' : ''} cachée${n > 1 ? 's' : ''} par YouTube : ton PC les lit…`, 1, true);
+}
+async function onPcDesc(d) {
+  const url = pcAttachment(d);
+  if (!url) return;
+  let body;
+  try { const res = await fetch(url); if (!res.ok) return; body = await res.json(); } catch { return; }
+  const found = body && typeof body.d === 'object' ? body.d : {};
+  let n = 0;
+  for (const [id, raw] of Object.entries(found)) {
+    if (!/^[\w-]{11}$/.test(id) || typeof raw !== 'string') continue;
+    pcDescCache.set(id, raw.slice(0, DESC_MAX));
+    for (const it of [session?.items?.get(id), state.beats.find((b) => b.id === id), pc.queue[id]?.it]) if (applyPcDesc(it, id)) n++;
+  }
+  if (!n) return;
+  persist.save('beats');
+  savePc();
+  saveSession();
+  renderResults();
+  if ($('#view-saved')?.classList.contains('active')) renderSavedProds();
+  const open = $('#drawer').classList.contains('open') && $('#drawer').dataset.item;
+  if (open && found[open]) {
+    const it = session?.items?.get(open) || state.beats.find((b) => b.id === open) || (pc.queue[open]?.it ? pc.queue[open].it : null);
+    if (it) openBeat(it, session?.plan || null);
+  }
+  setStatus(`Ton PC a lu ${n} description${n > 1 ? 's' : ''} : licences vérifiées`, 1, true);
+}
+
 async function apiReadPending(pending) {
   let read = 0;
   const total = pending.length;
@@ -5072,6 +5135,7 @@ async function apiReadPending(pending) {
     renderResults();
   });
   await apiAvatars(pending);
+  pcFillDescriptions(pending);
 }
 
 // Logos des chaînes (API : channels, 1 unité pour 50 chaînes), gardés dans ce navigateur
@@ -5280,6 +5344,7 @@ async function pipedReadPending(pending) {
   });
   if (streamsWork != null) local.set('pipedStreamsOk', { at: Date.now(), ok: streamsWork });
   session.partialMode = streamsWork === false;
+  pcFillDescriptions(pending);
 }
 
 
@@ -6603,6 +6668,8 @@ function pcSeen(d) {
 function onPcViewMessage(d, m, fresh) {
   if (m.lib) { pcSeen(d); onPcLib(d, m); return true; }
   if (m.aud) { pcSeen(d); onPcAudio(d, m, fresh); return true; }
+  if (m.desc) { pcSeen(d); onPcDesc(d); return true; }
+  if (m.cmd === 'desc') return true;  // PC d'avant 3.18 : il ne sait pas lire les descriptions
   if (m.q && typeof m.q === 'object') {
     pcSeen(d);
     const v = String(m.q.v || '');

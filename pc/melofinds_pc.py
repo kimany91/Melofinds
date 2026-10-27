@@ -103,6 +103,8 @@ def selftest(out):
         stop()
     # Tunebat (informatif) : une prod connue, sortie sur Spotify par son beatmaker
     res["tunebat"] = C.tunebat_lookup("NEMZZZ TYPE BEAT", "Nemzzz", 173) or "rien / injoignable"
+    desc = C.video_description("jNQXAC9IVRw")  # « Me at the zoo » : lecture d'une vraie description
+    res["description"] = (desc[:80] if desc else "rien / injoignable")
     res["glyphs_missing"] = missing_glyphs()
     try:
         import mf_gui as G
