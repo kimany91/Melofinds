@@ -1142,6 +1142,9 @@ def apply_update(progress=None, reopen=False):
     return f"Mise à jour vers la version {ver}…"
 
 
+_WNDPROCS = []  # fonctions des fenêtres invisibles : jamais libérées (sinon Windows appelle du vide)
+
+
 def watch_windows_shutdown(callback, report=None):
     """Fenêtre invisible qui reçoit « Windows s'éteint / ferme la session » et appelle
     callback (quelques secondes au plus). Renvoie une fonction qui arrête la surveillance."""
@@ -1160,6 +1163,8 @@ def watch_windows_shutdown(callback, report=None):
     user32.CreateWindowExW.restype = wintypes.HWND
     user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
     user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.DestroyWindow.argtypes = [wintypes.HWND]
+    user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
     kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 
     class WNDCLASSW(ctypes.Structure):
@@ -1182,6 +1187,7 @@ def watch_windows_shutdown(callback, report=None):
             return 0
         return user32.DefWindowProcW(hwnd, msg, wp, lp)
     wndproc = WNDPROC(proc)
+    _WNDPROCS.append(wndproc)
 
     def run():
         try:
@@ -1201,17 +1207,26 @@ def watch_windows_shutdown(callback, report=None):
             log(f"Surveillance de l'arrêt de Windows active (fenêtre {int(hwnd)}).")
             state["hwnd"] = hwnd
             msg = wintypes.MSG()
-            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            while not state.get("stop") and user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
+            # fin de la surveillance : fenêtre et classe retirées (une prochaine mise en ligne
+            # dans le même programme repart de zéro)
+            state["hwnd"] = None
+            user32.DestroyWindow(hwnd)
+            user32.UnregisterClassW("MelofindsPCWorker", hinst)
         except Exception as e:
             report["error"] = repr(e)[:200]
             log(f"Surveillance de l'arrêt de Windows indisponible : {e!r}")
-    threading.Thread(target=run, name="arret-windows", daemon=True).start()
+    th = threading.Thread(target=run, name="arret-windows", daemon=True)
+    th.start()
 
     def stop():
+        state["stop"] = True  # arrêt demandé avant même que la fenêtre existe
         if state["hwnd"]:
             user32.PostMessageW(state["hwnd"], 0x0012, 0, 0)  # WM_QUIT
+        if threading.current_thread() is not th:
+            th.join(3)  # fenêtre détruite avant une éventuelle nouvelle mise en ligne
     stop.wndproc = wndproc  # garde la fonction en vie
     return stop
 
