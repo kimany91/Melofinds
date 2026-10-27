@@ -854,3 +854,4 @@ body.mobile .chan-txt b { font-size: 17px; }
 
 /* Version de l'app (pour vérifier qu'on a bien la dernière) */
 .build-stamp { margin: 28px 0 8px; text-align: center; font-size: 12px; color: var(--muted, #888); opacity: .7; }
+.verdict-fix { display: block; margin-top: 10px; }

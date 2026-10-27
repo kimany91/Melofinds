@@ -1466,7 +1466,11 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#draw
 
 function verdictBox(L, unread) {
   const v = verdictCopy(L, unread);
-  return h('div', { class: `verdict cat-${L.category}` }, h('span', { class: 'verdict-ico', 'aria-hidden': 'true' }, L.titleOnly ? '?' : CAT_ICON[L.category]), h('div', {}, h('b', {}, v.t), h('span', {}, v.s)));
+  // Description cachée par YouTube : la voie officielle (clé YouTube gratuite) en un geste
+  const fix = WEB && L.titleOnly && !ytKey()
+    ? h('button', { type: 'button', class: 'ghost sm verdict-fix', onclick: () => { closeDrawer(); openKeySettings(); } }, 'Lire la description avec ma clé YouTube (gratuit)')
+    : null;
+  return h('div', { class: `verdict cat-${L.category}` }, h('span', { class: 'verdict-ico', 'aria-hidden': 'true' }, L.titleOnly ? '?' : CAT_ICON[L.category]), h('div', {}, h('b', {}, v.t), h('span', {}, v.s), fix));
 }
 function beatDetails(item, r, terms = []) {
   const L = r.license;
@@ -2128,7 +2132,13 @@ function keyNotice(title, text) {
     showNotice(null);
     if ($('#keyBtn')) $('#keyBtn').textContent = 'Clé YouTube';
     toast('Clé enregistrée');
-    if (promptEl.value.trim()) startSearch(); else promptEl.focus();
+    // descriptions que YouTube cachait : relues tout de suite, sans quitter la recherche ni la chaîne
+    const missing = session?.items ? [...session.items.values()].filter((i) => i.status !== 'pending' && needsDesc(i)) : [];
+    if (missing.length) {
+      setStatus(`Je relis ${missing.length} description${missing.length > 1 ? 's' : ''} avec ta clé…`, 0.5);
+      apiReadPending(missing).then(() => { renderResults(); saveSession(); setStatus('Descriptions relues avec ta clé : licences vérifiées', 1, true); })
+        .catch(() => toast('Relecture impossible : vérifie ta clé'));
+    } else if (promptEl.value.trim()) startSearch(); else promptEl.focus();
   };
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
   return h('div', { class: 'notice' },
