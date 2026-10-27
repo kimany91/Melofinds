@@ -41,6 +41,9 @@ si tu peux vraiment sortir ton son sur Spotify sans payer.
    Si seul le titre dit « free for profit » et que YouTube n'a donné que le début de
    la description, la prod est marquée **« FFP ? à vérifier »** et rangée dans « À vérifier » (plus dans Free for profit). La date de version est affichée en bas de la page de recherche.
    Testé sur ~60 vraies descriptions YouTube / SoundCloud (`test/fixtures/real-licenses.json`).
+   **Descriptions cachées par YouTube** (mode sans clé, chaîne d'un beatmaker…) : si
+   Melofinds PC 3.18+ est connecté, l'app les lui demande ; il lit la page YouTube depuis
+   ta connexion et les renvoie, et le verdict se met à jour tout seul.
 4. **Range et filtre** : cases de licences, limite « Up to » minimum, crédit
    obligatoire, tri/filtre **BPM** (à activer), style de rap, et **recherche dans
    les descriptions** (`spotify`, `wav`, `"free for profit"`, `-lease` pour exclure).
