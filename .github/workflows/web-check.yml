@@ -1,6 +1,6 @@
-# Vérifie l'app web à chaque changement : tests du moteur, puis Tunebat interrogé comme
-# le ferait le navigateur depuis le site de l'app (en-tête Origin de GitHub Pages) pour
-# savoir si le bouton Tunebat peut marcher sans le PC.
+# Vérifie l'app web à chaque changement : tests du moteur, puis les services de BPM / clé
+# appelés comme le ferait le navigateur depuis le site de l'app (en-tête Origin de GitHub
+# Pages) : on voit s'ils répondent et s'ils autorisent le site (en-têtes CORS).
 name: App web (tests)
 
 on:
@@ -17,28 +17,35 @@ permissions:
 
 jobs:
   web:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: Tests du moteur
+        if: matrix.os == 'ubuntu-latest'
         run: npm test
-      - name: Tunebat depuis le navigateur (CORS)
+      - name: BPM / clé depuis le navigateur (CORS)
         run: |
-          for q in "nemzzz" "luther type beat"; do
-            echo "=== recherche : $q"
-            curl -sS -m 20 -D headers.txt -o body.json \
-              -H "Origin: https://kimany91.github.io" -H "Referer: https://kimany91.github.io/" \
-              -H "Accept: application/json" \
-              -H "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" \
-              "https://api.tunebat.com/api/tracks/search?term=$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$q")" || true
-            head -1 headers.txt || true
-            grep -i "access-control\|content-type\|cf-\|server:" headers.txt || echo "(aucun en-tête CORS)"
-            node -e 'try{const j=require("./body.json");const it=j?.data?.items||[];console.log("morceaux :",it.length,it[0]?JSON.stringify({n:it[0].n,b:it[0].b,k:it[0].k}):"")}catch(e){console.log("réponse non JSON :",require("fs").readFileSync("body.json","utf8").slice(0,200))}' || true
-            echo "=== pré-vol (OPTIONS)"
-            curl -sS -m 20 -o /dev/null -D - -X OPTIONS \
-              -H "Origin: https://kimany91.github.io" -H "Access-Control-Request-Method: GET" \
-              "https://api.tunebat.com/api/tracks/search?term=x" | grep -i "^HTTP\|access-control" || true
-          done
+          ORIGIN="https://kimany91.github.io"
+          UA="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+          probe() {  # $1 = nom, $2 = adresse
+            echo "=== $1"
+            curl -sS -m 25 -D h.txt -o b.json -H "Origin: $ORIGIN" -H "Accept: application/json" -H "User-Agent: $UA" "$2" || true
+            head -1 h.txt || true
+            grep -i "access-control-allow-origin\|cf-mitigated\|content-type" h.txt || echo "(pas d'en-tête CORS)"
+            head -c 400 b.json; echo
+          }
+          probe "Tunebat (recherche)" "https://api.tunebat.com/api/tracks/search?term=nemzzz"
+          probe "ReccoBeats (recherche)" "https://api.reccobeats.com/v1/track/search?searchText=nemzzz&size=3"
+          ID=$(node -e 'try{const j=require("./b.json");const c=j.content||j.items||j.data||[];console.log((c[0]||{}).id||"")}catch{}')
+          echo "id ReccoBeats : $ID"
+          if [ -n "$ID" ]; then probe "ReccoBeats (BPM / clé)" "https://api.reccobeats.com/v1/track/$ID/audio-features"; fi
