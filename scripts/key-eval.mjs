@@ -110,6 +110,17 @@ for (const f of mine) {
     res.vote22 = vote(k22);
     res.vote22l = vote(VOTE.map((p) => essRun(x22l, 22050, p)));
   } catch (e) { res.err22 = String(e?.message || e).slice(0, 80); }
+  // avis variés pour un vote plus large : 3 passages (début / milieu / fin, 40 s) × 3 profils,
+  // et 2 autres réglages (HPCP 36 cases, trames de 8192) sur le milieu
+  try {
+    const op = {};
+    const seg = 40 * 44100;
+    const parts = [full.subarray(0, Math.min(full.length, seg)), middle(full, 44100, 40), full.subarray(Math.max(0, full.length - seg))];
+    parts.forEach((x, i) => { for (const p of VOTE) op[`s${i}_${p}`] = essRun(x, 44100, p); });
+    const kx = (x, p, fs, hop, hp) => { const vv = ess.arrayToVector(x); try { return essKey(ess.KeyExtractor(vv, true, fs, hop, hp, 3500, 60, 25, 0.2, p, 44100, 0.0001, 440, 'cosine', 'hann')); } finally { vv.delete?.(); } };
+    for (const p of VOTE) { op[`h36_${p}`] = kx(x44, p, 4096, 4096, 36); op[`f8k_${p}`] = kx(x44, p, 8192, 4096, 12); }
+    res.op = op;
+  } catch (e) { res.errOp = String(e?.message || e).slice(0, 80); }
   // traits pour régler l'algorithme hors ligne : chroma moyen et chroma des basses (Melofinds)
   try {
     const x = resample(x22, 22050, 11025);
