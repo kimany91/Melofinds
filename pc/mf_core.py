@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.20.0"
+VERSION = "3.20.1"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -506,6 +506,10 @@ def check_licence(title, desc, lic, limit=None):
     if not desc.strip() or lic in ("fnp", "paid"):
         return lic, limit, None
     why = licence_restriction(desc)
+    # « free for profit jusqu'à 5 000 streams, ensuite il faut acheter un lease » : c'est la
+    # limite elle-même (déjà dite par l'app), pas une interdiction de Spotify
+    if why and lic == "upto" and re.search(r"(?:until|up\s*-?\s*to|max\w*|after|first|only\s*for)\s*(?:a\s*maximum\s*of\s*|of\s*)?[\d.,]+\s*k?\s*(?:monetized\s*|monetised\s*)?(?:streams?|plays?)", _lic_norm(why)):
+        return lic, limit, None
     if why and lic in ("ffp", "upto", "unknown", ""):
         return "fnp", None, why
     if lic in ("unknown", "") and not why:

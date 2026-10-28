@@ -66,6 +66,8 @@ const LIMIT_PATTERNS = [
   new RegExp(String.raw`(?:after|over|above|beyond|exceed(?:s|ing)?|surpass(?:es|ing)?|reach(?:es|ing)?|hits?|past|apres|au\s*-?\s*dela\s*de|plus\s*de|passe|depasse)\s*${NUM}\s*${UNIT}`, 'g'),
   // free for profit (5k streams) / ffp 10k streams
   new RegExp(String.raw`(?:${FFP}|ffp|f4p)[ \t]*[(\[:\-]?[ \t]*${NUM}[ \t]*${UNIT}`, 'g'),
+  // « free for profit only for 5.000 streams », « seulement pour les 10 000 premières écoutes »
+  new RegExp(String.raw`(?:only|seulement|uniquement)\s*(?:for|pour|until|up\s*to)?\s*(?:the\s*|les\s*)?(?:first\s*)?${NUM}\s*${UNIT}`, 'g'),
 ];
 
 const NEGATION_BEFORE = /(?:\bnot|n't|\bno|\bpas|\bnon|\bnever|\bisnt|\barent|\bwithout)\s*(?:\w+\s*){0,2}$/;
@@ -80,6 +82,8 @@ const FFP_STRONG = [
   /(?:usage|utilisation)\s*commercial(?:e)?\s*(?:autorise|ok|libre|gratuit)/g,
   /free\s*to\s*(?:use|release|monetize|monetise|upload|distribute)\s*(?:it\s*)?(?:on|to|for)\s*(?:spotify|streaming|all\s*platforms|apple\s*music|dsps?|profit)/g,
   /(?:you\s*can|feel\s*free\s*to|allowed\s*to)\s*(?:use|release|upload|monetize|monetise|put|drop)\s*(?:it|this|this\s*beat|the\s*beat|this\s*instrumental)?\s*(?:on|to|for|in)\s*(?:spotify|streaming|all\s*platforms|apple\s*music|commercial|profit|dsps?)/g,
+  // « You can use this beat on YouTube, Spotify, Apple Music, and all streaming platforms »
+  /(?:you\s*can|feel\s*free\s*to|allowed\s*to)\s*(?:use|release|upload|put|drop)\s*(?:it|this|this\s*beat|the\s*beat)?\s*(?:on|to|in)\s*(?:(?:youtube|yt|soundcloud|instagram|tiktok)\s*(?:,|and|&)?\s*)+(?:spotify|apple\s*music|all\s*(?:streaming\s*)?platforms)/g,
   /(?:tu\s*peux|vous\s*pouvez)\s*(?:l'?\s*)?(?:utiliser|sortir|mettre|publier)[^.\n]{0,30}(?:spotify|streaming|plateformes|commercial)/g,
   /no\s*need\s*to\s*(?:buy|purchase|pay|lease)/g,
   /(?:pas\s*besoin|aucun\s*besoin)\s*d'?\s*(?:acheter|payer)/g,
@@ -103,6 +107,8 @@ const FFP_WEAK = [
 
 const FNP = [
   /(?:free|gratuit)\s*[-_]?\s*(?:for|4|pour)?\s*[-_]?\s*(?:non|not)\s*[-_]?\s*(?:profit|commercial|lucratif)/g,
+  // « You can use the beat without lease on YouTube and SoundCloud only » : gratuit, mais limité
+  /(?:use|upload|post)\s*(?:it|this|the\s*beat|this\s*beat)?\s*without\s*(?:a\s*|any\s*)?(?:lease|licen[cs]e|paying|buying)/g,
   /\bfnp\b/g,
   /non\s*-?\s*(?:profit|commercial)\s*(?:use\s*)?only/g,
   /(?:only|uniquement)\s*(?:for\s*|pour\s*)?(?:non\s*-?\s*(?:profit|commercial)|youtube|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod))/g,
@@ -537,4 +543,28 @@ export function extractKeyLines(description = '', max = 8) {
     if (out.length >= max) break;
   }
   return out;
+}
+
+/**
+ * Verdict quand la description n'a été lue qu'en partie (YouTube a caché la suite).
+ * « Free for profit » reste sûr seulement si ce qu'on a lu le dit déjà clairement : le début
+ * de la description le dit lui-même (une restriction dans ce début aurait déjà changé le
+ * verdict), ou le titre parle de Spotify / toutes les plateformes. Sinon « À vérifier » : la
+ * fin dit souvent « YouTube & SoundCloud only » ou « licence pour Spotify ».
+ */
+export function licenseWhenPartial(title, visibleDesc, L) {
+  if (!L || L.category !== 'ffp') return L;
+  const desc = String(visibleDesc || '');
+  const clear = analyzeLicense('', desc).category === 'ffp'
+    || /spotify|all\s*plat|every\s*(?:streaming\s*)?platform|streaming|toutes\s*les\s*plateformes/i.test(String(title || ''));
+  if (clear) {
+    return { ...L, partialRead: true, reasons: [...L.reasons, { text: 'Description lue en partie (YouTube a bloqué la suite) : le début le dit clairement, mais jette un œil à la fin.', quote: '' }] };
+  }
+  return {
+    ...L, category: 'unknown', label: 'À vérifier', spotify: '?', confidence: 'faible', titleOnly: true,
+    reasons: [
+      { text: desc.trim() ? '« Free for profit » dans le titre, mais pas dans le début de la description lu.' : '« Free for profit » seulement dans le titre.', quote: L.reasons[0]?.quote || '' },
+      { text: 'Description pas lue en entier (YouTube a bloqué la suite) : impossible de savoir si c’est limité à YouTube / SoundCloud ou s’il faut une licence pour Spotify. Rangée dans « À vérifier ».', quote: '' },
+    ],
+  };
 }

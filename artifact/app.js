@@ -424,21 +424,10 @@ function analyzed(item, plan) {
   const key = `${(item.description || '').length}|${item.title}|${plan ? 1 : 0}|${tb ? `${tb.bpm}/${tb.key}` : ''}|${item.partial ? 1 : 0}|${item.status}`;
   if (item._r && item._key === key) return item._r;
   const r = analyzeVideo({ id: item.id, title: item.title, description: item.description || '', foundBy: item.foundBy }, plan || null);
-  // « Free for profit » vu dans le titre ou le DÉBUT de la description, mais description pas
-  // lue en entier (YouTube bloque, quota, mode sans clé) : jamais rangée en Free for profit,
-  // même si le début le dit fort. La fin dit souvent « YouTube & SoundCloud only », « licence
-  // pour Spotify »… et c'est souvent là aussi que sont le BPM et la clé.
+  // Description pas lue en entier (YouTube bloque, quota, mode sans clé) : règle commune
+  // dans src/core/license.js (licenseWhenPartial), testée sur de vraies prods.
   const descMissing = item.partial || item.status === 'unread' || !String(item.description || '').trim();
-  if (r.license.category === 'ffp' && descMissing) {
-    const seenInDesc = !!String(item.description || '').trim();
-    r.license = {
-      ...r.license, category: 'unknown', label: 'À vérifier', spotify: '?', confidence: 'faible', titleOnly: true,
-      reasons: [
-        { text: seenInDesc ? '« Free for profit » au début de la description : la suite n’a pas été lue.' : '« Free for profit » seulement dans le titre.', quote: r.license.reasons[0]?.quote || '' },
-        { text: 'Description pas lue en entier (YouTube a bloqué la suite) : impossible de savoir si c’est limité à YouTube / SoundCloud ou s’il faut une licence pour Spotify. Rangée dans « À vérifier ».', quote: '' },
-      ],
-    };
-  }
+  if (descMissing) r.license = licenseWhenPartial(item.title || '', String(item.description || ''), r.license);
   if (tb?.src === 'user') {
     // corrigé à la main : passe avant tout, affiché comme une info sûre
     if (tb.bpm) r.bpm = tb.bpm;

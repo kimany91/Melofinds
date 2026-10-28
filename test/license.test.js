@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeLicense, findStreamLimit } from '../src/core/license.js';
+import { analyzeLicense, findStreamLimit, licenseWhenPartial } from '../src/core/license.js';
 import { normalize } from '../src/core/text.js';
 
 const cat = (t, d) => analyzeLicense(t, d).category;
@@ -273,3 +273,30 @@ test('crédit obligatoire, formulations variées', () => {
     assert.equal(analyzeLicense('[FREE] type beat', d).creditRequired, true, d);
   }
 });
+
+// ---------------------------------------------------------------------------
+// 38 autres vraies prods (recherche YouTube, octobre 2026) : tous supports, YouTube /
+// SoundCloud seulement, non lucratif, jusqu'à N streams, en français. Verdict vérifié à la main.
+const REAL2 = JSON.parse(readFileSync(new URL('./fixtures/real-licenses-2026.json', import.meta.url), 'utf8'));
+
+test(`vraies descriptions (2) : ${REAL2.length} prods, description complète`, () => {
+  for (const c of REAL2) assert.equal(analyzeLicense(c.title, c.desc).category, c.cat, c.title);
+});
+
+test('description lue en partie : « Free for profit » gardé quand le début le dit, jamais à tort', () => {
+  let ok = 0;
+  for (const c of REAL2) {
+    const snip = c.desc.slice(0, 100);
+    const L = c.desc.length <= 100 ? analyzeLicense(c.title, c.desc) : licenseWhenPartial(c.title, snip, analyzeLicense(c.title, snip));
+    // jamais « Free for profit » pour une prod qui ne l'est pas
+    if (c.cat !== 'ffp') assert.notEqual(L.category, 'ffp', `faux FFP : ${c.title}`);
+    if (L.category === c.cat) ok++;
+  }
+  // les rares ratés : l'info n'est que dans la suite (« à vérifier » ou « payant », jamais FFP)
+  assert.ok(ok >= REAL2.length - 3, `${ok}/${REAL2.length}`);
+  // titre seul : à vérifier
+  assert.equal(licenseWhenPartial('[FREE FOR PROFIT] Type Beat', '', analyzeLicense('[FREE FOR PROFIT] Type Beat', '')).category, 'unknown');
+  // titre qui parle de Spotify : gardé
+  assert.equal(licenseWhenPartial('[FREE FOR PROFIT & SPOTIFY] Type Beat', '', analyzeLicense('[FREE FOR PROFIT & SPOTIFY] Type Beat', '')).category, 'ffp');
+});
+

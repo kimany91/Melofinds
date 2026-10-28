@@ -1246,6 +1246,12 @@ class LicenceEtAnnulation(unittest.TestCase):
                   "[BUY 2 GET 5 FREE]] Purchase: https://bsta.rs/1cvebj\nLease: $20\nKey: Abm\nBPM: 153\n[[FREE FOR USE ON SOUNDCLOUD AND YOUTUBE | TAG MY PROD {ORIN INC} IF YOU UPLOAD]]"):
             self.assertEqual(mpc.check_licence("[FREE FOR PROFIT] Type Beat", d, "ffp")[0], "fnp", d)
 
+    def test_vraies_prods_2026(self):
+        """38 vraies prods (test/fixtures/real-licenses-2026.json) : le PC garde le bon verdict."""
+        cases = json.loads((Path(__file__).resolve().parent.parent / "test" / "fixtures" / "real-licenses-2026.json").read_text(encoding="utf-8"))
+        for c in cases:
+            self.assertEqual(mpc.check_licence(c["title"], c["desc"], c["cat"])[0], c["cat"], c["title"])
+
     def test_vrais_free_for_profit_gardes(self):
         for d in ("This beat is free for profit on all platforms! You must credit me in the title (prod. BEAN!)",
                   "FREE FOR PROFIT. Purchase a lease for the untagged WAV: bsta.rs/x",
