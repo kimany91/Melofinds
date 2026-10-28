@@ -15,6 +15,13 @@ public class MainActivity extends BridgeActivity {
         MelofindsNativePlugin.receive(this, getIntent());
     }
 
+    // Réponse d'Android à « supprimer ce son ? » (demande officielle de suppression)
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == MelofindsNativePlugin.REQ_DELETE) MelofindsNativePlugin.onDeleteResult(resultCode);
+    }
+
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);

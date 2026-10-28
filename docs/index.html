@@ -908,6 +908,11 @@ body.mobile .chan-txt b { font-size: 17px; }
 .pc-pick { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .apk-link { display: inline-block; margin-left: 12px; }
 
+/* Mini-jeu pendant la recherche (la note 🎵 qui saute) */
+.note-game { position: relative; margin: 10px 0 4px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel-2); overflow: hidden; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.note-game canvas { display: block; width: 100%; height: 150px; cursor: pointer; }
+.note-game-x { position: absolute; top: 6px; left: 8px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; }
+
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -965,6 +970,7 @@ body.mobile .chan-txt b { font-size: 17px; }
       <div class="status-bar"><i id="statusFill"></i></div>
       <span id="statusText"></span>
     </div>
+    <div class="note-game" id="noteGame" hidden></div>
     <div id="notice"></div>
 
     <div class="results" id="results" hidden>
@@ -1013,7 +1019,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 28/10/2026 à 11:37</p>
+    <p class="build-stamp">Version du 28/10/2026 à 12:22</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -4231,8 +4237,8 @@ function chooseProdFor(name, blob, pool) {
   ]);
 }
 
-// Dossier autorisé (une fois) + suppression du MP3 après analyse
-const nativeFolder = { granted: false, name: '' };
+// Accès aux sons téléchargés (autorisation « Musique et audio », une fois) + suppression
+const nativeFolder = { granted: false, name: '', manageMedia: false, manageMediaAvailable: false };
 async function refreshFolder() { try { Object.assign(nativeFolder, await mfn().folder()); } catch { /* pas dans l'APK */ } return nativeFolder; }
 function nativeFolderRow(onChange) {
   const row = h('div', { class: 'apk-folder' });
@@ -4241,18 +4247,27 @@ function nativeFolderRow(onChange) {
   const draw = () => {
     row.replaceChildren(
       nativeFolder.granted
-        ? h('span', { class: 'apk-ok' }, `✓ Dossier « ${nativeFolder.name || 'Téléchargements'} » autorisé`)
+        ? h('span', { class: 'apk-ok' }, '✓ Accès aux MP3 de Téléchargements')
         : h('button', { type: 'button', class: 'primary', onclick: async () => {
-          try { Object.assign(nativeFolder, await mfn().pickFolder()); } catch { toast('Dossier pas autorisé'); }
+          try { Object.assign(nativeFolder, await mfn().pickFolder()); } catch { /* refusé */ }
+          if (!nativeFolder.granted) toast('Autorisation refusée : Réglages → Applis → Melofinds → Autorisations → Musique et audio');
           draw();
           onChange?.();
           if (nativeFolder.granted) { haptic('success'); scanDownloads(); }
-        } }, 'Autoriser le dossier Téléchargements (une fois)'),
+        } }, 'Autoriser l’accès aux sons téléchargés (une fois)'),
       h('label', { class: 'cobalt-auto' }, del, ' Supprimer le MP3 après analyse (seulement lui)'),
+      nativeFolder.granted && del.checked && nativeFolder.manageMediaAvailable && !nativeFolder.manageMedia
+        ? h('button', { type: 'button', class: 'link', onclick: async () => { try { await mfn().openManageMedia(); } catch { toast('Réglage introuvable sur ce téléphone'); } } },
+          'Supprimer sans confirmation : autoriser « Gestion des fichiers multimédias »')
+        : null,
     );
   };
+  del.addEventListener('change', () => draw());
   draw();
   refreshFolder().then(() => { draw(); onChange?.(); });
+  // retour des réglages d'Android : l'état a pu changer
+  const back = () => { if (document.visibilityState === 'visible' && row.isConnected) refreshFolder().then(() => { draw(); onChange?.(); }); };
+  document.addEventListener('visibilitychange', back);
   return row;
 }
 
@@ -6538,6 +6553,7 @@ async function runSearch(first) {
   const queries = nextQueries(first);
   if (!queries.length) { toast(session.channel ? 'Toutes les vidéos de la chaîne sont déjà là' : 'J’ai fait le tour de cette recherche. Essaie d’autres mots.'); return; }
   searching = true;
+  noteGame.open();
   showNotice(null);
   $('#hero').classList.add('compact');
   $('#results').hidden = false;
@@ -6649,6 +6665,7 @@ async function runSearch(first) {
     }
   } finally {
     searching = false;
+    noteGame.done();
     $('#goBtn').disabled = false;
     $('#moreBtn').disabled = false;
     clearSkeletons();
@@ -6656,6 +6673,163 @@ async function runSearch(first) {
     prewarmPlayer();
   }
 }
+
+// ---------------------------------------------------------------------------
+// Mini-jeu pendant la recherche (façon dinosaure de Chrome) : tu es une note 🎵 qui saute
+// par-dessus des barres d'égaliseur ; plus loin, des bémols volent (reste au sol dessous).
+// Toucher / espace / flèche du haut = sauter. Record gardé dans ce navigateur.
+const noteGame = (() => {
+  const box = () => $('#noteGame');
+  let canvas = null; let ctx = null; let raf = 0; let last = 0;
+  let W = 360; let H = 150; let dpr = 1;
+  let st = 'idle'; // idle | run | over
+  let searchDone = false;
+  let me; let obs; let speed; let dist; let spawnIn; let flash; let deco; let shownBest;
+  const GROUND = () => H - 26;
+  const best = () => Number(local.get('noteBest', 0)) || 0;
+  const colors = () => {
+    const cs = getComputedStyle(document.body);
+    return { text: cs.getPropertyValue('--text').trim() || '#e8e6f0', muted: cs.getPropertyValue('--muted').trim() || '#8b879b', line: cs.getPropertyValue('--line-2').trim() || '#33303d' };
+  };
+  const reset = () => {
+    me = { y: 0, vy: 0, h: 26, w: 20 };
+    obs = []; speed = 260; dist = 0; spawnIn = 0.8; flash = 0;
+    deco = Array.from({ length: 6 }, (_, i) => ({ x: (i + 0.5) * W / 6, y: 18 + ((i * 37) % 50), s: 0.25 + ((i * 13) % 5) / 10 }));
+  };
+  const size = () => {
+    const b = box();
+    if (!b || !canvas) return;
+    W = Math.max(260, Math.min(720, b.clientWidth || 360));
+    H = 150;
+    dpr = Math.min(3, window.devicePixelRatio || 1);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  const jump = () => {
+    if (st === 'over') { if (performance.now() - flash > 450) { reset(); st = 'run'; haptic('tap'); } return; }
+    if (st === 'idle') { reset(); st = 'run'; }
+    if (me.y === 0) { me.vy = 560; haptic('tap'); }
+  };
+  const spawn = () => {
+    const s = Math.floor(dist / 10);
+    if (s > 350 && Math.random() < 0.28) {
+      obs.push({ kind: 'fly', x: W + 20, w: 22, h: 22, y: 34 + Math.random() * 8 }); // au-dessus d'une note au sol
+    } else {
+      const n = s > 200 && Math.random() < 0.35 ? 2 : 1;
+      for (let i = 0; i < n; i++) obs.push({ kind: 'bar', x: W + 20 + i * 18, w: 12 + Math.random() * 6, h: 22 + Math.random() * (s > 150 ? 26 : 16), y: 0 });
+    }
+    spawnIn = (0.75 + Math.random() * 0.9) * (300 / speed) + 0.25;
+  };
+  const hit = (o) => {
+    const px = 46; const py = me.y; // note : x 46-66, de py à py + 26 au-dessus du sol
+    const ox = o.x; const oy = o.y;
+    return px + me.w - 4 > ox && px + 4 < ox + o.w && py + 3 < oy + o.h && py + me.h - 4 > oy;
+  };
+  const draw = () => {
+    const c = colors();
+    ctx.clearRect(0, 0, W, H);
+    const g = GROUND();
+    // décor : petites notes qui défilent lentement
+    ctx.globalAlpha = 0.18; ctx.fillStyle = c.muted; ctx.font = '14px system-ui, sans-serif';
+    for (const d of deco) ctx.fillText('♪', d.x, d.y + 10);
+    ctx.globalAlpha = 1;
+    // sol (portée)
+    ctx.strokeStyle = c.line; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, g + 0.5); ctx.lineTo(W, g + 0.5); ctx.stroke();
+    ctx.setLineDash([6, 10]); ctx.lineDashOffset = (dist * 0.6) % 16;
+    ctx.beginPath(); ctx.moveTo(0, g + 8.5); ctx.lineTo(W, g + 8.5); ctx.stroke();
+    ctx.setLineDash([]);
+    // obstacles
+    for (const o of obs) {
+      if (o.kind === 'bar') {
+        const gr = ctx.createLinearGradient(0, g - o.h, 0, g);
+        gr.addColorStop(0, '#ec4899'); gr.addColorStop(1, '#8b5cf6');
+        ctx.fillStyle = gr;
+        const r = Math.min(5, o.w / 2);
+        ctx.beginPath();
+        ctx.moveTo(o.x, g); ctx.lineTo(o.x, g - o.h + r); ctx.quadraticCurveTo(o.x, g - o.h, o.x + r, g - o.h);
+        ctx.lineTo(o.x + o.w - r, g - o.h); ctx.quadraticCurveTo(o.x + o.w, g - o.h, o.x + o.w, g - o.h + r); ctx.lineTo(o.x + o.w, g);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = '#f59e0b'; ctx.font = 'bold 26px system-ui, sans-serif';
+        ctx.fillText('♭', o.x + 3, g - o.y - 2);
+      }
+    }
+    // la note
+    ctx.font = '28px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+    ctx.textBaseline = 'alphabetic';
+    const wob = st === 'idle' ? Math.sin(performance.now() / 220) * 3 : 0;
+    ctx.fillText('🎵', 42, g - me.y - 2 + wob);
+    // score
+    ctx.fillStyle = c.muted; ctx.font = '600 13px ui-monospace, Menlo, monospace'; ctx.textAlign = 'right';
+    const sc = Math.floor(dist / 10);
+    ctx.fillText(`${best() ? `REC ${String(Math.max(best(), sc)).padStart(5, '0')}   ` : ''}${String(sc).padStart(5, '0')}`, W - 10, 20);
+    ctx.textAlign = 'left';
+    // messages
+    ctx.fillStyle = c.text; ctx.textAlign = 'center'; ctx.font = '600 14px system-ui, sans-serif';
+    if (st === 'idle') ctx.fillText('Touche pour jouer pendant la recherche 🎶', W / 2, 52);
+    if (st === 'over') { ctx.fillText(searchDone ? 'Perdu ! Les résultats sont prêts ↓' : 'Perdu ! Touche pour rejouer', W / 2, 52); }
+    if (st === 'run' && searchDone) { ctx.fillStyle = '#22c55e'; ctx.fillText('Résultats prêts ↓', W / 2, 40); }
+    ctx.textAlign = 'left';
+  };
+  const step = (t) => {
+    raf = requestAnimationFrame(step);
+    const dt = Math.min(0.05, (t - (last || t)) / 1000);
+    last = t;
+    if (st === 'run') {
+      speed = Math.min(640, speed + 7 * dt);
+      dist += speed * dt;
+      // saut
+      if (me.y > 0 || me.vy > 0) { me.vy -= 1900 * dt; me.y = Math.max(0, me.y + me.vy * dt); if (me.y === 0) me.vy = 0; }
+      for (const o of obs) o.x -= speed * dt;
+      obs = obs.filter((o) => o.x + o.w > -10);
+      spawnIn -= dt;
+      if (spawnIn <= 0) spawn();
+      for (const d of deco) { d.x -= speed * d.s * 0.15 * dt; if (d.x < -10) d.x = W + 10; }
+      if (obs.some(hit)) {
+        st = 'over'; flash = performance.now(); haptic('warn');
+        const sc = Math.floor(dist / 10);
+        if (sc > best()) local.set('noteBest', sc);
+        if (searchDone) setTimeout(() => { if (st === 'over') close(); }, 1600);
+      }
+    }
+    draw();
+  };
+  const onKey = (e) => {
+    if (box()?.hidden || e.target?.closest?.('input, textarea, select')) return;
+    if (e.code === 'Space' || e.key === 'ArrowUp') { e.preventDefault(); jump(); }
+  };
+  function open() {
+    const b = box();
+    if (!b) return;
+    searchDone = false;
+    if (!canvas) {
+      canvas = h('canvas', { role: 'img', 'aria-label': 'Mini-jeu pendant la recherche : touche pour faire sauter la note' });
+      ctx = canvas.getContext('2d');
+      canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); jump(); });
+      b.append(canvas, h('button', { type: 'button', class: 'note-game-x', 'aria-label': 'Fermer le jeu', onclick: () => close() }, '✕'));
+      window.addEventListener('resize', size);
+      document.addEventListener('keydown', onKey);
+    }
+    b.hidden = false;
+    size();
+    if (st !== 'run') { reset(); st = 'idle'; }
+    cancelAnimationFrame(raf); last = 0; raf = requestAnimationFrame(step);
+  }
+  function close() {
+    cancelAnimationFrame(raf); raf = 0;
+    const b = box();
+    if (b) b.hidden = true;
+    st = 'idle';
+  }
+  // fin de la recherche : on ne coupe pas une partie en cours
+  function done() {
+    searchDone = true;
+    if (st !== 'run') close();
+  }
+  return { open, done, close, state: () => ({ st, score: Math.floor((dist || 0) / 10), best: best() }) };
+})();
 
 function showSkeletons(n) {
   clearSkeletons();

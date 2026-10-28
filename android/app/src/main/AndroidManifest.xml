@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
         android:allowBackup="true"
@@ -50,8 +51,15 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- « Écouter la prod » au micro (BPM et clé) ; aucune autre permission : les fichiers
-         passent par le sélecteur de dossier d'Android -->
+    <!-- « Écouter la prod » au micro (BPM et clé) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- MP3 téléchargés (noTube) : « Musique et audio » seulement (pas photos, vidéos ni
+         autres fichiers) ; l'app ne regarde que Téléchargements -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <!-- « Gestion des fichiers multimédias » (facultatif, à activer dans les réglages) :
+         supprimer le MP3 analysé sans demande de confirmation -->
+    <uses-permission android:name="android.permission.MANAGE_MEDIA" tools:ignore="ProtectedPermissions" />
 </manifest>

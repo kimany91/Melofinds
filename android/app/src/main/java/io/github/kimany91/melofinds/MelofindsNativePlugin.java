@@ -1,28 +1,33 @@
 package io.github.kimany91.melofinds;
 
+import android.Manifest;
 import android.app.Activity;
+import android.app.PendingIntent;
+import android.app.RecoverableSecurityException;
 import android.content.ContentResolver;
+import android.content.ContentUris;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
+import android.content.IntentSender;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
-import android.provider.DocumentsContract;
+import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.util.Base64;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
-
-import androidx.activity.result.ActivityResult;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.PluginMethod;
-import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -31,22 +36,30 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Locale;
 
 /**
  * Pont entre l'app web Melofinds et Android.
  *
  * Sécurité :
- *  - un seul dossier, choisi par toi (Téléchargements par défaut), via le sélecteur
- *    d'Android : l'app ne voit rien d'autre de ton téléphone ;
- *  - suppression : seulement un fichier AUDIO placé directement dans ce dossier ;
+ *  - sons : autorisation « Musique et audio » d'Android ; l'app ne regarde que les sons
+ *    rangés dans Téléchargements (Download/), ajoutés depuis que la prod attend son MP3 ;
+ *  - suppression : seulement un son de Téléchargements, via la demande officielle
+ *    d'Android (confirmation, sauf si « Gestion des fichiers multimédias » est autorisée) ;
  *  - fichiers partagés vers Melofinds : copiés dans le cache de l'app, effacés après analyse.
  */
-@CapacitorPlugin(name = "MelofindsNative")
+@CapacitorPlugin(
+    name = "MelofindsNative",
+    permissions = {
+        @Permission(alias = "audio", strings = { Manifest.permission.READ_MEDIA_AUDIO }),
+        @Permission(alias = "storage", strings = { Manifest.permission.READ_EXTERNAL_STORAGE }),
+        @Permission(alias = "write", strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE })
+    }
+)
 public class MelofindsNativePlugin extends Plugin {
 
-    private static final String PREFS = "melofinds";
-    private static final String KEY_TREE = "tree";
+    static final int REQ_DELETE = 7311;
     private static final int CHUNK_MAX = 1 << 20;            // 1 Mo par lecture
     private static final long SHARED_MAX = 60L * 1024 * 1024; // fichier partagé : 60 Mo max
     private static final String[] AUDIO_EXT = { ".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".flac", ".webm", ".weba" };
@@ -54,33 +67,33 @@ public class MelofindsNativePlugin extends Plugin {
     // Fichiers reçus par « Partager » avant que la page soit prête
     private static final ArrayList<JSObject> pending = new ArrayList<>();
     private static MelofindsNativePlugin instance;
+    private String deleteCallId = null;
 
     @Override
     public void load() {
         instance = this;
     }
 
-    // ------------------------------------------------------------------ dossier
+    // ------------------------------------------------------------------ accès aux sons
 
-    private Uri treeUri() {
-        String s = getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_TREE, null);
-        if (s == null) return null;
-        Uri tree = Uri.parse(s);
-        // la permission a pu être retirée dans les réglages d'Android
-        for (android.content.UriPermission p : getContext().getContentResolver().getPersistedUriPermissions()) {
-            if (p.getUri().equals(tree) && p.isReadPermission()) return tree;
-        }
-        return null;
+    private String readAlias() {
+        return Build.VERSION.SDK_INT >= 33 ? "audio" : "storage";
+    }
+
+    private boolean canRead() {
+        return getPermissionState(readAlias()) == PermissionState.GRANTED;
+    }
+
+    private boolean canManageMedia() {
+        return Build.VERSION.SDK_INT >= 31 && MediaStore.canManageMedia(getContext());
     }
 
     private JSObject folderInfo() {
         JSObject o = new JSObject();
-        Uri tree = treeUri();
-        o.put("granted", tree != null);
-        if (tree != null) {
-            String id = DocumentsContract.getTreeDocumentId(tree);
-            o.put("name", id.contains(":") ? id.substring(id.indexOf(':') + 1) : id);
-        }
+        o.put("granted", canRead());
+        o.put("name", "Téléchargements");
+        o.put("manageMedia", canManageMedia());
+        o.put("manageMediaAvailable", Build.VERSION.SDK_INT >= 31);
         return o;
     }
 
@@ -89,34 +102,30 @@ public class MelofindsNativePlugin extends Plugin {
         call.resolve(folderInfo());
     }
 
+    /** Demande « Musique et audio » (Android 13+) ou « Stockage » (avant). */
     @PluginMethod
     public void pickFolder(PluginCall call) {
-        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            i.putExtra(DocumentsContract.EXTRA_INITIAL_URI,
-                    DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download"));
-        }
-        startActivityForResult(call, i, "folderPicked");
+        if (canRead()) { call.resolve(folderInfo()); return; }
+        requestPermissionForAlias(readAlias(), call, "readPermCallback");
     }
 
-    @ActivityCallback
-    private void folderPicked(PluginCall call, ActivityResult result) {
-        if (call == null) return;
-        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null || result.getData().getData() == null) {
-            call.resolve(folderInfo());
-            return;
-        }
-        Uri tree = result.getData().getData();
+    @PermissionCallback
+    private void readPermCallback(PluginCall call) {
+        call.resolve(folderInfo());
+    }
+
+    /** Ouvre le réglage « Gestion des fichiers multimédias » (suppression sans confirmation). */
+    @PluginMethod
+    public void openManageMedia(PluginCall call) {
+        if (Build.VERSION.SDK_INT < 31) { call.resolve(folderInfo()); return; }
         try {
-            getContext().getContentResolver().takePersistableUriPermission(tree,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-        } catch (SecurityException e) {
-            call.reject("Autorisation refusée par Android");
+            Intent i = new Intent(Settings.ACTION_REQUEST_MANAGE_MEDIA, Uri.parse("package:" + getContext().getPackageName()));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+        } catch (Exception e) {
+            call.reject("Réglage introuvable sur ce téléphone");
             return;
         }
-        getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_TREE, tree.toString()).apply();
         call.resolve(folderInfo());
     }
 
@@ -126,34 +135,59 @@ public class MelofindsNativePlugin extends Plugin {
         return mime != null && mime.startsWith("audio/");
     }
 
-    /** Fichiers audio du dossier (pas les sous-dossiers), modifiés après `since` (ms). */
+    private static Uri audioCollection() {
+        return Build.VERSION.SDK_INT >= 29 ? MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+                : MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+    }
+
+    /** Le son est-il rangé directement dans Téléchargements ? (ses infos, ou null) */
+    private String[] downloadAudio(Uri uri) {
+        String[] cols = Build.VERSION.SDK_INT >= 29
+                ? new String[] { MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.RELATIVE_PATH }
+                : new String[] { MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DATA };
+        try (Cursor c = getContext().getContentResolver().query(uri, cols, null, null, null)) {
+            if (c == null || !c.moveToFirst()) return null;
+            String name = c.getString(0);
+            String mime = c.getString(1);
+            String where = c.getString(2) == null ? "" : c.getString(2);
+            boolean inDownload = Build.VERSION.SDK_INT >= 29
+                    ? where.equalsIgnoreCase("Download/")
+                    : where.toLowerCase(Locale.ROOT).matches(".*/download/[^/]+$");
+            if (!inDownload || !isAudio(name, mime)) return null;
+            return new String[] { name, mime };
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Sons de Téléchargements ajoutés après `since` (ms). */
     @PluginMethod
     public void listAudio(PluginCall call) {
-        Uri tree = treeUri();
-        if (tree == null) { call.reject("Dossier pas autorisé"); return; }
-        long since = call.getLong("since", 0L);
-        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
-        String[] cols = { DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED,
-                DocumentsContract.Document.COLUMN_MIME_TYPE };
+        if (!canRead()) { call.reject("Accès aux sons pas autorisé"); return; }
+        long sinceSec = call.getLong("since", 0L) / 1000L;
+        String[] cols = { MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.DATE_MODIFIED, MediaStore.MediaColumns.MIME_TYPE };
+        String sel = Build.VERSION.SDK_INT >= 29
+                ? MediaStore.MediaColumns.RELATIVE_PATH + "=? AND " + MediaStore.MediaColumns.DATE_ADDED + ">=?"
+                : MediaStore.MediaColumns.DATA + " LIKE ? AND " + MediaStore.MediaColumns.DATE_ADDED + ">=?";
+        String[] args = { Build.VERSION.SDK_INT >= 29 ? "Download/" : "%/Download/%", String.valueOf(sinceSec) };
+        Uri coll = audioCollection();
         JSArray out = new JSArray();
-        try (Cursor c = getContext().getContentResolver().query(children, cols, null, null, null)) {
+        try (Cursor c = getContext().getContentResolver().query(coll, cols, sel, args, MediaStore.MediaColumns.DATE_ADDED + " ASC")) {
             while (c != null && c.moveToNext()) {
-                String id = c.getString(0);
                 String name = c.getString(1);
-                long size = c.isNull(2) ? 0 : c.getLong(2);
-                long modified = c.isNull(3) ? 0 : c.getLong(3);
-                String mime = c.getString(4);
-                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime) || !isAudio(name, mime) || modified < since) continue;
+                if (!isAudio(name, c.getString(5))) continue;
                 JSObject o = new JSObject();
-                o.put("uri", DocumentsContract.buildDocumentUriUsingTree(tree, id).toString());
+                o.put("uri", ContentUris.withAppendedId(coll, c.getLong(0)).toString());
                 o.put("name", name);
-                o.put("size", size);
-                o.put("modified", modified);
+                o.put("size", c.isNull(2) ? 0 : c.getLong(2));
+                long added = c.isNull(3) ? 0 : c.getLong(3);
+                long modified = c.isNull(4) ? 0 : c.getLong(4);
+                o.put("modified", Math.max(added, modified) * 1000L);
                 out.put(o);
             }
         } catch (Exception e) {
-            call.reject("Lecture du dossier impossible : " + e.getMessage());
+            call.reject("Lecture des sons impossible : " + e.getMessage());
             return;
         }
         JSObject r = new JSObject();
@@ -179,7 +213,9 @@ public class MelofindsNativePlugin extends Plugin {
 
     private InputStream open(String ref) throws IOException {
         if (ref.startsWith("content://")) {
-            InputStream in = getContext().getContentResolver().openInputStream(Uri.parse(ref));
+            Uri u = Uri.parse(ref);
+            if (downloadAudio(u) == null) throw new IOException("pas un son de Téléchargements");
+            InputStream in = getContext().getContentResolver().openInputStream(u);
             if (in == null) throw new IOException("illisible");
             return in;
         }
@@ -219,34 +255,72 @@ public class MelofindsNativePlugin extends Plugin {
 
     // ------------------------------------------------------------------ suppression
 
-    /** Supprime un fichier AUDIO placé directement dans le dossier autorisé, rien d'autre. */
+    /**
+     * Supprime UN son rangé directement dans Téléchargements, par la demande officielle
+     * d'Android (Android 11+ : confirmation, sauf « Gestion des fichiers multimédias »).
+     */
     @PluginMethod
     public void deleteFile(PluginCall call) {
-        Uri tree = treeUri();
         String ref = call.getString("uri", "");
-        if (tree == null || !ref.startsWith("content://")) { call.reject("Refusé"); return; }
-        Uri doc = Uri.parse(ref);
+        if (!ref.startsWith("content://media/")) { call.reject("Refusé"); return; }
+        Uri uri = Uri.parse(ref);
+        String[] info = downloadAudio(uri);
+        if (info == null) { call.reject("Pas un son de Téléchargements"); return; }
+        ContentResolver cr = getContext().getContentResolver();
         try {
-            String treeId = DocumentsContract.getTreeDocumentId(tree);
-            String docId = DocumentsContract.getDocumentId(doc);
-            String parent = docId.contains("/") ? docId.substring(0, docId.lastIndexOf('/')) : "";
-            boolean sameRoot = tree.getAuthority() != null && tree.getAuthority().equals(doc.getAuthority());
-            if (!sameRoot || !parent.equals(treeId)) { call.reject("Fichier hors du dossier autorisé"); return; }
-            String name = null;
-            String mime = null;
-            try (Cursor c = getContext().getContentResolver().query(doc, new String[] {
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE }, null, null, null)) {
-                if (c != null && c.moveToFirst()) { name = c.getString(0); mime = c.getString(1); }
+            if (Build.VERSION.SDK_INT >= 30) {
+                PendingIntent pi = MediaStore.createDeleteRequest(cr, Collections.singletonList(uri));
+                askDelete(call, pi.getIntentSender());
+                return;
             }
-            if (!isAudio(name, mime)) { call.reject("Pas un fichier audio"); return; }
-            boolean ok = DocumentsContract.deleteDocument(getContext().getContentResolver(), doc);
-            JSObject r = new JSObject();
-            r.put("ok", ok);
-            r.put("name", name);
-            call.resolve(r);
+            if (Build.VERSION.SDK_INT <= 28 && getPermissionState("write") != PermissionState.GRANTED) {
+                requestPermissionForAlias("write", call, "writePermCallback");
+                return;
+            }
+            int n = cr.delete(uri, null, null);
+            resolveDelete(call, n > 0, info[0]);
+        } catch (RecoverableSecurityException e) { // Android 10
+            askDelete(call, e.getUserAction().getActionIntent().getIntentSender());
         } catch (Exception e) {
             call.reject("Suppression impossible : " + e.getMessage());
         }
+    }
+
+    @PermissionCallback
+    private void writePermCallback(PluginCall call) {
+        if (getPermissionState("write") != PermissionState.GRANTED) { call.reject("Suppression pas autorisée"); return; }
+        deleteFile(call);
+    }
+
+    private void askDelete(PluginCall call, IntentSender sender) {
+        call.setKeepAlive(true);
+        getBridge().saveCall(call);
+        deleteCallId = call.getCallbackId();
+        try {
+            getActivity().startIntentSenderForResult(sender, REQ_DELETE, null, 0, 0, 0);
+        } catch (Exception e) {
+            deleteCallId = null;
+            getBridge().releaseCall(call);
+            call.reject("Suppression impossible : " + e.getMessage());
+        }
+    }
+
+    private static void resolveDelete(PluginCall call, boolean ok, String name) {
+        JSObject r = new JSObject();
+        r.put("ok", ok);
+        if (name != null) r.put("name", name);
+        call.resolve(r);
+    }
+
+    /** Réponse d'Android à la demande de suppression (relayée par MainActivity). */
+    static void onDeleteResult(int resultCode) {
+        MelofindsNativePlugin p = instance;
+        if (p == null || p.deleteCallId == null) return;
+        PluginCall call = p.getBridge().getSavedCall(p.deleteCallId);
+        p.deleteCallId = null;
+        if (call == null) return;
+        resolveDelete(call, resultCode == Activity.RESULT_OK, null);
+        p.getBridge().releaseCall(call);
     }
 
     // ------------------------------------------------------------------ partage

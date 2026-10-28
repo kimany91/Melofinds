@@ -215,6 +215,14 @@ la description du beatmaker reste prioritaire. Les résultats s'affichent **en b
 (« 150 BPM · ≈ ») et restent gardés dans ce navigateur. La fiche garde aussi un lien
 « Vérifier sur Tunebat ».
 
+## Mini-jeu pendant la recherche
+
+Pendant qu'une recherche charge (web et APK), un petit jeu façon dinosaure de Chrome :
+tu es une note 🎵 qui saute (toucher, espace ou flèche du haut) par-dessus des barres
+d'égaliseur ; plus loin, des bémols ♭ volent (reste au sol dessous). La vitesse monte, le
+record est gardé. Si la recherche finit en pleine partie, « Résultats prêts ↓ » s'affiche
+et le jeu se range à la fin de la partie ; sinon il disparaît tout seul. ✕ pour le fermer.
+
 ## App Android (APK)
 
 La même app que la version web, plus ce que seul Android permet. Lien :
@@ -222,17 +230,22 @@ La même app que la version web, plus ce que seul Android permet. Lien :
 bas de la page de recherche). Elle affiche l'app web de GitHub Pages : les nouveautés
 arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion ».
 
-- **BPM et clé sans rien choisir** : dans la fenêtre BPM, « Autoriser le dossier
-  Téléchargements » (une seule fois, sélecteur d'Android), puis « 1. Télécharger le MP3
-  (noTube) ». De retour dans Melofinds, l'app trouve le MP3, le relie à la prod (titre,
-  puis durée), l'analyse et **le supprime** (interrupteur, activé par défaut).
+- **BPM et clé sans rien choisir** : dans la fenêtre BPM, « Autoriser l'accès aux sons
+  téléchargés » (une seule fois : autorisation « Musique et audio » d'Android — le
+  sélecteur de dossiers d'Android interdit de choisir Téléchargements depuis Android 11),
+  puis « 1. Télécharger le MP3 (noTube) ». De retour dans Melofinds, l'app trouve le MP3
+  dans Téléchargements, le relie à la prod (titre, puis durée), l'analyse et **le
+  supprime** (interrupteur, activé par défaut). Android demande de confirmer chaque
+  suppression, sauf si « Gestion des fichiers multimédias » est autorisée pour Melofinds
+  (lien direct dans la fenêtre BPM).
 - **Partager → Melofinds** : un son partagé depuis noTube, Fichiers… est relié à la prod
   (sinon l'app demande laquelle) et analysé ; la copie est effacée ensuite.
 - **Retour haptique** léger sur chaque action (selon le réglage « vibrations » du
   téléphone), plus marqué quand le BPM est trouvé. La version web Android vibre aussi.
-- **Sécurité** : permissions Internet et micro seulement (aucun accès général aux
-  fichiers) ; l'app ne voit que le dossier autorisé ; elle ne supprime qu'un fichier
-  **audio** placé directement dedans, qu'elle vient d'analyser et qui correspond à la prod.
+- **Sécurité** : permissions Internet, micro et « Musique et audio » (jamais photos,
+  vidéos ni accès à tous les fichiers) ; l'app ne lit que des sons rangés dans
+  Téléchargements, et ne supprime qu'un son de Téléchargements qu'elle vient d'analyser et
+  qui correspond à la prod, par la demande officielle d'Android.
 - Code : `android/` (Capacitor 8, module natif `MelofindsNativePlugin.java`),
   `capacitor.config.json`, `apk/www` (écran hors connexion), construction
   `.github/workflows/apk-build.yml` (version GitHub « apk », jamais « dernière »).

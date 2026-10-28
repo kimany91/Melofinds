@@ -83,8 +83,11 @@ jobs:
           "$BT/apksigner" verify --print-certs Melofinds.apk | head -5
           "$BT/aapt" dump badging Melofinds.apk | grep -E "^package:|^application-label:|uses-permission" | tee badging.txt
           grep -q "package: name='io.github.kimany91.melofinds'" badging.txt
-          # seulement Internet + micro : aucun accès général aux fichiers
-          ! grep -E "READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|MANAGE_EXTERNAL_STORAGE|READ_MEDIA" badging.txt
+          # Internet, micro et sons seulement : jamais photos, vidéos ni accès à tous les fichiers ;
+          # l'ancien accès « stockage » est limité aux vieux Android (maxSdkVersion)
+          ! grep -E "MANAGE_EXTERNAL_STORAGE|READ_MEDIA_IMAGES|READ_MEDIA_VIDEO|READ_MEDIA_VISUAL" badging.txt
+          grep -q "READ_EXTERNAL_STORAGE' maxSdkVersion='32'" badging.txt
+          grep -q "WRITE_EXTERNAL_STORAGE' maxSdkVersion='28'" badging.txt
           ls -l Melofinds.apk
 
       - name: Publier (version « apk »)
