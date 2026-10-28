@@ -224,6 +224,29 @@ class Appareils(unittest.TestCase):
         self.assertEqual(st["since"][code], "m9")
         self.assertEqual(st["done"], ["abcdefghijk"])
 
+    def test_telephone_ajoute_pendant_un_tour_du_programme(self):
+        """Le programme en ligne a lu les réglages au début de son tour ; le panneau ajoute un
+        téléphone (QR code) ; le programme enregistre ses liens : le téléphone reste."""
+        cfg = mpc.load_config()
+        inst.add_device(cfg, "melofinds-" + "1a" * 16 + "." + "2b" * 32, "Ancien")
+        mpc.save_config(cfg)
+        worker = mpc.load_config()
+        gui = mpc.load_config()
+        inst.add_device(gui, "melofinds-" + "3c" * 16 + "." + "4d" * 32, "Téléphone (QR code)")
+        mpc.save_config(gui)
+        worker["yt_links"] = {"p1": "abcdefghijk"}
+        mpc.save_config(worker)
+        worker["yt_links"]["p2"] = "bbbbbbbbbbb"
+        mpc.save_config(worker)
+        now = mpc.load_config()
+        self.assertEqual([d["name"] for d in now["devices"]], ["Ancien", "Téléphone (QR code)"])
+        self.assertEqual(now["yt_links"], {"p1": "abcdefghijk", "p2": "bbbbbbbbbbb"})
+        # retirer un appareil marche toujours
+        g = mpc.load_config()
+        g["devices"] = [d for d in g["devices"] if d["name"] != "Ancien"]
+        mpc.save_config(g)
+        self.assertEqual([d["name"] for d in mpc.load_config()["devices"]], ["Téléphone (QR code)"])
+
     def test_plusieurs_appareils(self):
         cfg = mpc.load_config()
         a = inst.add_device(cfg, "melofinds-" + "1a" * 16 + "." + "2b" * 32, "iPhone")

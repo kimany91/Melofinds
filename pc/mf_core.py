@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.20.1"
+VERSION = "1.20.2"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -173,7 +173,7 @@ def _read_json(path):
 
 def _write_json(path, data, private=False):
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")  # panneau et programme en ligne : pas le même fichier
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
     if private:
@@ -185,7 +185,7 @@ def _write_json(path, data, private=False):
 
 def load_config():
     """Réglages (écrits par le panneau de gestion) : dossier, appareils, démarrage auto."""
-    cfg = _read_json(P.config)
+    cfg = Config(_read_json(P.config))
     # Migration 2.x : un seul appareil (code + clé à la racine) → liste d'appareils
     if "devices" not in cfg and CODE_RE.match(cfg.get("code") or "") and KEY_RE.match(cfg.get("cle") or ""):
         cfg["devices"] = [{"id": "d1", "name": "Mon téléphone", "code": cfg["code"], "cle": cfg["cle"], "added": int(time.time())}]
@@ -198,11 +198,35 @@ def load_config():
         _write_json(P.config, cfg, private=True)
     cfg.setdefault("devices", [])
     cfg["devices"] = [d for d in cfg["devices"] if isinstance(d, dict) and CODE_RE.match(d.get("code") or "") and KEY_RE.match(d.get("cle") or "")]
+    _remember_base(cfg)
     return cfg
 
 
+# Le panneau et le programme en ligne écrivent tous deux config.json. Chacun ne doit écrire
+# que ce qu'il a changé : sinon le programme en ligne, qui a lu les réglages au début de son
+# tour, effacerait un téléphone ajouté entre-temps par le panneau (QR code).
+class Config(dict):
+    """Réglages lus par load_config, avec leur état au moment de la lecture (_base)."""
+
+
+def _remember_base(cfg):
+    if isinstance(cfg, Config):
+        cfg._base = json.loads(json.dumps(cfg))
+
+
 def save_config(cfg):
-    _write_json(P.config, cfg, private=True)
+    """Écrit seulement ce qui a changé depuis load_config ; le reste vient du fichier."""
+    base = getattr(cfg, "_base", None)
+    out = cfg
+    if base is not None and P.config.exists():
+        out = _read_json(P.config)
+        for k in set(cfg) | set(base):
+            if k in cfg and (k not in base or cfg[k] != base[k]):
+                out[k] = cfg[k]
+            elif k not in cfg and k in base:
+                out.pop(k, None)
+    _write_json(P.config, out, private=True)
+    _remember_base(cfg)
 
 
 def load_state():
