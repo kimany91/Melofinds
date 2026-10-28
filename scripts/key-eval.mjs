@@ -54,7 +54,17 @@ function middle(x, rate, sec) {
 
 const { Essentia, EssentiaWASM } = require('essentia.js');
 const ess = new Essentia(EssentiaWASM);
-const PROFILES = ['edma', 'edmm', 'bgate', 'braw', 'temperley', 'krumhansl', 'shaath'];
+const PROFILES = ['edma', 'edmm', 'bgate', 'braw', 'shaath'];
+const VOTE = ['edmm', 'edma', 'bgate'];
+// vote des 3 profils « musique électronique » ; égalité → edmm
+function vote(keys) {
+  const c = new Map();
+  for (const k of keys) if (k) c.set(k, (c.get(k) || 0) + 1);
+  let best = null; let n = 0;
+  for (const [k, v] of c) if (v > n) { best = k; n = v; }
+  return best;
+}
+const essRun = (x, rate, prof) => essKey(ess.KeyExtractor(ess.arrayToVector(x), true, 4096, 4096, 12, 3500, 60, 25, 0.2, prof, rate, 0.0001, 440, 'cosine', 'hann'));
 
 const keyFiles = new Map();
 for (const f of fs.readdirSync(keyDir, { recursive: true })) {
@@ -72,17 +82,29 @@ for (const f of mine) {
   const truth = normKey(raw);
   if (shown < 5 && part === 0) { console.log(`exemple d'annotation : ${JSON.stringify(raw)} → ${truth}`); shown++; }
   if (!truth) continue;
-  let x44;
-  try { x44 = middle(decode(path.join(audioDir, f), 44100), 44100, 45); } catch { continue; }
+  let full;
+  try { full = decode(path.join(audioDir, f), 44100); } catch { continue; }
+  const x44 = middle(full, 44100, 45);
+  const half = (a) => { const o = new Float32Array(Math.floor(a.length / 2)); for (let i = 0; i < o.length; i++) o[i] = (a[2 * i] + a[2 * i + 1]) / 2; return o; };
   // l'appli : 45 s mono, 22 050 Hz (moyenne de 2 échantillons, comme le décodeur Android)
-  const x22 = new Float32Array(Math.floor(x44.length / 2));
-  for (let i = 0; i < x22.length; i++) x22[i] = (x44[2 * i] + x44[2 * i + 1]) / 2;
+  const x22 = half(x44);
+  const x22l = half(middle(full, 44100, 60));
   const res = { id, truth };
   try { res.ours = analyzeAudio(x22, 22050)?.key || null; } catch { res.ours = null; }
   const v = ess.arrayToVector(x44);
   for (const prof of PROFILES) {
     try { res[prof] = essKey(ess.KeyExtractor(v, true, 4096, 4096, 12, 3500, 60, 25, 0.2, prof, 44100, 0.0001, 440, 'cosine', 'hann')); } catch { res[prof] = null; }
   }
+  res.vote44 = vote(VOTE.map((p) => res[p]));
+  // conditions de l'appli : 22 kHz (45 s et 60 s), temps de calcul mesuré
+  try {
+    const t0 = Date.now();
+    const k22 = VOTE.map((p) => essRun(x22, 22050, p));
+    res.ms22 = Date.now() - t0;
+    res.edmm22 = k22[0];
+    res.vote22 = vote(k22);
+    res.vote22l = vote(VOTE.map((p) => essRun(x22l, 22050, p)));
+  } catch { /* rien */ }
   // traits pour régler l'algorithme hors ligne : chroma moyen et chroma des basses (Melofinds)
   try {
     const x = resample(x22, 22050, 11025);

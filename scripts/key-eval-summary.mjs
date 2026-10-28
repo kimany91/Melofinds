@@ -14,7 +14,9 @@ function mirex(truth, est) {
 }
 const W = { ok: 1, fifth: 0.5, relative: 0.3, parallel: 0.2, other: 0, none: 0 };
 const rows = fs.readFileSync(process.argv[2], 'utf8').split('\n').filter((l) => l.startsWith('R ')).map((l) => JSON.parse(l.slice(2)));
-const methods = Object.keys(rows[0] || {}).filter((k) => !['id', 'truth', 'ch', 'bs'].includes(k));
+const methods = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((k) => !['id', 'truth', 'ch', 'bs', 'ms22'].includes(k));
+const ms = rows.map((r) => r.ms22).filter(Boolean);
+if (ms.length) console.log(`temps Essentia (3 profils, 45 s à 22 kHz) : ${Math.round(ms.reduce((a, b) => a + b, 0) / ms.length)} ms en moyenne`);
 console.log(`${rows.length} morceaux (${rows.filter((r) => r.truth.endsWith('min')).length} mineurs)`);
 console.log('méthode     juste  MIREX  quinte relative parallèle autre');
 for (const m of methods) {

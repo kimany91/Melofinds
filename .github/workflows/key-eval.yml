@@ -26,13 +26,23 @@ jobs:
         run: |
           which ffmpeg || (sudo apt-get update -q && sudo apt-get install -y -q ffmpeg)
           npm install --no-save essentia.js@0.1.3
+      - name: Cache des morceaux
+        id: gscache
+        uses: actions/cache@v4
+        with:
+          path: ~/gs
+          key: giantsteps-key-v1
       - name: Morceaux annotés (GiantSteps+ Key, Zenodo)
+        if: steps.gscache.outputs.cache-hit != 'true'
         run: |
-          mkdir -p "$RUNNER_TEMP/gs" && cd "$RUNNER_TEMP/gs"
+          mkdir -p ~/gs && cd ~/gs
           curl -fsSL --retry 3 -o keys.zip "https://zenodo.org/record/1095691/files/keys.zip?download=1"
           curl -fsSL --retry 3 -o audio.zip "https://zenodo.org/record/1095691/files/audio.zip?download=1"
-          unzip -q keys.zip -d keys && unzip -q audio.zip -d audio
-          find keys -type f | head -3; find audio -type f -name '*.mp3' | wc -l
+          unzip -q keys.zip -d keys && unzip -q audio.zip -d audio && rm -f keys.zip audio.zip
+      - name: Dossiers
+        run: |
+          ln -s ~/gs "$RUNNER_TEMP/gs"
+          find "$RUNNER_TEMP/gs/audio/" -type f -name '*.mp3' | wc -l
       - name: Analyse (4 en parallèle)
         run: |
           for p in 0 1 2 3; do node scripts/key-eval.mjs "$RUNNER_TEMP/gs/audio" "$RUNNER_TEMP/gs/keys" $p 4 > "$RUNNER_TEMP/r$p.txt" 2>"$RUNNER_TEMP/e$p.txt" & done; wait
@@ -41,5 +51,5 @@ jobs:
           grep -h "^exemple" "$RUNNER_TEMP/all.txt" || true
       - name: Résultats
         run: |
+          grep -h "^R " "$RUNNER_TEMP/all.txt" | cut -c1-400
           node scripts/key-eval-summary.mjs "$RUNNER_TEMP/all.txt"
-          grep -h "^R " "$RUNNER_TEMP/all.txt"
