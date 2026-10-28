@@ -236,7 +236,9 @@ export function chroma(x, rate = RATE, size = 4096, hop = 1024, fMax = 2100) {
     }
     if (tot > 0) for (let i = 0; i < 12; i++) out[i] += frame[i] / tot;
   }
-  return Array.from(out);
+  const arr = Array.from(out);
+  arr.tuning = Math.round(tuning * 100) / 100; // décalage par rapport au La 440, en demi-tons
+  return arr;
 }
 
 const MAJ_SET = [0, 2, 4, 5, 7, 9, 11];
@@ -292,8 +294,10 @@ export function analyzeAudio(mono, rate) {
   for (let i = 0; i < x.length; i++) x[i] /= peak;
   const { env, fps } = onsetEnvelope(x, RATE);
   const t = tempoFromEnvelope(env, fps);
-  const k = keyFromChroma(chroma(x, RATE), chroma(x, RATE, 4096, 1024, 260));
+  const ch = chroma(x, RATE);
+  const k = keyFromChroma(ch, chroma(x, RATE, 4096, 1024, 260));
   return {
+    tuning: ch.tuning || 0,
     bpm: t?.bpm || null, bpmConf: t?.confidence ?? 0, bpmAlt: t?.alt || null,
     key: k?.key || null, keyConf: k?.confidence ?? 0, keyAlt: k?.second || null,
     seconds: Math.round(x.length / RATE),

@@ -899,3 +899,10 @@ body.mobile .chan-txt b { font-size: 17px; }
 .qr-frame { position: absolute; width: min(60vw, 260px); aspect-ratio: 1; border: 3px solid rgba(255, 255, 255, .9); border-radius: 18px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .25); pointer-events: none; top: 50%; left: 50%; transform: translate(-50%, -62%); }
 .qr-scan p { color: #fff; margin: 0; font-size: 15px; }
 .qr-scan .ghost { color: #fff; border-color: rgba(255, 255, 255, .5); background: transparent; }
+.ear { display: grid; gap: 6px; margin-top: 12px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--panel-2); }
+.ear.warn { border-color: #f59e0b; }
+.ear .hint { margin: 0; }
+.ear-keys { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.ear-k { min-width: 76px; padding: 10px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel); color: inherit; font: inherit; font-weight: 600; }
+.ear-k.first { border-color: var(--accent, #8b5cf6); }
+.ear-k.on { background: var(--accent, #8b5cf6); border-color: transparent; color: #fff; }

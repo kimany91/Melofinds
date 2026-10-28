@@ -905,6 +905,13 @@ body.mobile .chan-txt b { font-size: 17px; }
 .qr-frame { position: absolute; width: min(60vw, 260px); aspect-ratio: 1; border: 3px solid rgba(255, 255, 255, .9); border-radius: 18px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .25); pointer-events: none; top: 50%; left: 50%; transform: translate(-50%, -62%); }
 .qr-scan p { color: #fff; margin: 0; font-size: 15px; }
 .qr-scan .ghost { color: #fff; border-color: rgba(255, 255, 255, .5); background: transparent; }
+.ear { display: grid; gap: 6px; margin-top: 12px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--panel-2); }
+.ear.warn { border-color: #f59e0b; }
+.ear .hint { margin: 0; }
+.ear-keys { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.ear-k { min-width: 76px; padding: 10px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel); color: inherit; font: inherit; font-weight: 600; }
+.ear-k.first { border-color: var(--accent, #8b5cf6); }
+.ear-k.on { background: var(--accent, #8b5cf6); border-color: transparent; color: #fff; }
 
 </style>
 
@@ -1013,7 +1020,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 28/10/2026 à 15:57</p>
+    <p class="build-stamp">Version du 28/10/2026 à 16:38</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -3574,7 +3581,9 @@ function chroma(x, rate = RATE, size = 4096, hop = 1024, fMax = 2100) {
     }
     if (tot > 0) for (let i = 0; i < 12; i++) out[i] += frame[i] / tot;
   }
-  return Array.from(out);
+  const arr = Array.from(out);
+  arr.tuning = Math.round(tuning * 100) / 100; // décalage par rapport au La 440, en demi-tons
+  return arr;
 }
 
 const MAJ_SET = [0, 2, 4, 5, 7, 9, 11];
@@ -3630,8 +3639,10 @@ function analyzeAudio(mono, rate) {
   for (let i = 0; i < x.length; i++) x[i] /= peak;
   const { env, fps } = onsetEnvelope(x, RATE);
   const t = tempoFromEnvelope(env, fps);
-  const k = keyFromChroma(chroma(x, RATE), chroma(x, RATE, 4096, 1024, 260));
+  const ch = chroma(x, RATE);
+  const k = keyFromChroma(ch, chroma(x, RATE, 4096, 1024, 260));
   return {
+    tuning: ch.tuning || 0,
     bpm: t?.bpm || null, bpmConf: t?.confidence ?? 0, bpmAlt: t?.alt || null,
     key: k?.key || null, keyConf: k?.confidence ?? 0, keyAlt: k?.second || null,
     seconds: Math.round(x.length / RATE),
@@ -3998,14 +4009,127 @@ function bpmText(t) {
 // Résultat d'analyse → gardé (en bleu). La description du beatmaker reste prioritaire.
 function keepAnalysis(item, res, how) {
   if (!res || (!res.bpm && !res.key)) return null;
-  const sure = res.keyConf >= 0.3;
-  const t = { bpm: res.bpm, key: res.key, alt: res.bpmAlt, keyAlt: res.keyAlt, unsure: !sure, at: Date.now(), src: 'audio', how, dbg: res.dbg || '' };
+  const sure = res.keyBy === 'essentia' ? !!res.keySure : res.keyConf >= 0.3;
+  const t = { bpm: res.bpm, key: res.key, alt: res.bpmAlt, keyAlt: res.keyAlt, unsure: !sure, at: Date.now(), src: 'audio', how, dbg: res.dbg || '',
+    cands: res.keyCands || (res.key ? [res.key, res.keyAlt].filter(Boolean) : []), tuning: res.tuning || 0 };
   tbStore(item.id, t);
   syncTbUi();
   refreshItem(item);
   haptic('success');
   pcSyncTags(ytIdOf(item) || item.id);
   return t;
+}
+// --- Clé : Essentia (Music Technology Group, Universitat Pompeu Fabra ; AGPL-3.0), chargé à la
+// demande. Banc d'essai sur 570 vrais morceaux annotés (GiantSteps+, scripts/key-eval.mjs) :
+// 67 % de clés justes avec le vote de 3 profils, contre 40 % pour l'ancien algorithme maison.
+// Aucun logiciel n'est sûr à 100 % : quand les profils ne sont pas d'accord, l'app le dit et
+// propose de vérifier à l'oreille (accord joué par-dessus la prod).
+const ESS_CDN = 'https://cdn.jsdelivr.net/npm/essentia.js@0.1.3/dist/';
+const KEY_PROFILES = ['edmm', 'edma', 'bgate', 'braw', 'shaath']; // les 3 premiers votent
+const KEY_NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const KEY_FLAT = { Db: 'C#', Eb: 'D#', Gb: 'F#', Ab: 'G#', Bb: 'A#' };
+let essP = null;
+function loadScript(src) {
+  return new Promise((ok, ko) => {
+    const el = document.createElement('script');
+    el.src = src; el.async = true; el.crossOrigin = 'anonymous';
+    el.onload = ok; el.onerror = () => ko(new Error(`chargement impossible : ${src}`));
+    document.head.append(el);
+  });
+}
+function essentiaLib() {
+  essP ||= (async () => {
+    if (!window.EssentiaWASM) await loadScript(`${ESS_CDN}essentia-wasm.web.js`);
+    if (!window.Essentia) await loadScript(`${ESS_CDN}essentia.js-core.umd.js`);
+    const m = window.EssentiaWASM({ locateFile: (f) => ESS_CDN + f });
+    const wasm = typeof m?.then === 'function' ? await m : await m.ready;
+    return new window.Essentia(wasm);
+  })().catch((e) => { essP = null; throw e; });
+  return essP;
+}
+function essNorm(r) {
+  if (!r?.key || !r?.scale) return null;
+  const n = KEY_FLAT[r.key] || r.key;
+  return KEY_NOTES.includes(n) ? `${n} ${r.scale === 'minor' ? 'min' : 'maj'}` : null;
+}
+function keyShift(key, semis, mode) {
+  const [n, m] = key.split(' ');
+  return `${KEY_NOTES[(KEY_NOTES.indexOf(n) + semis + 12) % 12]} ${mode || m}`;
+}
+async function essentiaKey(mono, rate) {
+  const ess = await essentiaLib();
+  let x = rate === 22050 ? mono : resample(mono, rate, 22050);
+  const max = 45 * 22050;
+  if (x.length > max) { const from = Math.floor((x.length - max) / 2); x = x.subarray(from, from + max); }
+  const v = ess.arrayToVector(x);
+  const keys = [];
+  try {
+    for (const p of KEY_PROFILES) {
+      try { keys.push(essNorm(ess.KeyExtractor(v, true, 4096, 4096, 12, 3500, 60, 25, 0.2, p, 22050, 0.0001, 440, 'cosine', 'hann'))); } catch { keys.push(null); }
+    }
+  } finally { try { v.delete?.(); } catch { /* rien */ } }
+  const votes = new Map();
+  for (const k of keys.slice(0, 3)) if (k) votes.set(k, (votes.get(k) || 0) + 1);
+  let key = null; let n = 0;
+  for (const [k, c] of votes) if (c > n) { key = k; n = c; }
+  if (!key) return null;
+  // autres clés possibles, de la plus probable à la moins probable (pour l'oreille)
+  const rel = key.endsWith('min') ? keyShift(key, 3, 'maj') : keyShift(key, -3, 'min');
+  const cands = [...new Set([key, ...keys.filter(Boolean), rel, keyShift(key, 7), keyShift(key, 5)])].slice(0, 6);
+  return { key, sure: n === 3 && keys.slice(3).every((k) => !k || k === key), agree: n, candidates: cands };
+}
+// BPM (maison, fiable) + clé (Essentia ; l'ancienne méthode seulement si Essentia ne charge pas)
+async function analyzeFull(mono, rate) {
+  const res = analyzeAudio(mono, rate);
+  if (!res) return res;
+  try {
+    const k = await essentiaKey(mono, rate);
+    if (k) Object.assign(res, { key: k.key, keySure: k.sure, keyConf: k.sure ? 0.8 : k.agree >= 2 ? 0.5 : 0.25, keyCands: k.candidates, keyBy: 'essentia' });
+  } catch { res.keyBy = 'interne'; res.keySure = false; }
+  return res;
+}
+// Accord tenu (doux) d'une clé, joué par-dessus la prod pour vérifier à l'oreille.
+// `tuning` : décalage de la prod par rapport au La 440 (en demi-tons), pour ne pas frotter.
+const drone = { ctx: null, out: null, oscs: [] };
+function droneStop() {
+  const d = drone;
+  if (!d.out) return;
+  const t = d.ctx.currentTime;
+  d.out.gain.cancelScheduledValues(t);
+  d.out.gain.setTargetAtTime(0, t, 0.06);
+  const old = d.oscs;
+  setTimeout(() => old.forEach((o) => { try { o.stop(); } catch { /* déjà arrêté */ } }), 400);
+  d.out = null;
+  d.oscs = [];
+}
+function dronePlay(key, tuning = 0) {
+  droneStop();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC || !key) return;
+  drone.ctx ||= new AC();
+  const ctx = drone.ctx;
+  ctx.resume?.();
+  const [n, m] = key.split(' ');
+  const f0 = 440 * 2 ** ((KEY_NOTES.indexOf(n) - 9 + (Number(tuning) || 0)) / 12) / 2; // tonique, octave 3
+  const out = ctx.createGain();
+  out.gain.value = 0;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 1500;
+  out.connect(lp).connect(ctx.destination);
+  const third = 2 ** ((m === 'min' ? 3 : 4) / 12);
+  drone.oscs = [[0.5, 0.5], [1, 0.35], [third, 0.28], [2 ** (7 / 12), 0.28], [2, 0.16]].map(([r, g]) => {
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.value = f0 * r;
+    const gn = ctx.createGain();
+    gn.gain.value = g;
+    o.connect(gn).connect(out);
+    o.start();
+    return o;
+  });
+  out.gain.setTargetAtTime(0.14, ctx.currentTime, 0.05);
+  drone.out = out;
 }
 function monoOf(buf) {
   const n = buf.length;
@@ -4027,7 +4151,7 @@ async function analyzeFile(item, file, ui) {
     const from = Math.max(0, Math.floor((mono.length - len) / 2));
     ui.say('Analyse…');
     await wait(30);
-    const res = analyzeAudio(mono.subarray(from, from + len), buf.sampleRate);
+    const res = await analyzeFull(mono.subarray(from, from + len), buf.sampleRate);
     if (res) res.duration = buf.duration;
     return res;
   } catch {
@@ -4079,7 +4203,7 @@ async function listenAndAnalyze(item, ui, seconds = 15) {
     if (loud < 0.02) { ui.say('Je n’entends pas la prod (téléphone sans son ?). Monte le son, ou choisis le fichier de la prod : ça marche sans son.'); return null; }
     ui.say('Analyse…');
     await wait(30);
-    return analyzeAudio(captureToMono(cap), cap.rate);
+    return await analyzeFull(captureToMono(cap), cap.rate);
   } finally { release(); bpmJob.stop = null; }
 }
 // --- Sans son ni PC : le MP3 de la prod, téléchargé avec noTube (gratuit, sans compte,
@@ -4342,7 +4466,7 @@ async function ytAnalyze(item, ui) {
     const w = wavMono(await (await readNative(r.path, r.size)).arrayBuffer());
     if (!w) throw new Error('Son illisible');
     await wait(20);
-    const res = analyzeAudio(w.mono, w.rate);
+    const res = await analyzeFull(w.mono, w.rate);
     if (res) {
       res.duration = r.duration;
       const fixed = r.rateMeasured && r.rateReported && Math.abs(r.rateMeasured / r.rateReported - 1) > 0.03;
@@ -4441,10 +4565,52 @@ function openBpmSheet(item, failed = '') {
     out.replaceChildren(...(cur ? [
       h('div', { class: 'bpm-res' }, h('b', { class: mine ? null : 'tb' }, bpmText(cur))),
       h('p', { class: 'hint' }, mine ? 'Corrigé par toi : c’est ce qui s’affiche sur la prod.' : 'Trouvé à partir du son, en bleu sur la prod. Si la description du beatmaker donne le BPM ou la clé, c’est elle qui compte.'),
+      earCheck(cur),
       cur.dbg ? h('p', { class: 'bpm-dbg' }, `Son analysé : ${cur.dbg}`) : null,
       fixForm(cur),
     ] : []));
     if (t === null) return;
+  };
+  // Vérifier la clé à l'oreille : la seule façon d'être sûr (aucun logiciel ne l'est à 100 %)
+  const earCheck = (cur) => {
+    if (!cur?.key) return null;
+    const cands = [...new Set([cur.key, ...(cur.cands || [])])].slice(0, 6);
+    const status = cur.keyOk || cur.src === 'user' ? '✓ Clé vérifiée par toi.'
+      : cur.unsure ? 'Clé PAS sûre (les méthodes ne sont pas d’accord) : vérifie-la à l’oreille, ça prend 20 secondes.'
+        : 'Clé probable (les 3 méthodes sont d’accord, juste environ 8 fois sur 10). Vérifie-la à l’oreille pour en être sûr.';
+    const okBtn = h('button', { type: 'button', class: 'primary', disabled: true }, '✓ C’est celle-là');
+    let picked = null;
+    const chips = cands.map((k) => h('button', { type: 'button', class: `ear-k${k === cur.key ? ' first' : ''}` }, k));
+    const sync = () => {
+      chips.forEach((c) => c.classList.toggle('on', c.textContent === picked));
+      okBtn.disabled = !picked;
+      okBtn.textContent = picked ? `✓ C’est ${picked}` : '✓ C’est celle-là';
+    };
+    chips.forEach((c) => c.addEventListener('click', () => {
+      haptic();
+      if (picked === c.textContent) { droneStop(); picked = null; } else { picked = c.textContent; dronePlay(picked, cur.tuning || 0); }
+      sync();
+    }));
+    okBtn.addEventListener('click', () => {
+      if (!picked) return;
+      droneStop();
+      const t = { ...(tbFor(item.id) || cur), key: picked, keyOk: true, unsure: false };
+      tbStore(item.id, t);
+      syncTbUi();
+      refreshItem(item);
+      haptic('success');
+      pcSyncTags(ytIdOf(item) || item.id);
+      ui.say(`Clé vérifiée : ${picked}`);
+      show();
+    });
+    const play = WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => playItem(item) }, icon('play'), 'Lancer la prod') : null;
+    return h('div', { class: `ear${cur.unsure && !cur.keyOk ? ' warn' : ''}` },
+      h('b', {}, 'Vérifier la clé à l’oreille'),
+      h('p', { class: 'hint' }, status),
+      h('p', { class: 'hint' }, '1. Lance la prod.  2. Touche une clé : je joue son accord doucement par-dessus.  3. Celle qui sonne juste, sans frotter, c’est la bonne → « ✓ ». Touche-la encore pour couper.'),
+      play ? h('div', { class: 'd-actions' }, play) : null,
+      h('div', { class: 'ear-keys' }, ...chips),
+      h('div', { class: 'd-actions' }, okBtn));
   };
   // Correction à la main (clé et / ou BPM) : gardée et prioritaire
   const fixForm = (cur) => {
@@ -4544,7 +4710,7 @@ function openBpmSheet(item, failed = '') {
     status,
     out,
   ]);
-  drawerOnClose = () => { bpmJob.stop?.(); document.removeEventListener('visibilitychange', onBack); };
+  drawerOnClose = () => { bpmJob.stop?.(); droneStop(); document.removeEventListener('visibilitychange', onBack); };
   if (isNative() && nativeFolder.granted) mp3Btn.hidden = true;
   show();
   if (failed) ui.say(`${failed} Autre façon : noTube ci-dessous.`);
@@ -4582,7 +4748,7 @@ function analyzed(item, plan) {
   } else if (tb) {
     r.tbSrc = tb.src === 'audio' ? 'écouté' : 'Tunebat';
     if (!r.bpm && tb.bpm) { r.bpm = tb.bpm; r.bpmTb = true; }
-    if (!r.key && tb.key) { r.key = tb.key; r.keyTb = true; }
+    if (!r.key && tb.key) { r.key = tb.key; r.keyTb = !tb.keyOk; } // vérifiée à l'oreille : info sûre
   }
   Object.defineProperty(item, '_r', { value: r, writable: true, enumerable: false, configurable: true });
   Object.defineProperty(item, '_key', { value: key, writable: true, enumerable: false, configurable: true });
@@ -8039,7 +8205,7 @@ function pcSyncTags(id) {
     const bpm = canBpm ? t.bpm : null;
     if (!key && !bpm) continue;
     if (pcLib.cmds.some((c) => c.msg.cmd === 'tags' && c.msg.p === p.p && c.msg.key === key && c.msg.bpm === bpm)) continue;
-    pcCommand({ cmd: 'tags', p: p.p, key, bpm, fk: !user, fb: !user, user: user || undefined }, 'BPM et clé envoyés au PC', !user);
+    pcCommand({ cmd: 'tags', p: p.p, key, bpm, fk: !user && !t.keyOk, fb: !user, user: user || undefined }, 'BPM et clé envoyés au PC', !user);
   }
 }
 function pcSyncAllTags() {

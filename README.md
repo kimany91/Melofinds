@@ -240,6 +240,15 @@ La même app que la version web, plus ce que seul Android permet. Lien :
 bas de la page de recherche). Elle affiche l'app web de GitHub Pages : les nouveautés
 arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion ».
 
+- **Clé : Essentia + ton oreille.** La clé vient d'Essentia (Music Technology Group, UPF,
+  AGPL-3.0, chargé à la demande depuis jsDelivr) : vote de 3 profils « musique
+  électronique ». Banc d'essai sur 570 vrais morceaux annotés (GiantSteps+,
+  `scripts/key-eval.mjs`, lancé sur GitHub) : 67 % de clés justes contre 40 % pour
+  l'ancien algorithme maison ; quand les 3 profils sont d'accord, ~80 %. Aucun logiciel n'est
+  sûr à 100 % : la fenêtre BPM dit si la clé est sûre ou non et propose **« Vérifier la clé à
+  l'oreille »** (l'accord de chaque clé possible joué doucement par-dessus la prod ; « ✓ » =
+  clé vérifiée, gardée comme sûre, envoyée au PC sans « (Finded) »). Le BPM reste calculé
+  par Melofinds (fiable).
 - **BPM et clé tout seuls, en quelques secondes** : toucher « BPM » sur une prod (ou
   ouvrir sa fiche) suffit. Le téléphone récupère lui-même le son de la vidéo YouTube avec
   **NewPipe Extractor** (la bibliothèque libre et gratuite de l'appli NewPipe), le
