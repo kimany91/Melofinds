@@ -12,6 +12,12 @@
         <!-- scanner de QR code (services Google Play) installé avec l'appli -->
         <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="barcode_ui" />
 
+        <!-- Tunebat dans une fenêtre visible (vérification faite par l'utilisateur) -->
+        <activity
+            android:name=".TunebatActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme.NoActionBar" />
+
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"
@@ -23,18 +29,6 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-
-            <!-- « Partager → Melofinds » : un son téléchargé (MP3…) -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="audio/*" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.SEND_MULTIPLE" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="audio/*" />
             </intent-filter>
 
         </activity>
@@ -53,15 +47,7 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- « Écouter la prod » au micro (BPM et clé) -->
+    <!-- « Rec dessus » : enregistrer sa voix sur la prod (micro) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <!-- MP3 téléchargés (noTube) : « Musique et audio » seulement (pas photos, vidéos ni
-         autres fichiers) ; l'app ne regarde que Téléchargements -->
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-    <!-- « Gestion des fichiers multimédias » (facultatif, à activer dans les réglages) :
-         supprimer le MP3 analysé sans demande de confirmation -->
-    <uses-permission android:name="android.permission.MANAGE_MEDIA" tools:ignore="ProtectedPermissions" />
 </manifest>

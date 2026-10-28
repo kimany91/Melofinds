@@ -154,12 +154,11 @@ ouvre le site dans Chrome) :
   d'usage non lucratif, la prod est rangée en `[F]` même si l'app disait free for profit
   (titre « FREE FOR PROFIT », description que YouTube lui avait cachée). Une prod que l'app
   n'avait pas pu lire passe en `[FFP]` si la description le dit clairement.
-- Clé ou BPM manquants : ceux trouvés par l'analyse du son (téléphone, ou Tunebat sur le PC)
-  sont rangés à part dans le nom, marqués **(Finded)** : `Titre [C# min] [(Finded) 150 BPM]
+- Clé ou BPM manquants : ceux trouvés sur Tunebat (par le téléphone ou par le PC) sont
+  rangés à part dans le nom, marqués **(Finded)** : `Titre [C# min] [(Finded) 150 BPM]
   [FFP].wav`, `Titre [(Finded) Key B minor, 140 BPM].wav`. Ce qui est écrit par le beatmaker
-  reste sans marque et passe toujours avant. Dans l'APK, « Sur mon PC » trouve d'abord le BPM
-  et la clé (quelques secondes) ; sinon, dès qu'ils sont trouvés (bouton BPM, fiche, copie
-  d'écoute), l'app les envoie et le PC **renomme la prod partout** (dossier, sons, projet FL)
+  reste sans marque et passe toujours avant. Dans l'APK, « Sur mon PC » cherche d'abord le BPM
+  et la clé sur Tunebat ; sinon, dès qu'ils sont trouvés (bouton BPM, fiche), l'app les envoie et le PC **renomme la prod partout** (dossier, sons, projet FL)
   — jamais par-dessus les valeurs du beatmaker. Une correction à la main part sans
   « (Finded) ». Anciens noms `[TB …]` toujours compris. FLmake utilise aussi ces valeurs
   (BPM du projet, clé de Graillon) et le panneau les affiche en bleu.
@@ -186,44 +185,21 @@ ouvre le site dans Chrome) :
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
-## Bouton « BPM » : BPM et clé à l'écoute (version web)
+## Bouton « BPM » : Tunebat
 
-Chaque prod a un petit bouton **BPM**. Il ouvre « BPM et clé » :
-- **Sans son, sans PC** — **noTube** : « 1. Télécharger le MP3 » ouvre noTube
-  (notube.lol, gratuit, sans compte ni installation) sur la prod, avec son astuce officielle
-  (lien `notube.lol/watch?v=…`) ; de retour dans Melofinds, « 2. Analyser le MP3 » : tu choisis
-  le fichier, il est analysé sur le téléphone, puis tu peux le supprimer (le BPM et la clé
-  restent). Un site n'a pas le droit d'en piloter un autre : ces deux appuis sont nécessaires ;
-- **Sans son** — **Analyser la copie du PC** : pour une prod envoyée sur le PC, la copie
-  d'écoute gardée sur le téléphone est analysée sans rien jouer, même PC éteint. Chaque
-  copie qui arrive du PC est d'ailleurs analysée toute seule (une à la fois) ;
-- **Sans son** — **Choisir un fichier audio** : MP3, WAV, M4A… (souvent en téléchargement
-  gratuit dans la description ; 45 s analysées au milieu du morceau) ;
-- **Avec le son** — **Écouter la prod** : l'app fait jouer la prod 15 secondes (au cœur du
-  morceau) et l'écoute au micro (son monté, sans écouteurs). Téléphone muet : l'app le dit
-  et propose les deux façons sans son.
+Quand la description ne donne pas le BPM ou la clé, chaque prod a un petit bouton **BPM** :
+- **Appli Android** : un appui cherche la prod sur **Tunebat** depuis le téléphone (même
+  recherche que Melofinds PC, même choix strict du bon morceau : `src/core/tunebat.js`). Si
+  Tunebat demande de vérifier qu'on n'est pas un robot, sa page s'ouvre dans une fenêtre :
+  tu fais la vérification toi-même (rien n'est contourné), la réponse est lue toute seule et
+  la fenêtre se ferme. Ouvrir la fiche d'une prod lance aussi la recherche (sans fenêtre).
+- **Site web** : Tunebat ne répond pas directement à un site ; « Ouvrir Tunebat » ouvre sa
+  recherche, et Melofinds PC cherche sur Tunebat quand la prod arrive.
+- Pas sur Tunebat (prod pas sortie sur Spotify) : l'app le dit ; « Je connais le BPM / la
+  clé » permet de les noter (gardés, envoyés au PC sans « (Finded) »).
 
-Le son du lecteur YouTube, lui, n'est pas lisible par un site (YouTube l'interdit) : sans
-son ni fichier ni copie, il faut passer par le micro.
-
-L'analyse se fait **sur le téléphone**, sans service extérieur ni PC
-(`src/core/audiokey.js`), et marche pour toutes les prods, sorties ou non sur Spotify :
-- **BPM** : force des attaques (kick, snare, hi-hats), puis la période qui revient le plus,
-  vérifiée sur les subdivisions (croches, doubles croches). Moitié / double ne se distinguent
-  pas au son (une trap à 150 en demi-temps = un son à 75) : la valeur « prod » (85-175) est
-  donnée, l'autre en « ou … ».
-- **Clé** : batterie écartée (séparation harmonique / percussive), notes des pics du
-  spectre, accordage détecté (samples pitchés), gamme puis tonique (profils de
-  Krumhansl-Kessler et Temperley, basses / 808, préférence mineur). La relative est donnée
-  (« mêmes notes que … ») ; « clé à confirmer » si le son est peu net.
-
-Testé sur des prods de synthèse au BPM et à la clé connus (808, kick, snare, hi-hats,
-accords, mélodie), en son propre et en « haut-parleur de téléphone capté au micro », avec
-accordage décalé et bruit : BPM juste (ou en alternative) 80 fois sur 80, clé 78 fois sur
-80 (les 2 erreurs marquées « à confirmer »). Sur de vraies prods, c'est une estimation :
-la description du beatmaker reste prioritaire. Les résultats s'affichent **en bleu**
-(« 150 BPM · ≈ ») et restent gardés dans ce navigateur. La fiche garde aussi un lien
-« Vérifier sur Tunebat ».
+Les valeurs de Tunebat s'affichent **en bleu** (« BPM · TB ») ; la description du
+beatmaker reste prioritaire.
 
 ## Mini-jeu pendant la recherche
 
@@ -240,50 +216,19 @@ La même app que la version web, plus ce que seul Android permet. Lien :
 bas de la page de recherche). Elle affiche l'app web de GitHub Pages : les nouveautés
 arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion ».
 
-- **Clé : Essentia + ton oreille.** La clé vient d'Essentia (Music Technology Group, UPF,
-  AGPL-3.0, chargé à la demande depuis jsDelivr) : vote de 3 profils « musique
-  électronique » sur 3 passages du morceau (début, milieu, fin) = 9 avis. Banc d'essai sur
-  570 vrais morceaux annotés (GiantSteps+, `scripts/key-eval.mjs`, lancé sur GitHub) : 71 %
-  de clés justes (67 % avec un seul passage, 40 % pour l'ancien algorithme maison) ; quand au
-  moins 7 avis sur 9 sont d'accord (« clé probable », plus de la moitié des morceaux), ~87 %.
-  Analyse sur 2 min, sans son (marche volume à 0). Aucun logiciel n'est
-  sûr à 100 % : la fenêtre BPM dit si la clé est sûre ou non et propose **« Vérifier la clé à
-  l'oreille »** (l'accord de chaque clé possible joué doucement par-dessus la prod ; « ✓ » =
-  clé vérifiée, gardée comme sûre, envoyée au PC sans « (Finded) »). Le BPM reste calculé
-  par Melofinds (fiable).
-- **BPM et clé tout seuls, en quelques secondes** : toucher « BPM » sur une prod (ou
-  ouvrir sa fiche) suffit. Le téléphone récupère lui-même le son de la vidéo YouTube avec
-  **NewPipe Extractor** (la bibliothèque libre et gratuite de l'appli NewPipe), le
-  télécharge en 4 morceaux à la fois, le décode avec le décodeur d'Android, garde 45 s au
-  milieu (mono, petit WAV dans le cache de l'app), l'analyse et l'efface. Rien à
-  télécharger soi-même, rien dans les fichiers du téléphone, pas de site intermédiaire.
-  Si YouTube refuse (vidéo privée, trop de demandes…), la fenêtre BPM s'ouvre avec noTube.
-  Code : `YtAudio.java` (sans Android, testé sur ordinateur par `YtAudioTest`),
-  `AudioPcm.java` (décodage), `ytAudio` dans le module natif.
+- **Tunebat** : bouton BPM et fiche, recherche depuis le téléphone (voir plus haut) ;
+  fenêtre Tunebat visible si une vérification est demandée (`TunebatActivity.java`).
 - **Descriptions complètes** (licence, BPM, clé) : quand YouTube ne donne que le début,
-  l'appli lit la page de la vidéo depuis le téléphone, sinon via NewPipe Extractor ; puis le
+  l'appli lit la page de la vidéo depuis le téléphone, sinon via NewPipe Extractor
+  (`YtDescription.java`) ; puis le
   PC en secours. Pour le site web : clé YouTube **du site** (API officielle gratuite,
   réservée à l'adresse du site, constante `SITE_YT_KEY` dans `artifact/app.js`) si elle est
   créée — 1 unité pour 50 vidéos, personne n'a de clé à taper. Les services « sans clé »
   (YouTube Operational API, Invidious, Jina…) ne marchent plus en 2026.
-- **Avec noTube (secours)** : dans la fenêtre BPM, « Autoriser l'accès aux sons
-  téléchargés » (une seule fois : autorisation « Musique et audio » d'Android — le
-  sélecteur de dossiers d'Android interdit de choisir Téléchargements depuis Android 11),
-  puis « 1. Télécharger le MP3 (noTube) ». De retour dans Melofinds, l'app trouve le MP3
-  dans Téléchargements, le relie à la prod (titre, puis durée), l'analyse et **le
-  supprime** (interrupteur, activé par défaut). Android demande de confirmer chaque
-  suppression, sauf si « Gestion des fichiers multimédias » est autorisée pour Melofinds
-  (lien direct dans la fenêtre BPM).
-- **Partager → Melofinds** : un son partagé depuis noTube, Fichiers… est relié à la prod
-  (sinon l'app demande laquelle) et analysé ; la copie est effacée ensuite.
 - **Retour haptique** léger sur chaque action (selon le réglage « vibrations » du
   téléphone), plus marqué quand le BPM est trouvé. La version web Android vibre aussi.
-- **Sécurité** : le son YouTube direct ne va que dans le cache de l'app (effacé après
-  analyse, restes effacés au bout de 10 min) ; identifiant de vidéo vérifié ; 25 Mo max.
-  Permissions Internet, micro et « Musique et audio » (jamais photos,
-  vidéos ni accès à tous les fichiers) ; l'app ne lit que des sons rangés dans
-  Téléchargements, et ne supprime qu'un son de Téléchargements qu'elle vient d'analyser et
-  qui correspond à la prod, par la demande officielle d'Android.
+- **Sécurité** : permissions Internet et micro (« Rec dessus ») seulement : aucun accès aux
+  fichiers ni aux médias du téléphone ; la fenêtre Tunebat ne va que sur Tunebat.
 - Code : `android/` (Capacitor 8, module natif `MelofindsNativePlugin.java`),
   `capacitor.config.json`, `apk/www` (écran hors connexion), construction
   `.github/workflows/apk-build.yml` (version GitHub « apk », jamais « dernière »).

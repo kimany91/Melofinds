@@ -76,15 +76,6 @@ jobs:
           chmod +x gradlew
           ./gradlew testReleaseUnitTest --no-daemon
 
-      # Vraie vidéo YouTube depuis les serveurs de GitHub (souvent bloqués par YouTube :
-      # indicatif seulement, le téléphone passe par sa propre connexion)
-      - name: Essai du son YouTube direct (indicatif)
-        continue-on-error: true
-        working-directory: android
-        env:
-          MF_NET_TEST: '1'
-        run: ./gradlew testReleaseUnitTest --rerun --no-daemon --tests '*YtAudioTest*'
-
       - name: Construire l'APK
         working-directory: android
         run: |
@@ -98,11 +89,8 @@ jobs:
           "$BT/apksigner" verify --print-certs Melofinds.apk | head -5
           "$BT/aapt" dump badging Melofinds.apk | grep -E "^package:|^application-label:|uses-permission" | tee badging.txt
           grep -q "package: name='io.github.kimany91.melofinds'" badging.txt
-          # Internet, micro et sons seulement : jamais photos, vidéos ni accès à tous les fichiers ;
-          # l'ancien accès « stockage » est limité aux vieux Android (maxSdkVersion)
-          ! grep -E "MANAGE_EXTERNAL_STORAGE|READ_MEDIA_IMAGES|READ_MEDIA_VIDEO|READ_MEDIA_VISUAL" badging.txt
-          grep -q "READ_EXTERNAL_STORAGE' maxSdkVersion='32'" badging.txt
-          grep -q "WRITE_EXTERNAL_STORAGE' maxSdkVersion='28'" badging.txt
+          # Internet et micro (« Rec dessus ») seulement : aucun accès aux fichiers ni aux médias
+          ! grep -E "MANAGE_EXTERNAL_STORAGE|READ_MEDIA_|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|MANAGE_MEDIA|CAMERA" badging.txt
           ls -l Melofinds.apk
 
       - name: Publier (version « apk »)

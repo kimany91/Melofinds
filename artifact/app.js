@@ -210,10 +210,11 @@ async function copyText(text) {
   try { await navigator.clipboard.writeText(text); toast('Lien copié'); } catch { toast('Copie impossible ici : sélectionne le lien à la main.'); }
 }
 
-// Analyse (avec cache par prod)
-// BPM / clé manquants : trouvés à l'écoute de la prod (bouton BPM) ou par le PC (Tunebat).
-// Ils s'affichent en bleu. Résultats gardés dans ce navigateur.
+// BPM / clé manquants : Tunebat (appli Android : depuis le téléphone ; Melofinds PC : à la
+// réception de la prod). Affichés en bleu, gardés dans ce navigateur.
 const tbCache = (() => { const c = local.get('tbCache', {}); return c && typeof c === 'object' ? c : {}; })();
+// les anciens résultats « analyse du son » (supprimée) sont oubliés
+for (const [k, v] of Object.entries(tbCache)) if (v?.src === 'audio') delete tbCache[k];
 function tbFor(id) {
   const t = tbCache[id];
   return t && (t.bpm || t.key) ? t : null;
@@ -224,20 +225,17 @@ function tbStore(id, t) {
   if (ids.length > 800) for (const k of ids.slice(0, ids.length - 800)) delete tbCache[k];
   local.set('tbCache', tbCache);
 }
-// BPM / clé calculés à partir du SON de la prod (src/core/audiokey.js), dans le navigateur :
-// l'app fait jouer la prod et l'écoute au micro, ou analyse un fichier audio choisi. Marche
-// pour toutes les prods (pas besoin qu'elles soient sorties sur Spotify) et sans le PC.
-const bpmJob = { id: null, stop: null };
+const bpmJob = { id: null };
 function tbState(id) {
   if (bpmJob.id === id) return 'busy';
   const c = tbCache[id];
   return c?.bpm || c?.key ? 'ok' : '';
 }
-const TB_LABEL = { '': 'Trouver le BPM et la clé (à partir du son de la prod)', busy: 'Analyse en cours…', ok: 'BPM et clé trouvés (en bleu) : toucher pour réécouter' };
+const TB_LABEL = { '': 'Trouver le BPM et la clé sur Tunebat', busy: 'Recherche sur Tunebat…', ok: 'BPM et clé trouvés (en bleu) : toucher pour les détails' };
 function tbButton(item) {
   const st = tbState(item.id);
   return h('button', { type: 'button', class: `tb-btn${st ? ` ${st}` : ''}`, 'data-tb': item.id, 'aria-label': TB_LABEL[st], title: TB_LABEL[st],
-    onclick: (e) => { e.stopPropagation(); if (nativeYt.ok && !tbState(item.id)) quickBpm(item); else openBpmSheet(item); } }, 'BPM');
+    onclick: (e) => { e.stopPropagation(); if (nativeYt.tb && !tbState(item.id)) quickBpm(item); else openBpmSheet(item); } }, 'BPM');
 }
 function syncTbUi() {
   $$('.tb-btn[data-tb]').forEach((b) => {
@@ -247,240 +245,13 @@ function syncTbUi() {
     b.title = TB_LABEL[st];
   });
 }
-// Une seule réponse : le BPM et la clé retenus par l'analyse (pas d'alternative affichée)
 function bpmText(t) {
   return [t.bpm ? `${t.bpm} BPM` : null, t.key || null].filter(Boolean).join(' · ');
 }
-// Résultat d'analyse → gardé (en bleu). La description du beatmaker reste prioritaire.
-function keepAnalysis(item, res, how) {
-  if (!res || (!res.bpm && !res.key)) return null;
-  const sure = res.keyBy === 'essentia' ? !!res.keySure : res.keyConf >= 0.3;
-  const t = { bpm: res.bpm, key: res.key, alt: res.bpmAlt, keyAlt: res.keyAlt, unsure: !sure, at: Date.now(), src: 'audio', how, dbg: res.dbg || '',
-    cands: res.keyCands || (res.key ? [res.key, res.keyAlt].filter(Boolean) : []), tuning: res.tuning || 0, votes: res.keyVotes || '' };
-  tbStore(item.id, t);
-  syncTbUi();
-  refreshItem(item);
-  haptic('success');
-  pcSyncTags(ytIdOf(item) || item.id);
-  return t;
-}
-// --- Clé : Essentia (Music Technology Group, Universitat Pompeu Fabra ; AGPL-3.0), chargé à la
-// demande. Banc d'essai sur 570 vrais morceaux annotés (GiantSteps+, scripts/key-eval.mjs) :
-// 67 % de clés justes avec le vote de 3 profils, contre 40 % pour l'ancien algorithme maison.
-// Aucun logiciel n'est sûr à 100 % : quand les profils ne sont pas d'accord, l'app le dit et
-// propose de vérifier à l'oreille (accord joué par-dessus la prod).
-const ESS_CDN = 'https://cdn.jsdelivr.net/npm/essentia.js@0.1.3/dist/';
-const KEY_PROFILES = ['edmm', 'edma', 'bgate']; // profils « musique électronique »
-const KEY_NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-const KEY_FLAT = { Db: 'C#', Eb: 'D#', Gb: 'F#', Ab: 'G#', Bb: 'A#' };
-let essP = null;
-function loadScript(src) {
-  return new Promise((ok, ko) => {
-    const el = document.createElement('script');
-    el.src = src; el.async = true; el.crossOrigin = 'anonymous';
-    el.onload = ok; el.onerror = () => ko(new Error(`chargement impossible : ${src}`));
-    document.head.append(el);
-  });
-}
-function essentiaLib() {
-  essP ||= (async () => {
-    if (!window.EssentiaWASM) await loadScript(`${ESS_CDN}essentia-wasm.web.js`);
-    if (!window.Essentia) await loadScript(`${ESS_CDN}essentia.js-core.umd.js`);
-    const m = window.EssentiaWASM({ locateFile: (f) => ESS_CDN + f });
-    const wasm = typeof m?.then === 'function' ? await m : await m.ready;
-    return new window.Essentia(wasm);
-  })().catch((e) => { essP = null; throw e; });
-  return essP;
-}
-function essNorm(r) {
-  if (!r?.key || !r?.scale) return null;
-  const n = KEY_FLAT[r.key] || r.key;
-  return KEY_NOTES.includes(n) ? `${n} ${r.scale === 'minor' ? 'min' : 'maj'}` : null;
-}
-function keyShift(key, semis, mode) {
-  const [n, m] = key.split(' ');
-  return `${KEY_NOTES[(KEY_NOTES.indexOf(n) + semis + 12) % 12]} ${mode || m}`;
-}
-// Vote de 9 avis : 3 passages du morceau (début, milieu, fin) × 3 profils. Banc d'essai sur
-// 570 vrais morceaux : 71 % de clés justes (67 % avec un seul passage) ; quand au moins 7 avis
-// sur 9 sont d'accord (plus de la moitié des morceaux), c'est juste ~87 % du temps.
-async function essentiaKey(mono, rate) {
-  const ess = await essentiaLib();
-  const R = 22050;
-  let x = rate === R ? mono : resample(mono, rate, R);
-  const max = 120 * R;
-  if (x.length > max) { const from = Math.floor((x.length - max) / 2); x = x.subarray(from, from + max); }
-  // 3 passages : début / milieu / fin (40 s chacun) ; morceau court → 3 tiers qui se chevauchent
-  const segLen = Math.min(40 * R, Math.max(Math.floor(x.length / 2), Math.min(x.length, 20 * R)));
-  const segs = x.length >= 3 * 20 * R
-    ? [x.subarray(0, segLen), x.subarray(Math.floor((x.length - segLen) / 2), Math.floor((x.length - segLen) / 2) + segLen), x.subarray(x.length - segLen)]
-    : [x];
-  const run = (seg, p) => {
-    const v = ess.arrayToVector(seg);
-    try { return essNorm(ess.KeyExtractor(v, true, 4096, 4096, 12, 3500, 60, 25, 0.2, p, R, 0.0001, 440, 'cosine', 'hann')); } catch { return null; } finally { try { v.delete?.(); } catch { /* rien */ } }
-  };
-  const ops = [];
-  let tie = null;
-  for (let i = 0; i < segs.length; i++) {
-    for (const p of KEY_PROFILES.slice(0, 3)) {
-      const k = run(segs[i], p);
-      ops.push(k);
-      if (p === 'edmm' && (segs.length === 1 || i === 1)) tie = k; // égalité : le milieu (edmm)
-    }
-    await wait(0); // laisse respirer l'écran entre deux passages
-  }
-  const votes = new Map();
-  for (const k of ops) if (k) votes.set(k, (votes.get(k) || 0) + 1);
-  if (!votes.size) return null;
-  const ranked = [...votes].sort((a, b) => b[1] - a[1] || (a[0] === tie ? -1 : b[0] === tie ? 1 : 0));
-  const [key, n] = ranked[0];
-  const total = ops.filter(Boolean).length;
-  const rel = key.endsWith('min') ? keyShift(key, 3, 'maj') : keyShift(key, -3, 'min');
-  const cands = [...new Set([...ranked.map(([k]) => k), rel, keyShift(key, 7), keyShift(key, 5)])].slice(0, 6);
-  return { key, sure: total >= 3 && n / total >= 0.75, agree: n, total, candidates: cands };
-}
-// BPM (maison, fiable) + clé (Essentia ; l'ancienne méthode seulement si Essentia ne charge pas)
-async function analyzeFull(mono, rate) {
-  const res = analyzeAudio(mono, rate);
-  if (!res) return res;
-  try {
-    const k = await essentiaKey(mono, rate);
-    if (k) Object.assign(res, { key: k.key, keySure: k.sure, keyConf: k.sure ? 0.85 : k.agree / k.total >= 0.5 ? 0.55 : 0.3, keyVotes: `${k.agree}/${k.total}`, keyCands: k.candidates, keyBy: 'essentia' });
-  } catch { res.keyBy = 'interne'; res.keySure = false; }
-  return res;
-}
-// Accord tenu (doux) d'une clé, joué par-dessus la prod pour vérifier à l'oreille.
-// `tuning` : décalage de la prod par rapport au La 440 (en demi-tons), pour ne pas frotter.
-const drone = { ctx: null, out: null, oscs: [] };
-function droneStop() {
-  const d = drone;
-  if (!d.out) return;
-  const t = d.ctx.currentTime;
-  d.out.gain.cancelScheduledValues(t);
-  d.out.gain.setTargetAtTime(0, t, 0.06);
-  const old = d.oscs;
-  setTimeout(() => old.forEach((o) => { try { o.stop(); } catch { /* déjà arrêté */ } }), 400);
-  d.out = null;
-  d.oscs = [];
-}
-function dronePlay(key, tuning = 0) {
-  droneStop();
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC || !key) return;
-  drone.ctx ||= new AC();
-  const ctx = drone.ctx;
-  ctx.resume?.();
-  const [n, m] = key.split(' ');
-  const f0 = 440 * 2 ** ((KEY_NOTES.indexOf(n) - 9 + (Number(tuning) || 0)) / 12) / 2; // tonique, octave 3
-  const out = ctx.createGain();
-  out.gain.value = 0;
-  const lp = ctx.createBiquadFilter();
-  lp.type = 'lowpass';
-  lp.frequency.value = 1500;
-  out.connect(lp).connect(ctx.destination);
-  const third = 2 ** ((m === 'min' ? 3 : 4) / 12);
-  drone.oscs = [[0.5, 0.5], [1, 0.35], [third, 0.28], [2 ** (7 / 12), 0.28], [2, 0.16]].map(([r, g]) => {
-    const o = ctx.createOscillator();
-    o.type = 'triangle';
-    o.frequency.value = f0 * r;
-    const gn = ctx.createGain();
-    gn.gain.value = g;
-    o.connect(gn).connect(out);
-    o.start();
-    return o;
-  });
-  out.gain.setTargetAtTime(0.14, ctx.currentTime, 0.05);
-  drone.out = out;
-}
-function monoOf(buf) {
-  const n = buf.length;
-  const out = new Float32Array(n);
-  for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < n; i++) out[i] += d[i] / buf.numberOfChannels; }
-  return out;
-}
-async function analyzeFile(item, file, ui) {
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) { ui.say('Ce navigateur ne sait pas lire l’audio'); return null; }
-  if (file.size > 80e6) { ui.say('Fichier trop lourd (80 Mo max)'); return null; }
-  ui.say('Lecture du fichier…');
-  const ctx = new AC();
-  try {
-    const buf = await ctx.decodeAudioData(await file.arrayBuffer());
-    // 2 min au milieu du morceau (l’intro et la fin sont souvent vides)
-    const mono = monoOf(buf);
-    const len = Math.min(mono.length, 120 * buf.sampleRate);
-    const from = Math.max(0, Math.floor((mono.length - len) / 2));
-    ui.say('Analyse…');
-    await wait(30);
-    const res = await analyzeFull(mono.subarray(from, from + len), buf.sampleRate);
-    if (res) res.duration = buf.duration;
-    return res;
-  } catch {
-    ui.say('Fichier illisible : prends un MP3, WAV ou M4A');
-    return null;
-  } finally { try { ctx.close(); } catch { /* déjà fermé */ } }
-}
-async function listenAndAnalyze(item, ui, seconds = 15) {
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!navigator.mediaDevices?.getUserMedia || !AC) { ui.say('Ce navigateur ne sait pas utiliser le micro'); return null; }
-  let ctx = null; let stream = null; let cap = null; let raf = 0; let stopped = false;
-  bpmJob.stop = () => { stopped = true; };
-  const release = () => {
-    cancelAnimationFrame(raf);
-    stream?.getTracks().forEach((t) => t.stop());
-    try { cap?.node?.disconnect(); } catch { /* déjà débranché */ }
-    try { ctx?.close(); } catch { /* déjà fermé */ }
-  };
-  try {
-    try { ctx = new AC(); ctx.resume().catch(() => {}); } catch { ctx = null; }
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints(false) }); } catch (e) {
-      ui.say(e?.name === 'NotAllowedError' ? 'Micro refusé : autorise-le dans les réglages du navigateur' : 'Micro introuvable');
-      return null;
-    }
-    cap = await setupCapture(ctx, stream);
-    if (!cap) { ui.say('Ce navigateur ne sait pas capter le micro'); return null; }
-    ui.say('Chargement de la prod…');
-    if (!(await loadBeat(item)) || stopped) { if (!stopped) ui.say('La prod ne se lance pas ici'); return null; }
-    // au cœur de la prod (l'intro est souvent vide)
-    const dur = Number(item.duration) || 0;
-    seekBeat(dur > 60 ? Math.round(dur * 0.3) : Math.max(0, playerNow()));
-    ytSend('setVolume', [100]);
-    ytSend('playVideo');
-    if (!(await waitFor(() => isPlaying(), 8000)) || stopped) { if (!stopped) ui.say('La prod ne démarre pas : réessaie'); return null; }
-    await wait(500);
-    // niveau du micro (pour dire si on n'entend rien)
-    const an = ctx.createAnalyser();
-    an.fftSize = 1024;
-    ctx.createMediaStreamSource(stream).connect(an);
-    const buf = new Float32Array(an.fftSize);
-    let loud = 0;
-    const meter = () => { an.getFloatTimeDomainData(buf); let p = 0; for (const v of buf) p = Math.max(p, Math.abs(v)); loud = Math.max(loud, p); ui.level(p); raf = requestAnimationFrame(meter); };
-    meter();
-    cap.start();
-    for (let left = seconds; left > 0 && !stopped; left--) { ui.say(`J’écoute la prod… ${left} s`); await wait(1000); }
-    await cap.stop();
-    ytSend('pauseVideo');
-    if (stopped) return null;
-    if (loud < 0.02) { ui.say('Je n’entends pas la prod (téléphone sans son ?). Monte le son, ou choisis le fichier de la prod : ça marche sans son.'); return null; }
-    ui.say('Analyse…');
-    await wait(30);
-    return await analyzeFull(captureToMono(cap), cap.rate);
-  } finally { release(); bpmJob.stop = null; }
-}
-// --- Sans son ni PC : le MP3 de la prod, téléchargé avec noTube (gratuit, sans compte,
-// sans installation). Son astuce officielle : remplacer « youtube.com » par son domaine dans
-// le lien lance le téléchargement du MP3. L'app ne peut pas le faire à ta place (un site
-// n'a pas le droit d'en piloter un autre) : un appui pour télécharger, un pour analyser.
-const NOTUBE = 'https://notube.lol';
-const notubeUrl = (item) => `${NOTUBE}/watch?v=${encodeURIComponent(ytIdOf(item))}`;
 
 // ---------------------------------------------------------------------------
-// App Android (APK) : la même app web, avec un pont vers le téléphone (MelofindsNative).
-// - retour haptique léger sur les actions (aussi sur la version web Android) ;
-// - « Télécharger le MP3 » : la prod est mise en attente ; au retour dans l'app, le MP3
-//   est trouvé dans le dossier autorisé (Téléchargements), relié à la prod (titre + durée),
-//   analysé, puis supprimé (seulement lui) ;
-// - « Partager → Melofinds » depuis noTube ou Fichiers : le son est analysé tout seul.
+// App Android (APK) : la même app web, avec un pont vers le téléphone (MelofindsNative) :
+// retour haptique, Tunebat depuis le téléphone, descriptions complètes, QR code du PC.
 const isNative = () => Boolean(window.Capacitor?.isNativePlatform?.());
 const mfn = () => (isNative() ? window.Capacitor?.Plugins?.MelofindsNative || null : null);
 const APK_URL = 'https://github.com/kimany91/Melofinds/releases/download/apk/Melofinds.apk';
@@ -497,7 +268,7 @@ function haptic(kind = 'tap') {
 document.addEventListener('click', (e) => {
   const el = e.target.closest?.('button, a, [role="button"], .chip, .pill, input[type="checkbox"], label, select');
   if (el && !el.disabled) haptic('tap');
-  // dans l'APK : les liens externes (noTube, YouTube…) s'ouvrent dans le navigateur / l'appli
+  // dans l'APK : les liens externes (YouTube, Tunebat…) s'ouvrent dans le navigateur / l'appli
   const a = e.target.closest?.('a[href^="http"]');
   if (a && mfn() && (a.target === '_blank' || !a.href.startsWith(location.origin))) {
     e.preventDefault();
@@ -505,476 +276,160 @@ document.addEventListener('click', (e) => {
   }
 }, true);
 
-// --- Prods qui attendent leur MP3 (téléchargé avec noTube)
-const MP3_WAIT_MS = 3 * 3600e3;
-function mp3Waits() {
-  const list = (local.get('mp3Wait', []) || []).filter((w) => w && /^[\w-]{11}$/.test(w.id) && Date.now() - (w.at || 0) < MP3_WAIT_MS);
-  return list;
-}
-function addMp3Wait(item) {
-  const id = ytIdOf(item);
-  if (!id) return;
-  const list = mp3Waits().filter((w) => w.id !== id);
-  list.push({ id, title: String(item.title || '').slice(0, 200), duration: Number(item.duration) || 0, at: Date.now() });
-  local.set('mp3Wait', list.slice(-20));
-}
-function dropMp3Wait(id) { local.set('mp3Wait', mp3Waits().filter((w) => w.id !== id)); }
-const mp3Delete = () => local.get('mp3Delete', true) !== false;
-
-// Nom de fichier ↔ prod : titre proche (noTube nomme le MP3 avec le titre de la vidéo)
-const fileBase = (name) => String(name || '').replace(/\.[a-z0-9]{2,5}$/i, '').replace(/\(?\b(?:notube|ytmp3|y2mate|320\s*kbps|128\s*kbps|mp3)\b\)?/gi, ' ').replace(/[_]+/g, ' ').trim();
-function nameScore(fileName, title) {
-  const f = fileBase(fileName);
-  if (!f || !title) return 0;
-  const t = String(title);
-  const nf = tbNorm(f); const nt = tbNorm(t); const nb = tbNorm(beatName(t));
-  if (nf && nt && (nf === nt || nf.includes(nt) || nt.includes(nf))) return 1;
-  return Math.max(similarity(f, t), nb.length >= 4 && nf.includes(nb) ? 0.75 : 0, similarity(f, beatName(t)));
-}
-function itemForId(id, fallback) {
-  return session?.items?.get(id) || state.beats.find((b) => b.id === id) || pc.queue[id]?.it
-    || { id, url: `https://www.youtube.com/watch?v=${id}`, title: fallback?.title || id, duration: fallback?.duration || 0 };
-}
-// Lecture d'un fichier du téléphone, par morceaux de 1 Mo (base64 → octets)
-async function readNative(ref, size = 0) {
-  const parts = [];
-  let offset = 0;
-  for (let i = 0; i < 80; i++) {
-    const r = await mfn().readChunk({ uri: ref, offset, length: 1 << 20 });
-    const bin = atob(r.data || '');
-    const u8 = new Uint8Array(bin.length);
-    for (let k = 0; k < bin.length; k++) u8[k] = bin.charCodeAt(k);
-    parts.push(u8);
-    offset += u8.length;
-    if (r.eof || !u8.length || (size && offset >= size)) break;
-  }
-  return new Blob(parts);
-}
-const quietUi = { say() {}, level() {} };
-const mp3Done = new Set(local.get('mp3Done', []) || []);
-function markDone(uri) { mp3Done.add(uri); local.set('mp3Done', [...mp3Done].slice(-200)); }
-
-let scanning = false;
-async function scanDownloads() {
-  const n = mfn();
-  const waits = mp3Waits();
-  if (!n || scanning || !waits.length || document.visibilityState !== 'visible') return;
-  scanning = true;
-  try {
-    const f = await n.folder();
-    if (!f?.granted) return;
-    const since = Math.min(...waits.map((w) => w.at)) - 120e3;
-    const files = ((await n.listAudio({ since }))?.files || []).filter((x) => !mp3Done.has(x.uri)).sort((a, b) => a.modified - b.modified);
-    for (const file of files) {
-      const left = mp3Waits();
-      if (!left.length) break;
-      // la prod qui correspond : titre proche ; s'il n'y a qu'une prod en attente et qu'un
-      // nouveau fichier, on l'accepte aussi, mais la durée devra confirmer avant de supprimer
-      const scored = left.filter((w) => file.modified >= w.at - 120e3).map((w) => ({ w, s: nameScore(file.name, w.title) })).sort((a, b) => b.s - a.s);
-      const fresh = files.filter((x) => !mp3Done.has(x.uri));
-      let pick = scored[0] && scored[0].s >= 0.45 ? scored[0] : null;
-      if (!pick && scored.length === 1 && left.length === 1 && fresh.length === 1) pick = scored[0];
-      if (!pick) continue;
-      const item = itemForId(pick.w.id, pick.w);
-      bpmJob.id = item.id;
-      syncTbUi();
-      let res = null;
-      try { res = await analyzeFile(item, await readNative(file.uri, file.size), quietUi); } catch { res = null; } finally { bpmJob.id = null; syncTbUi(); }
-      markDone(file.uri);
-      if (!res || (!res.bpm && !res.key)) { haptic('warn'); toast(`Son illisible : ${file.name}`); continue; }
-      const dur = Number(pick.w.duration) || 0;
-      const durOk = !dur || !res.duration || Math.abs(res.duration - dur) <= 8;
-      if (!durOk && pick.s < 0.75) continue; // ni le nom ni la durée ne collent : on ne touche à rien
-      keepAnalysis(item, res, 'téléchargement');
-      dropMp3Wait(pick.w.id);
-      let gone = false;
-      if (mp3Delete() && durOk && (pick.s >= 0.45 || dur)) {
-        try { gone = Boolean((await n.deleteFile({ uri: file.uri }))?.ok); } catch { gone = false; }
-      }
-      toast(`${displayTitle(item.title)} : ${bpmText(tbFor(item.id) || res)}${gone ? ' · MP3 supprimé' : ''}`, { ms: 5000 });
-    }
-  } catch { /* dossier retiré, etc. : on réessaiera */ } finally { scanning = false; }
-}
-
-// --- « Partager → Melofinds »
-async function takeShared() {
-  const n = mfn();
-  if (!n) return;
-  let items = [];
-  try { items = (await n.takeShared())?.items || []; } catch { return; }
-  for (const it of items) {
-    if (!it?.path) continue;
-    let blob = null;
-    try { blob = await readNative(it.path, it.size); } catch { blob = null; }
-    n.dropShared({ path: it.path }).catch(() => {});
-    if (!blob?.size) { toast('Son partagé illisible'); continue; }
-    // à quelle prod ? d'abord celles qui attendent leur MP3, puis la recherche, puis les favoris
-    const pool = [...mp3Waits().map((w) => itemForId(w.id, w)), ...(session?.items ? [...session.items.values()] : []), ...state.beats]
-      .filter((x, i, arr) => ytIdOf(x) && arr.findIndex((y) => ytIdOf(y) === ytIdOf(x)) === i);
-    const best = pool.map((x) => ({ x, s: nameScore(it.name, x.title) })).sort((a, b) => b.s - a.s)[0];
-    if (best && best.s >= 0.45) {
-      bpmJob.id = best.x.id;
-      syncTbUi();
-      let res = null;
-      try { res = await analyzeFile(best.x, blob, quietUi); } finally { bpmJob.id = null; syncTbUi(); }
-      if (res) { keepAnalysis(best.x, res, 'partage'); dropMp3Wait(ytIdOf(best.x)); toast(`${displayTitle(best.x.title)} : ${bpmText(tbFor(best.x.id) || res)}`, { ms: 5000 }); }
-      else toast('Son partagé illisible');
-    } else chooseProdFor(it.name, blob, pool);
-  }
-}
-function chooseProdFor(name, blob, pool) {
-  const list = pool.slice(0, 15);
-  openDrawer('À quelle prod ?', [
-    h('p', { class: 'muted', style: 'margin:0' }, `Je n’ai pas reconnu « ${fileBase(name)} ». Touche la prod de ce son :`),
-    list.length ? h('div', { class: 'pc-list' }, list.map((x) => h('button', { type: 'button', class: 'pc-row pc-pick', onclick: async () => {
-      closeDrawer();
-      const res = await analyzeFile(x, blob, quietUi);
-      if (res) { keepAnalysis(x, res, 'partage'); toast(`${displayTitle(x.title)} : ${bpmText(tbFor(x.id) || res)}`); } else toast('Son illisible');
-    } }, h('span', { class: 'pc-row-main' }, h('b', {}, displayTitle(x.title)), h('span', {}, x.channel || ''))))) : h('p', { class: 'hint' }, 'Fais d’abord une recherche, puis repartage le son.'),
-  ]);
-}
-
-// Accès aux sons téléchargés (autorisation « Musique et audio », une fois) + suppression
-const nativeFolder = { granted: false, name: '', manageMedia: false, manageMediaAvailable: false };
-async function refreshFolder() { try { Object.assign(nativeFolder, await mfn().folder()); } catch { /* pas dans l'APK */ } return nativeFolder; }
-function nativeFolderRow(onChange) {
-  const row = h('div', { class: 'apk-folder' });
-  const del = h('input', { type: 'checkbox', checked: mp3Delete() });
-  del.addEventListener('change', () => local.set('mp3Delete', del.checked));
-  const draw = () => {
-    row.replaceChildren(
-      nativeFolder.granted
-        ? h('span', { class: 'apk-ok' }, '✓ Accès aux MP3 de Téléchargements')
-        : h('button', { type: 'button', class: 'primary', onclick: async () => {
-          try { Object.assign(nativeFolder, await mfn().pickFolder()); } catch { /* refusé */ }
-          if (!nativeFolder.granted) toast('Autorisation refusée : Réglages → Applis → Melofinds → Autorisations → Musique et audio');
-          draw();
-          onChange?.();
-          if (nativeFolder.granted) { haptic('success'); scanDownloads(); }
-        } }, 'Autoriser l’accès aux sons téléchargés (une fois)'),
-      h('label', { class: 'cobalt-auto' }, del, ' Supprimer le MP3 après analyse (seulement lui)'),
-      nativeFolder.granted && del.checked && nativeFolder.manageMediaAvailable && !nativeFolder.manageMedia
-        ? h('button', { type: 'button', class: 'link', onclick: async () => { try { await mfn().openManageMedia(); } catch { toast('Réglage introuvable sur ce téléphone'); } } },
-          'Supprimer sans confirmation : autoriser « Gestion des fichiers multimédias »')
-        : '',
-    );
-  };
-  del.addEventListener('change', () => draw());
-  draw();
-  refreshFolder().then(() => { draw(); onChange?.(); });
-  // retour des réglages d'Android : l'état a pu changer
-  const back = () => { if (document.visibilityState === 'visible' && row.isConnected) refreshFolder().then(() => { draw(); onChange?.(); }); };
-  document.addEventListener('visibilitychange', back);
-  return row;
-}
-
+// Ce que sait faire l'APK installée (les anciennes versions n'ont pas tout)
+const nativeYt = { desc: false, scan: false, tb: false, checked: false };
 if (isNative()) {
   document.documentElement.classList.add('apk');
-  refreshFolder();
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { scanDownloads(); takeShared(); } });
-  setInterval(() => { if (mp3Waits().length) scanDownloads(); }, 15000);
-  try { mfn()?.addListener('shared', () => takeShared()); } catch { /* ancienne version */ }
-  setTimeout(() => { scanDownloads(); takeShared(); }, 1500);
-}
-
-// Son YouTube direct (APK) : le téléphone récupère lui-même le son de la vidéo (NewPipe
-// Extractor, libre et gratuit), l'analyse puis l'efface. Rien à télécharger, rien dans
-// les fichiers du téléphone. L'app web seule (navigateur) garde noTube.
-const nativeYt = { ok: false, desc: false, scan: false, checked: false };
-const YT_STEP = { find: 'Je trouve le son de la vidéo…', download: 'Téléchargement du son…', decode: 'Décodage…' };
-const ytListeners = new Map();
-if (isNative()) {
   (async () => {
     try {
       const f = (await mfn().info())?.features || [];
-      nativeYt.ok = f.includes('ytAudio');
       nativeYt.desc = f.includes('ytDesc');
       nativeYt.scan = f.includes('scanQr');
+      nativeYt.tb = f.includes('tunebat');
     } catch { /* ancienne version de l'APK */ }
     nativeYt.checked = true;
   })();
-  try { mfn()?.addListener('ytProgress', (e) => ytListeners.get(e?.id)?.say(YT_STEP[e?.step] || 'Un instant…')); } catch { /* ancienne version */ }
 }
-// WAV 16 bits → son mono (nombres entre -1 et 1)
-function wavMono(buf) {
-  const dv = new DataView(buf);
-  if (buf.byteLength < 44 || dv.getUint32(0, false) !== 0x52494646) return null; // « RIFF »
-  let p = 12; let rate = 0; let ch = 1; let bits = 16;
-  while (p + 8 <= buf.byteLength) {
-    const id = dv.getUint32(p, false); const size = dv.getUint32(p + 4, true);
-    p += 8;
-    if (id === 0x666d7420) { ch = dv.getUint16(p + 2, true) || 1; rate = dv.getUint32(p + 4, true); bits = dv.getUint16(p + 14, true); } // « fmt  »
-    else if (id === 0x64617461) { // « data »
-      if (bits !== 16 || !rate) return null;
-      const n = Math.floor(Math.min(size, buf.byteLength - p) / (2 * ch));
-      const out = new Float32Array(n);
-      for (let i = 0; i < n; i++) { let v = 0; for (let c = 0; c < ch; c++) v += dv.getInt16(p + (i * ch + c) * 2, true); out[i] = v / ch / 32768; }
-      return { mono: out, rate };
+
+// --- Tunebat (APK) : recherche depuis le téléphone, exactement comme Melofinds PC. Si Tunebat
+// demande une vérification, une fenêtre Tunebat s'ouvre et c'est l'utilisateur qui la fait
+// (rien n'est contourné) ; la réponse est lue toute seule et la fenêtre se ferme.
+function tbItems(body) {
+  try { const d = JSON.parse(body || ''); const it = d?.data?.items; return Array.isArray(it) ? it : null; } catch { return null; }
+}
+async function tunebatFind(item, { browser = false } = {}) {
+  const n = mfn();
+  if (!n || !nativeYt.tb) return { status: 'off' };
+  const ctx = { title: item.title, channel: item.channel, duration: item.duration };
+  const qs = tbQueries(ctx);
+  if (!qs.length) return { status: 'none' };
+  for (const q of qs) {
+    let items = null;
+    try { items = tbItems((await n.tunebatSearch({ term: q }))?.body); } catch { items = null; }
+    if (!items && browser) {
+      try { items = tbItems((await n.tunebatBrowser({ term: q }))?.body); } catch (e) { if (e?.code === 'cancel') return { status: 'cancel' }; }
     }
-    p += size + (size & 1);
+    if (!items) return { status: 'blocked' };
+    const hit = tbPick(items, ctx);
+    if (hit) return { status: 'ok', hit };
   }
-  return null;
+  return { status: 'none' };
 }
-async function ytAnalyze(item, ui) {
-  const id = ytIdOf(item);
-  if (!id || !nativeYt.ok) throw new Error('Pas disponible ici');
-  ytListeners.set(id, ui);
-  ui.say(YT_STEP.find);
-  let r;
-  try { r = await mfn().ytAudio({ id, seconds: 120 }); } finally { ytListeners.delete(id); }
-  try {
-    ui.say('Analyse…');
-    const w = wavMono(await (await readNative(r.path, r.size)).arrayBuffer());
-    if (!w) throw new Error('Son illisible');
-    await wait(20);
-    const res = await analyzeFull(w.mono, w.rate);
-    if (res) {
-      res.duration = r.duration;
-      const fixed = r.rateMeasured && r.rateReported && Math.abs(r.rateMeasured / r.rateReported - 1) > 0.03;
-      res.dbg = [`${r.format || '?'} ${r.kbps || '?'} kb/s`, `${r.rateReported || r.rate} Hz${fixed ? ` (mesuré ${r.rateMeasured} Hz : corrigé)` : ''}`, r.ms?.total ? `${(r.ms.total / 1000).toFixed(1)} s` : ''].filter(Boolean).join(' · ');
-    }
-    return res;
-  } finally { mfn().dropShared({ path: r.path }).catch(() => {}); }
-}
-// Une prod à la fois (le téléphone télécharge et analyse dans l'ordre)
-async function ytRun(item, ui) {
-  await waitFor(() => !bpmJob.id, 120000);
-  bpmJob.id = item.id;
+function keepTunebat(item, hit) {
+  const t = { bpm: hit.bpm, key: hit.key, src: 'tunebat', at: Date.now(), name: hit.name || '', artists: (hit.artists || []).slice(0, 3) };
+  tbStore(item.id, t);
   syncTbUi();
-  try {
-    const res = await ytAnalyze(item, ui);
-    if (!res || (!res.bpm && !res.key)) throw new Error('Pas assez de son exploitable dans cette prod');
-    return keepAnalysis(item, res, 'son YouTube');
-  } finally { bpmJob.id = null; syncTbUi(); }
+  refreshItem(item);
+  haptic('success');
+  pcSyncTags(ytIdOf(item) || item.id);
+  return t;
 }
-// Fiche ouverte sans BPM / clé → trouvé tout seul (une seule tentative par prod)
-const ytTried = new Set();
-let ytQueue = Promise.resolve();
-function ytAuto(item) {
+const TB_MISS = {
+  none: 'Cette prod n’est pas sur Tunebat (pas sortie sur Spotify, ou sous un autre nom).',
+  blocked: 'Tunebat n’a pas répondu : réessaie dans un moment.',
+};
+// Fiche ouverte sans BPM / clé : Tunebat tout seul, sans ouvrir de fenêtre (une fois par prod)
+const tbTried = new Set();
+let tbQueue = Promise.resolve();
+function tbAuto(item) {
   const id = ytIdOf(item);
-  if (!id || !nativeYt.ok || tbFor(id) || ytTried.has(id)) return;
-  ytTried.add(id);
-  ytQueue = ytQueue.then(() => (tbFor(id) ? null : ytRun(item, quietUi))).catch(() => {});
+  if (!id || !nativeYt.tb || tbFor(id) || tbTried.has(id)) return;
+  tbTried.add(id);
+  tbQueue = tbQueue.then(async () => {
+    if (tbFor(id)) return;
+    const r = await tunebatFind(item);
+    if (r.status === 'ok') keepTunebat(item, r.hit);
+  }).catch(() => {});
 }
-// Bouton BPM dans l'APK : tout se fait d'un coup ; en cas d'échec, les autres façons
+// Bouton BPM dans l'APK : Tunebat d'un coup (fenêtre Tunebat si une vérification est demandée)
 async function quickBpm(item) {
   if (bpmJob.id === item.id) return;
   const id = ytIdOf(item);
-  if (id) ytTried.add(id);
+  if (id) tbTried.add(id);
   haptic();
-  const t0 = Date.now();
-  try {
-    const t = await ytRun(item, quietUi);
-    toast(`${bpmText(t)} · trouvé en ${Math.max(1, Math.round((Date.now() - t0) / 1000))} s`);
-  } catch (e) {
-    haptic('warn');
-    openBpmSheet(item, e?.message || 'Son introuvable');
-  }
-}
-
-// Copie d'écoute de la prod gardée sur ce téléphone (prods envoyées sur le PC) : analysée
-// sans jouer de son, même PC éteint. L'instru d'abord (pas de voix dessus).
-async function pcCopyFor(item) {
-  const id = ytIdOf(item);
-  if (!WEB || !id || !pcLib.data) return null;
-  const p = pcProjects().find((x) => x.y === id);
-  if (!p) return null;
-  for (const f of [p.files.find((x) => x.i), pcTarget(p)].filter(Boolean)) {
-    if (!pcLib.cached.has(f.f)) continue;
-    const row = await pcAudioStore.get(f.f);
-    if (row?.blob?.size) return row.blob;
-  }
-  return null;
-}
-// Une copie arrive du PC pour une prod YouTube sans BPM / clé : analysée tout de suite, en silence.
-let autoQueue = Promise.resolve();
-function autoAnalyzeCopy(fid, blob) {
-  autoQueue = autoQueue.then(() => autoAnalyzeOne(fid, blob)).catch(() => {}); // une à la fois
-  return autoQueue;
-}
-async function autoAnalyzeOne(fid, blob) {
-  const p = pcProjects().find((x) => x.y && x.files.some((f) => f.f === fid));
-  if (!p || !/^[\w-]{11}$/.test(p.y) || tbFor(p.y)) return;
-  await waitFor(() => !bpmJob.id, 120000);
-  const item = { id: p.y, url: `https://www.youtube.com/watch?v=${p.y}`, title: p.t || p.n };
   bpmJob.id = item.id;
   syncTbUi();
-  try {
-    const res = await analyzeFile(item, blob, { say() {}, level() {} });
-    if (res) keepAnalysis(item, res, 'copie du PC');
-  } finally { bpmJob.id = null; syncTbUi(); }
+  let r;
+  try { r = await tunebatFind(item, { browser: true }); } finally { bpmJob.id = null; syncTbUi(); }
+  if (r.status === 'ok') { toast(`Tunebat : ${bpmText(keepTunebat(item, r.hit))}`); return; }
+  if (r.status === 'cancel') return;
+  haptic('warn');
+  openBpmSheet(item, TB_MISS[r.status] || '');
 }
-function openBpmSheet(item, failed = '') {
+function tbSearchUrl(item) {
+  return `https://tunebat.com/Search?q=${encodeURIComponent(`${beatName(item.title)} ${item.channel || ''}`.trim())}`;
+}
+function openBpmSheet(item, note = '') {
   const out = h('div', { class: 'bpm-out', 'aria-live': 'polite' });
-  const status = h('p', { class: 'bpm-status' }, '');
-  const meter = h('div', { class: 'bpm-meter', hidden: true }, h('i'));
-  const listenBtn = h('button', { type: 'button', class: 'ghost' }, icon('mic'), 'Écouter la prod');
-  const fileIn = h('input', { type: 'file', accept: 'audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac', hidden: true });
-  const fileBtn = h('button', { type: 'button', class: 'ghost' }, 'Choisir un fichier audio');
-  const copyBtn = h('button', { type: 'button', class: 'primary', hidden: true }, 'Analyser la copie du PC (sans son)');
-  const dlBtn = h('a', { class: 'primary', href: notubeUrl(item), target: '_blank', rel: 'noopener noreferrer' }, '1. Télécharger le MP3 (noTube)');
-  const mp3Btn = h('button', { type: 'button', class: 'ghost' }, '2. Analyser le MP3');
-  const ytBtn = h('button', { type: 'button', class: 'primary' }, 'Analyser maintenant');
-  const direct = nativeYt.ok && ytIdOf(item);
-  const ui = {
-    say: (t) => { status.textContent = t; },
-    level: (p) => { meter.hidden = false; meter.firstChild.style.width = `${Math.min(100, Math.round(p * 140))}%`; },
-  };
-  const show = (t) => {
-    const cur = tbFor(item.id);
-    const mine = cur?.src === 'user';
-    out.replaceChildren(...(cur ? [
-      h('div', { class: 'bpm-res' }, h('b', { class: mine ? null : 'tb' }, bpmText(cur))),
-      h('p', { class: 'hint' }, mine ? 'Corrigé par toi : c’est ce qui s’affiche sur la prod.' : 'Trouvé à partir du son, en bleu sur la prod. Si la description du beatmaker donne le BPM ou la clé, c’est elle qui compte.'),
-      earCheck(cur),
-      cur.dbg ? h('p', { class: 'bpm-dbg' }, `Son analysé : ${cur.dbg}`) : null,
-      fixForm(cur),
-    ] : []));
-    if (t === null) return;
-  };
-  // Vérifier la clé à l'oreille : la seule façon d'être sûr (aucun logiciel ne l'est à 100 %)
-  const earCheck = (cur) => {
-    if (!cur?.key) return null;
-    const cands = [...new Set([cur.key, ...(cur.cands || [])])].slice(0, 6);
-    const status = cur.keyOk || cur.src === 'user' ? '✓ Clé vérifiée par toi.'
-      : cur.unsure ? `Clé PAS sûre${cur.votes ? ` (${cur.votes} avis d’accord)` : ''} : vérifie-la à l’oreille, ça prend 20 secondes.`
-        : `Clé probable${cur.votes ? ` (${cur.votes} avis d’accord)` : ''} : juste près de 9 fois sur 10. Vérifie-la à l’oreille pour en être sûr.`;
-    const okBtn = h('button', { type: 'button', class: 'primary', disabled: true }, '✓ C’est celle-là');
-    let picked = null;
-    const chips = cands.map((k) => h('button', { type: 'button', class: `ear-k${k === cur.key ? ' first' : ''}` }, k));
-    const sync = () => {
-      chips.forEach((c) => c.classList.toggle('on', c.textContent === picked));
-      okBtn.disabled = !picked;
-      okBtn.textContent = picked ? `✓ C’est ${picked}` : '✓ C’est celle-là';
-    };
-    chips.forEach((c) => c.addEventListener('click', () => {
-      haptic();
-      if (picked === c.textContent) { droneStop(); picked = null; } else { picked = c.textContent; dronePlay(picked, cur.tuning || 0); }
-      sync();
-    }));
-    okBtn.addEventListener('click', () => {
-      if (!picked) return;
-      droneStop();
-      const t = { ...(tbFor(item.id) || cur), key: picked, keyOk: true, unsure: false };
-      tbStore(item.id, t);
-      syncTbUi();
-      refreshItem(item);
-      haptic('success');
-      pcSyncTags(ytIdOf(item) || item.id);
-      ui.say(`Clé vérifiée : ${picked}`);
-      show();
-    });
-    const play = WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => playItem(item) }, icon('play'), 'Lancer la prod') : null;
-    return h('div', { class: `ear${cur.unsure && !cur.keyOk ? ' warn' : ''}` },
-      h('b', {}, 'Vérifier la clé à l’oreille'),
-      h('p', { class: 'hint' }, status),
-      h('p', { class: 'hint' }, '1. Lance la prod.  2. Touche une clé : je joue son accord doucement par-dessus.  3. Celle qui sonne juste, sans frotter, c’est la bonne → « ✓ ». Touche-la encore pour couper.'),
-      play ? h('div', { class: 'd-actions' }, play) : null,
-      h('div', { class: 'ear-keys' }, ...chips),
-      h('div', { class: 'd-actions' }, okBtn));
-  };
+  const status = h('p', { class: 'bpm-status' }, note);
+  const say = (t) => { status.textContent = t; };
+  const tbBtn = h('button', { type: 'button', class: 'primary' }, 'Chercher sur Tunebat');
+  tbBtn.addEventListener('click', async () => {
+    if (bpmJob.id) return;
+    haptic();
+    tbBtn.disabled = true;
+    say('Je cherche sur Tunebat…');
+    bpmJob.id = item.id;
+    syncTbUi();
+    let r;
+    try { r = await tunebatFind(item, { browser: true }); } finally { bpmJob.id = null; syncTbUi(); tbBtn.disabled = false; }
+    if (r.status === 'ok') { keepTunebat(item, r.hit); say(''); show(); return; }
+    if (r.status === 'cancel') { say(''); return; }
+    haptic('warn');
+    say(TB_MISS[r.status] || '');
+  });
   // Correction à la main (clé et / ou BPM) : gardée et prioritaire
   const fixForm = (cur) => {
-    const box = h('div', { class: 'bpm-fix', hidden: true });
-    const open = h('button', { type: 'button', class: 'link' }, cur.src === 'user' ? 'Modifier' : 'Pas la bonne clé ou le bon BPM ? Corriger');
+    const box = h('div', { class: 'bpm-fix', hidden: !!cur });
+    const open = h('button', { type: 'button', class: 'link' }, cur?.src === 'user' ? 'Modifier' : cur ? 'Pas le bon BPM ou la bonne clé ? Corriger' : 'Je connais le BPM / la clé');
     const keys = [];
     for (const m of ['min', 'maj']) for (const n of ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']) keys.push(`${n} ${m}`);
-    const sel = h('select', { 'aria-label': 'Clé' }, h('option', { value: '' }, 'Clé : ne pas changer'), ...keys.map((k) => h('option', { value: k, selected: k === cur.key }, k)));
-    const bpmIn = h('input', { type: 'number', inputmode: 'numeric', min: '40', max: '250', value: cur.bpm || '', 'aria-label': 'BPM', placeholder: 'BPM' });
+    const sel = h('select', { 'aria-label': 'Clé' }, h('option', { value: '' }, cur?.key ? 'Clé : ne pas changer' : 'Clé'), ...keys.map((k) => h('option', { value: k, selected: k === cur?.key }, k)));
+    const bpmIn = h('input', { type: 'number', inputmode: 'numeric', min: '40', max: '250', value: cur?.bpm || '', 'aria-label': 'BPM', placeholder: 'BPM' });
     const save = h('button', { type: 'button', class: 'primary' }, 'Enregistrer');
     save.addEventListener('click', () => {
       const bpm = Math.round(Number(bpmIn.value));
-      const t = { bpm: bpm >= 40 && bpm <= 250 ? bpm : cur.bpm, key: sel.value || cur.key, src: 'user', at: Date.now(), was: cur.src === 'user' ? cur.was : { bpm: cur.bpm, key: cur.key, dbg: cur.dbg || '' }, dbg: cur.dbg || '' };
+      const t = { bpm: bpm >= 40 && bpm <= 250 ? bpm : cur?.bpm || null, key: sel.value || cur?.key || null, src: 'user', at: Date.now(), was: cur?.src === 'user' ? cur.was : cur ? { bpm: cur.bpm, key: cur.key } : null };
+      if (!t.bpm && !t.key) { say('Mets au moins le BPM ou la clé'); return; }
       tbStore(item.id, t);
       syncTbUi();
       refreshItem(item);
       haptic('success');
       pcSyncTags(ytIdOf(item) || item.id);
-      ui.say('Corrigé : c’est gardé pour cette prod.');
+      say('Enregistré : c’est gardé pour cette prod.');
       show();
     });
     open.addEventListener('click', () => { box.hidden = !box.hidden; });
     box.append(h('div', { class: 'bpm-fix-row' }, sel, bpmIn), save);
-    return h('div', {}, open, box);
+    return h('div', {}, cur ? open : null, box);
   };
-  const run = async (job) => {
-    if (bpmJob.id) return;
-    bpmJob.id = item.id;
-    syncTbUi();
-    listenBtn.disabled = true; fileBtn.disabled = true; copyBtn.disabled = true; mp3Btn.disabled = true; ytBtn.disabled = true;
-    try {
-      const res = await job();
-      if (res === null) return;
-      if (!res || (!res.bpm && !res.key)) { ui.say('Pas assez de son exploitable : réessaie plus fort, ou avec un fichier'); return; }
-      const how = job === listen ? 'micro' : job === copy ? 'copie du PC' : job === yt ? 'son YouTube' : 'fichier';
-      keepAnalysis(item, res, how);
-      ui.say(how === 'fichier' ? 'Trouvé ! Tu peux supprimer le MP3 de ton téléphone (Fichiers → Téléchargements) : le BPM et la clé sont gardés.' : 'Trouvé !');
-      show();
-    } finally {
-      bpmJob.id = null;
-      meter.hidden = true;
-      listenBtn.disabled = false; fileBtn.disabled = false; copyBtn.disabled = false; mp3Btn.disabled = false; ytBtn.disabled = false;
-      syncTbUi();
-    }
+  const show = () => {
+    const cur = tbFor(item.id);
+    const mine = cur?.src === 'user';
+    out.replaceChildren(...[
+      cur ? h('div', { class: 'bpm-res' }, h('b', { class: mine ? null : 'tb' }, bpmText(cur))) : null,
+      cur ? h('p', { class: 'hint' }, mine ? 'Donné par toi : c’est ce qui s’affiche sur la prod.'
+        : `Trouvé sur Tunebat${cur.name ? ` : « ${cur.name} »${cur.artists?.length ? ` de ${cur.artists.join(', ')}` : ''}` : ''}, en bleu sur la prod. Si la description du beatmaker donne le BPM ou la clé, c’est elle qui compte.`) : null,
+      fixForm(cur),
+    ].filter(Boolean));
   };
-  const listen = () => listenAndAnalyze(item, ui);
-  // son YouTube direct (APK) ; s'il échoue, noTube reste possible juste en dessous
-  const notubeStep = h('div', { class: 'bpm-step', hidden: !!direct && !failed });
-  const yt = async () => {
-    try { return await ytAnalyze(item, ui); } catch (e) {
-      ui.say(`${e?.message || 'Son introuvable'} Autre façon : noTube ci-dessous.`);
-      notubeStep.hidden = false;
-      haptic('warn');
-      return null;
-    }
-  };
-  ytBtn.addEventListener('click', () => run(yt));
-  const copy = async () => { const b = await pcCopyFor(item); return b ? analyzeFile(item, b, ui) : (ui.say('Copie introuvable sur ce téléphone'), null); };
-  copyBtn.addEventListener('click', () => run(copy));
-  // étape 1 faite : on revient sur Melofinds → l'étape 2 passe en avant
-  let downloaded = false;
-  const onBack = () => {
-    if (document.visibilityState !== 'visible' || !downloaded || !$('#drawer').classList.contains('open')) return;
-    if (isNative() && nativeFolder.granted) { ui.say('Je cherche le MP3 dans Téléchargements…'); return; } // scanDownloads s'en charge
-    mp3Btn.className = 'primary';
-    dlBtn.className = 'ghost';
-    ui.say('MP3 téléchargé ? Touche « 2. Analyser le MP3 » et choisis-le (dossier Téléchargements).');
-  };
-  dlBtn.addEventListener('click', () => {
-    downloaded = true;
-    addMp3Wait(item);
-    ui.say(isNative() ? 'noTube s’ouvre : télécharge le MP3 puis reviens dans Melofinds, je m’occupe du reste.' : 'noTube s’ouvre : télécharge le MP3, puis reviens ici.');
-  });
-  document.addEventListener('visibilitychange', onBack);
-  mp3Btn.addEventListener('click', () => fileIn.click());
-  pcCopyFor(item).then((b) => { if (b) { copyBtn.hidden = false; dlBtn.className = 'ghost'; } });
-  listenBtn.addEventListener('click', () => run(listen));
-  fileBtn.addEventListener('click', () => fileIn.click());
-  fileIn.addEventListener('change', () => { const f = fileIn.files?.[0]; if (f) run(() => analyzeFile(item, f, ui)); fileIn.value = ''; });
   openDrawer('BPM et clé', [
     h('h3', { class: 'd-title' }, displayTitle(item.title)),
-    h('p', { class: 'muted', style: 'margin:0' }, 'Je trouve le BPM et la clé à partir du son de la prod, analysé sur ton téléphone.'),
-    direct ? h('div', { class: 'bpm-step' },
-      h('b', {}, 'Automatique (quelques secondes)'),
-      h('span', {}, 'Le téléphone récupère le son de la vidéo, l’analyse puis l’efface : rien à télécharger, rien dans tes fichiers.'),
-      h('div', { class: 'd-actions' }, ytBtn)) : null,
-    isNative() && nativeYt.checked && !nativeYt.ok ? h('p', { class: 'bpm-update' }, 'Nouvelle version de l’app : le BPM et la clé se trouvent tout seuls en quelques secondes, sans noTube. ',
-      h('a', { class: 'link', href: APK_URL, rel: 'noopener' }, 'Installer la mise à jour')) : null,
-    (notubeStep.append(...[
-      h('b', {}, direct ? 'Si ça ne marche pas : noTube' : 'Sans son, sans PC'),
-      h('span', {}, isNative() ? 'Télécharge le MP3 avec noTube (gratuit, sans compte), puis reviens dans Melofinds : je le trouve, je l’analyse et je le supprime tout seul.' : 'Télécharge le MP3 avec noTube (gratuit, sans compte), reviens ici et choisis-le.'),
-      isNative() ? nativeFolderRow(() => { if (nativeFolder.granted) mp3Btn.hidden = true; }) : null,
-      h('div', { class: 'd-actions' }, dlBtn, mp3Btn)].filter(Boolean)), notubeStep),
-    h('div', { class: 'd-actions' }, copyBtn, fileBtn, listenBtn, fileIn),
-    h('p', { class: 'hint' }, 'Autres façons : « Choisir un fichier audio » (fichier déjà sur le téléphone), la copie du PC (prods envoyées sur ton PC, même éteint), ou « Écouter la prod » au micro (son monté, sans écouteurs).'),
-    meter,
+    nativeYt.tb ? h('div', { class: 'bpm-step' },
+      h('b', {}, 'Tunebat'),
+      h('span', {}, 'Je cherche la prod sur Tunebat depuis ton téléphone. Si Tunebat demande une vérification, sa page s’ouvre : fais-la, je lis le résultat tout seul.'),
+      h('div', { class: 'd-actions' }, tbBtn))
+      : h('div', { class: 'bpm-step' },
+        h('b', {}, 'Tunebat'),
+        h('span', {}, isNative()
+          ? 'Mets l’appli à jour pour que je cherche sur Tunebat toute seule. En attendant : ouvre Tunebat et note le BPM et la clé ci-dessous.'
+          : 'Sur le site web, Tunebat ne me répond pas directement : ouvre-le, puis note le BPM et la clé ci-dessous. L’appli Android, elle, cherche toute seule ; et Melofinds PC les cherche quand la prod arrive.'),
+        h('div', { class: 'd-actions' }, h('a', { class: 'primary', href: tbSearchUrl(item), target: '_blank', rel: 'noopener noreferrer' }, 'Ouvrir Tunebat', icon('ext')),
+          isNative() && nativeYt.checked && !nativeYt.tb ? h('a', { class: 'ghost', href: APK_URL, rel: 'noopener' }, 'Mettre à jour l’appli') : null)),
     status,
     out,
   ]);
-  drawerOnClose = () => { bpmJob.stop?.(); droneStop(); document.removeEventListener('visibilitychange', onBack); };
-  if (isNative() && nativeFolder.granted) mp3Btn.hidden = true;
   show();
-  if (failed) ui.say(`${failed} Autre façon : noTube ci-dessous.`);
 }
 function refreshItem(item) {
   if (session?.items?.has(item.id)) renderResults();
@@ -1007,9 +462,9 @@ function analyzed(item, plan) {
     if (tb.bpm) r.bpm = tb.bpm;
     if (tb.key) r.key = tb.key;
   } else if (tb) {
-    r.tbSrc = tb.src === 'audio' ? 'écouté' : 'Tunebat';
+    r.tbSrc = 'Tunebat';
     if (!r.bpm && tb.bpm) { r.bpm = tb.bpm; r.bpmTb = true; }
-    if (!r.key && tb.key) { r.key = tb.key; r.keyTb = !tb.keyOk; } // vérifiée à l'oreille : info sûre
+    if (!r.key && tb.key) { r.key = tb.key; r.keyTb = true; }
   }
   Object.defineProperty(item, '_r', { value: r, writable: true, enumerable: false, configurable: true });
   Object.defineProperty(item, '_key', { value: key, writable: true, enumerable: false, configurable: true });
@@ -1064,7 +519,7 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
     item.status === 'unread' ? h('span', { class: 'unread-chip' }, 'non vérifiée') : null,
     h('span', { class: 'play' }, icon('play'), icon('pause'), h('span', { class: 'eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'))),
     h('span', { class: 'cover-meta' }, style, r.key ? h('small', { class: r.keyTb ? 'tb' : null, title: r.keyTb ? `Trouvé : ${r.tbSrc}` : null }, r.key) : null),
-    r.bpm ? h('span', { class: `cover-bpm${r.bpmTb ? ' tb' : ''}`, title: r.bpmTb ? `Trouvé : ${r.tbSrc}` : null }, r.bpm, h('small', {}, r.bpmTb ? (r.tbSrc === 'écouté' ? 'BPM · ≈' : 'BPM · TB') : 'BPM')) : h('span', { class: 'cover-bpm none' }, 'BPM ?')));
+    r.bpm ? h('span', { class: `cover-bpm${r.bpmTb ? ' tb' : ''}`, title: r.bpmTb ? `Trouvé : ${r.tbSrc}` : null }, r.bpm, h('small', {}, r.bpmTb ? 'BPM · TB' : 'BPM')) : h('span', { class: 'cover-bpm none' }, 'BPM ?')));
   const heart = h('button', { type: 'button', class: `heart${isSaved(item.id) ? ' on' : ''}`, 'data-id': item.id, 'aria-label': 'Ajouter aux favoris', 'aria-pressed': String(isSaved(item.id)) }, icon('heart'));
   heart.addEventListener('click', (e) => { e.stopPropagation(); toggleSaved(item); });
   card.append(heart);
@@ -2233,7 +1688,7 @@ function beatDetails(item, r, terms = []) {
 function openBeat(item, plan) {
   const r = analyzed(item, plan);
   if (needsDesc(item)) pcAskDesc([item]);
-  if (!(r.bpm && r.key)) ytAuto(item); // APK : BPM / clé trouvés tout seuls
+  if (!(r.bpm && r.key)) tbAuto(item); // APK : BPM / clé cherchés sur Tunebat tout seuls
 
   const saveBtn = h('button', { type: 'button', class: `ghost${isSaved(item.id) ? ' on' : ''}` }, icon('heart'), isSaved(item.id) ? 'Dans tes favoris' : 'Ajouter aux favoris');
   saveBtn.addEventListener('click', () => {
@@ -4063,11 +3518,14 @@ async function sendToPc(item) {
   if (!pc.info) { openPcSetup(item); return; }
   let r = null;
   try { r = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
-  // BPM / clé manquants : l'APK les trouve d'abord (quelques secondes) pour que le PC les
-  // mette dans le nom, marqués « (Finded) ». Sinon ils partiront dès qu'ils sont trouvés.
-  if (r && (!r.bpm || !r.key) && nativeYt.ok && !tbFor(id) && !pc.queue[id]) {
-    toast('Je trouve le BPM et la clé avant d’envoyer…');
-    try { await Promise.race([ytRun(item, quietUi), wait(25000)]); } catch { /* envoyée sans */ }
+  // BPM / clé manquants : l'APK les cherche d'abord sur Tunebat pour que le PC les mette dans
+  // le nom, marqués « (Finded) ». Sinon ils partiront dès qu'ils sont trouvés.
+  if (r && (!r.bpm || !r.key) && nativeYt.tb && !tbFor(id) && !pc.queue[id]) {
+    toast('Je cherche le BPM et la clé sur Tunebat avant d’envoyer…');
+    try {
+      const t = await Promise.race([tunebatFind(item), wait(15000).then(() => null)]);
+      if (t?.status === 'ok') keepTunebat(item, t.hit);
+    } catch { /* envoyée sans */ }
     try { r = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
   }
   // Le PC nomme le fichier « Titre [Clé, BPM].wav » (sans « free ») ; il relit aussi la description.
@@ -4349,7 +3807,6 @@ async function onPcAudio(d, m, fresh) {
     if (pcLib.cached.size > PC_KEEP) pcAudioStore.load();
     if (pcLib.waiting === fid) { pcLib.waiting = null; playPcBlob(fid, blob); }
     renderPcView();
-    autoAnalyzeCopy(fid, blob).catch(() => {});
   } catch {
     if (pcLib.waiting === fid) { pcLib.waiting = null; renderPcView(); toast('Son pas récupéré : réessaie'); }
   }
@@ -4466,7 +3923,7 @@ function pcSyncTags(id) {
     const bpm = canBpm ? t.bpm : null;
     if (!key && !bpm) continue;
     if (pcLib.cmds.some((c) => c.msg.cmd === 'tags' && c.msg.p === p.p && c.msg.key === key && c.msg.bpm === bpm)) continue;
-    pcCommand({ cmd: 'tags', p: p.p, key, bpm, fk: !user && !t.keyOk, fb: !user, user: user || undefined }, 'BPM et clé envoyés au PC', !user);
+    pcCommand({ cmd: 'tags', p: p.p, key, bpm, fk: !user, fb: !user, user: user || undefined }, 'BPM et clé envoyés au PC', !user);
   }
 }
 function pcSyncAllTags() {

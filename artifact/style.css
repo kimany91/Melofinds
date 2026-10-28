@@ -866,8 +866,6 @@ body.mobile .chan-txt b { font-size: 17px; }
 .tb-ghost { color: #93c5fd; }
 
 /* Fenêtre « BPM et clé » : écoute de la prod au micro */
-.bpm-meter { height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden; margin: 6px 0 2px; }
-.bpm-meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2563eb, #93c5fd); transition: width .08s linear; }
 .bpm-status { margin: 6px 0 0; color: var(--muted); font-size: 14px; min-height: 1.3em; }
 .bpm-res { display: grid; gap: 4px; padding: 12px 14px; border-radius: 14px; background: color-mix(in srgb, #2563eb 12%, var(--panel-2)); border: 1px solid color-mix(in srgb, #60a5fa 45%, var(--line)); }
 .bpm-res b { font-size: 18px; }
@@ -877,20 +875,14 @@ body.mobile .chan-txt b { font-size: 17px; }
 .bpm-step { display: grid; gap: 4px; margin-top: 10px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--panel-2); }
 .bpm-step > span { font-size: 13.5px; color: var(--muted); }
 .bpm-step .d-actions { margin-top: 6px; }
-.bpm-update { margin: 10px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--panel-2); font-size: 13.5px; }
 
 /* App Android (APK) */
-.apk-folder { display: grid; gap: 6px; margin-top: 6px; }
-.apk-ok { font-size: 13.5px; color: var(--ffp); font-weight: 600; }
-.cobalt-auto { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.pc-pick { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .apk-link { display: inline-block; margin-left: 12px; }
 
 /* Mini-jeu pendant la recherche (la note 🎵 qui saute) */
 .note-game { position: relative; margin: 10px 0 4px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel-2); overflow: hidden; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 .note-game canvas { display: block; width: 100%; height: 240px; cursor: pointer; }
 .note-game-x { position: absolute; top: 6px; left: 8px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; }
-.bpm-dbg { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
 .bpm-fix { display: grid; gap: 8px; margin-top: 8px; }
 .bpm-fix-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 8px; }
 .bpm-fix select, .bpm-fix input { min-width: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel); color: inherit; font: inherit; }
@@ -899,10 +891,3 @@ body.mobile .chan-txt b { font-size: 17px; }
 .qr-frame { position: absolute; width: min(60vw, 260px); aspect-ratio: 1; border: 3px solid rgba(255, 255, 255, .9); border-radius: 18px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .25); pointer-events: none; top: 50%; left: 50%; transform: translate(-50%, -62%); }
 .qr-scan p { color: #fff; margin: 0; font-size: 15px; }
 .qr-scan .ghost { color: #fff; border-color: rgba(255, 255, 255, .5); background: transparent; }
-.ear { display: grid; gap: 6px; margin-top: 12px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--panel-2); }
-.ear.warn { border-color: #f59e0b; }
-.ear .hint { margin: 0; }
-.ear-keys { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-.ear-k { min-width: 76px; padding: 10px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel); color: inherit; font: inherit; font-weight: 600; }
-.ear-k.first { border-color: var(--accent, #8b5cf6); }
-.ear-k.on { background: var(--accent, #8b5cf6); border-color: transparent; color: #fff; }
