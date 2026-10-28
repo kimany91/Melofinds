@@ -64,7 +64,12 @@ function vote(keys) {
   for (const [k, v] of c) if (v > n) { best = k; n = v; }
   return best;
 }
-const essRun = (x, rate, prof) => essKey(ess.KeyExtractor(ess.arrayToVector(x), true, 4096, 4096, 12, 3500, 60, 25, 0.2, prof, rate, 0.0001, 440, 'cosine', 'hann'));
+// le vecteur vit dans la mémoire WASM : toujours le libérer (sinon plus de mémoire après
+// quelques morceaux, et les analyses suivantes échouent)
+function essRun(x, rate, prof) {
+  const v = ess.arrayToVector(x);
+  try { return essKey(ess.KeyExtractor(v, true, 4096, 4096, 12, 3500, 60, 25, 0.2, prof, rate, 0.0001, 440, 'cosine', 'hann')); } finally { v.delete?.(); }
+}
 
 const keyFiles = new Map();
 for (const f of fs.readdirSync(keyDir, { recursive: true })) {
@@ -104,7 +109,7 @@ for (const f of mine) {
     res.edmm22 = k22[0];
     res.vote22 = vote(k22);
     res.vote22l = vote(VOTE.map((p) => essRun(x22l, 22050, p)));
-  } catch { /* rien */ }
+  } catch (e) { res.err22 = String(e?.message || e).slice(0, 80); }
   // traits pour régler l'algorithme hors ligne : chroma moyen et chroma des basses (Melofinds)
   try {
     const x = resample(x22, 22050, 11025);
