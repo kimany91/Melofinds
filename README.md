@@ -179,6 +179,14 @@ ouvre le site dans Chrome) :
 ## Bouton « BPM » : BPM et clé à l'écoute (version web)
 
 Chaque prod a un petit bouton **BPM**. Il ouvre « BPM et clé » :
+- **Sans son, automatique** — **serveur cobalt** : l'app télécharge l'audio de la prod
+  (MP3 64 kb/s) avec un serveur [cobalt](https://github.com/imputnet/cobalt), l'analyse
+  **en mémoire** puis l'oublie (rien n'est enregistré sur le téléphone). Une fois réglé
+  (adresse + clé éventuelle, bouton « Tester et enregistrer » dans la fenêtre BPM), chaque
+  résultat de recherche sans BPM ni clé est analysé tout seul, un à la fois (30 par
+  session ; pas en mode « économie de données »). Les serveurs cobalt publics interdisent
+  cet usage sans permission : il faut **ton propre serveur** (cobalt s'installe en
+  quelques minutes, par exemple sur Railway) ou une clé donnée par son propriétaire.
 - **Sans son** — **Analyser la copie du PC** : pour une prod envoyée sur le PC, la copie
   d'écoute gardée sur le téléphone est analysée sans rien jouer, même PC éteint. Chaque
   copie qui arrive du PC est d'ailleurs analysée toute seule (une à la fois) ;
