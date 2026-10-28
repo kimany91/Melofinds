@@ -512,7 +512,7 @@ public class MelofindsNativePlugin extends Plugin {
     @PluginMethod
     public void ytAudio(PluginCall call) {
         String id = call.getString("id", "");
-        double window = Math.max(20, Math.min(90, call.getDouble("seconds", 60.0)));
+        double window = Math.max(20, Math.min(150, call.getDouble("seconds", 60.0)));
         if (!YtAudio.VIDEO_ID.matcher(id).matches()) { call.reject("Vidéo invalide"); return; }
         YT.execute(() -> {
             long t0 = System.currentTimeMillis();

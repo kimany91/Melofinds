@@ -242,9 +242,11 @@ arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion �
 
 - **Clé : Essentia + ton oreille.** La clé vient d'Essentia (Music Technology Group, UPF,
   AGPL-3.0, chargé à la demande depuis jsDelivr) : vote de 3 profils « musique
-  électronique ». Banc d'essai sur 570 vrais morceaux annotés (GiantSteps+,
-  `scripts/key-eval.mjs`, lancé sur GitHub) : 67 % de clés justes contre 40 % pour
-  l'ancien algorithme maison ; quand les 3 profils sont d'accord, ~80 %. Aucun logiciel n'est
+  électronique » sur 3 passages du morceau (début, milieu, fin) = 9 avis. Banc d'essai sur
+  570 vrais morceaux annotés (GiantSteps+, `scripts/key-eval.mjs`, lancé sur GitHub) : 71 %
+  de clés justes (67 % avec un seul passage, 40 % pour l'ancien algorithme maison) ; quand au
+  moins 7 avis sur 9 sont d'accord (« clé probable », plus de la moitié des morceaux), ~87 %.
+  Analyse sur 2 min, sans son (marche volume à 0). Aucun logiciel n'est
   sûr à 100 % : la fenêtre BPM dit si la clé est sûre ou non et propose **« Vérifier la clé à
   l'oreille »** (l'accord de chaque clé possible joué doucement par-dessus la prod ; « ✓ » =
   clé vérifiée, gardée comme sûre, envoyée au PC sans « (Finded) »). Le BPM reste calculé

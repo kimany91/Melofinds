@@ -1037,7 +1037,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 28/10/2026 à 17:39</p>
+    <p class="build-stamp">Version du 28/10/2026 à 18:06</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -4028,7 +4028,7 @@ function keepAnalysis(item, res, how) {
   if (!res || (!res.bpm && !res.key)) return null;
   const sure = res.keyBy === 'essentia' ? !!res.keySure : res.keyConf >= 0.3;
   const t = { bpm: res.bpm, key: res.key, alt: res.bpmAlt, keyAlt: res.keyAlt, unsure: !sure, at: Date.now(), src: 'audio', how, dbg: res.dbg || '',
-    cands: res.keyCands || (res.key ? [res.key, res.keyAlt].filter(Boolean) : []), tuning: res.tuning || 0 };
+    cands: res.keyCands || (res.key ? [res.key, res.keyAlt].filter(Boolean) : []), tuning: res.tuning || 0, votes: res.keyVotes || '' };
   tbStore(item.id, t);
   syncTbUi();
   refreshItem(item);
@@ -4042,7 +4042,7 @@ function keepAnalysis(item, res, how) {
 // Aucun logiciel n'est sûr à 100 % : quand les profils ne sont pas d'accord, l'app le dit et
 // propose de vérifier à l'oreille (accord joué par-dessus la prod).
 const ESS_CDN = 'https://cdn.jsdelivr.net/npm/essentia.js@0.1.3/dist/';
-const KEY_PROFILES = ['edmm', 'edma', 'bgate', 'braw', 'shaath']; // les 3 premiers votent
+const KEY_PROFILES = ['edmm', 'edma', 'bgate']; // profils « musique électronique »
 const KEY_NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const KEY_FLAT = { Db: 'C#', Eb: 'D#', Gb: 'F#', Ab: 'G#', Bb: 'A#' };
 let essP = null;
@@ -4073,27 +4073,43 @@ function keyShift(key, semis, mode) {
   const [n, m] = key.split(' ');
   return `${KEY_NOTES[(KEY_NOTES.indexOf(n) + semis + 12) % 12]} ${mode || m}`;
 }
+// Vote de 9 avis : 3 passages du morceau (début, milieu, fin) × 3 profils. Banc d'essai sur
+// 570 vrais morceaux : 71 % de clés justes (67 % avec un seul passage) ; quand au moins 7 avis
+// sur 9 sont d'accord (plus de la moitié des morceaux), c'est juste ~87 % du temps.
 async function essentiaKey(mono, rate) {
   const ess = await essentiaLib();
-  let x = rate === 22050 ? mono : resample(mono, rate, 22050);
-  const max = 60 * 22050; // 60 s : 68 % de clés justes contre 66 % avec 45 s (banc d’essai)
+  const R = 22050;
+  let x = rate === R ? mono : resample(mono, rate, R);
+  const max = 120 * R;
   if (x.length > max) { const from = Math.floor((x.length - max) / 2); x = x.subarray(from, from + max); }
-  const v = ess.arrayToVector(x);
-  const keys = [];
-  try {
-    for (const p of KEY_PROFILES) {
-      try { keys.push(essNorm(ess.KeyExtractor(v, true, 4096, 4096, 12, 3500, 60, 25, 0.2, p, 22050, 0.0001, 440, 'cosine', 'hann'))); } catch { keys.push(null); }
+  // 3 passages : début / milieu / fin (40 s chacun) ; morceau court → 3 tiers qui se chevauchent
+  const segLen = Math.min(40 * R, Math.max(Math.floor(x.length / 2), Math.min(x.length, 20 * R)));
+  const segs = x.length >= 3 * 20 * R
+    ? [x.subarray(0, segLen), x.subarray(Math.floor((x.length - segLen) / 2), Math.floor((x.length - segLen) / 2) + segLen), x.subarray(x.length - segLen)]
+    : [x];
+  const run = (seg, p) => {
+    const v = ess.arrayToVector(seg);
+    try { return essNorm(ess.KeyExtractor(v, true, 4096, 4096, 12, 3500, 60, 25, 0.2, p, R, 0.0001, 440, 'cosine', 'hann')); } catch { return null; } finally { try { v.delete?.(); } catch { /* rien */ } }
+  };
+  const ops = [];
+  let tie = null;
+  for (let i = 0; i < segs.length; i++) {
+    for (const p of KEY_PROFILES.slice(0, 3)) {
+      const k = run(segs[i], p);
+      ops.push(k);
+      if (p === 'edmm' && (segs.length === 1 || i === 1)) tie = k; // égalité : le milieu (edmm)
     }
-  } finally { try { v.delete?.(); } catch { /* rien */ } }
+    await wait(0); // laisse respirer l'écran entre deux passages
+  }
   const votes = new Map();
-  for (const k of keys.slice(0, 3)) if (k) votes.set(k, (votes.get(k) || 0) + 1);
-  let key = null; let n = 0;
-  for (const [k, c] of votes) if (c > n) { key = k; n = c; }
-  if (!key) return null;
-  // autres clés possibles, de la plus probable à la moins probable (pour l'oreille)
+  for (const k of ops) if (k) votes.set(k, (votes.get(k) || 0) + 1);
+  if (!votes.size) return null;
+  const ranked = [...votes].sort((a, b) => b[1] - a[1] || (a[0] === tie ? -1 : b[0] === tie ? 1 : 0));
+  const [key, n] = ranked[0];
+  const total = ops.filter(Boolean).length;
   const rel = key.endsWith('min') ? keyShift(key, 3, 'maj') : keyShift(key, -3, 'min');
-  const cands = [...new Set([key, ...keys.filter(Boolean), rel, keyShift(key, 7), keyShift(key, 5)])].slice(0, 6);
-  return { key, sure: n === 3 && keys.slice(3).every((k) => !k || k === key), agree: n, candidates: cands };
+  const cands = [...new Set([...ranked.map(([k]) => k), rel, keyShift(key, 7), keyShift(key, 5)])].slice(0, 6);
+  return { key, sure: total >= 3 && n / total >= 0.75, agree: n, total, candidates: cands };
 }
 // BPM (maison, fiable) + clé (Essentia ; l'ancienne méthode seulement si Essentia ne charge pas)
 async function analyzeFull(mono, rate) {
@@ -4101,7 +4117,7 @@ async function analyzeFull(mono, rate) {
   if (!res) return res;
   try {
     const k = await essentiaKey(mono, rate);
-    if (k) Object.assign(res, { key: k.key, keySure: k.sure, keyConf: k.sure ? 0.8 : k.agree >= 2 ? 0.5 : 0.25, keyCands: k.candidates, keyBy: 'essentia' });
+    if (k) Object.assign(res, { key: k.key, keySure: k.sure, keyConf: k.sure ? 0.85 : k.agree / k.total >= 0.5 ? 0.55 : 0.3, keyVotes: `${k.agree}/${k.total}`, keyCands: k.candidates, keyBy: 'essentia' });
   } catch { res.keyBy = 'interne'; res.keySure = false; }
   return res;
 }
@@ -4162,9 +4178,9 @@ async function analyzeFile(item, file, ui) {
   const ctx = new AC();
   try {
     const buf = await ctx.decodeAudioData(await file.arrayBuffer());
-    // 60 s au milieu du morceau (l’intro et la fin sont souvent vides)
+    // 2 min au milieu du morceau (l’intro et la fin sont souvent vides)
     const mono = monoOf(buf);
-    const len = Math.min(mono.length, 60 * buf.sampleRate);
+    const len = Math.min(mono.length, 120 * buf.sampleRate);
     const from = Math.max(0, Math.floor((mono.length - len) / 2));
     ui.say('Analyse…');
     await wait(30);
@@ -4477,7 +4493,7 @@ async function ytAnalyze(item, ui) {
   ytListeners.set(id, ui);
   ui.say(YT_STEP.find);
   let r;
-  try { r = await mfn().ytAudio({ id, seconds: 60 }); } finally { ytListeners.delete(id); }
+  try { r = await mfn().ytAudio({ id, seconds: 120 }); } finally { ytListeners.delete(id); }
   try {
     ui.say('Analyse…');
     const w = wavMono(await (await readNative(r.path, r.size)).arrayBuffer());
@@ -4593,8 +4609,8 @@ function openBpmSheet(item, failed = '') {
     if (!cur?.key) return null;
     const cands = [...new Set([cur.key, ...(cur.cands || [])])].slice(0, 6);
     const status = cur.keyOk || cur.src === 'user' ? '✓ Clé vérifiée par toi.'
-      : cur.unsure ? 'Clé PAS sûre (les méthodes ne sont pas d’accord) : vérifie-la à l’oreille, ça prend 20 secondes.'
-        : 'Clé probable (les 3 méthodes sont d’accord, juste environ 8 fois sur 10). Vérifie-la à l’oreille pour en être sûr.';
+      : cur.unsure ? `Clé PAS sûre${cur.votes ? ` (${cur.votes} avis d’accord)` : ''} : vérifie-la à l’oreille, ça prend 20 secondes.`
+        : `Clé probable${cur.votes ? ` (${cur.votes} avis d’accord)` : ''} : juste près de 9 fois sur 10. Vérifie-la à l’oreille pour en être sûr.`;
     const okBtn = h('button', { type: 'button', class: 'primary', disabled: true }, '✓ C’est celle-là');
     let picked = null;
     const chips = cands.map((k) => h('button', { type: 'button', class: `ear-k${k === cur.key ? ' first' : ''}` }, k));
