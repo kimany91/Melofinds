@@ -247,8 +247,9 @@ function syncTbUi() {
     b.title = TB_LABEL[st];
   });
 }
+// Une seule réponse : le BPM et la clé retenus par l'analyse (pas d'alternative affichée)
 function bpmText(t) {
-  return [t.bpm ? `${t.bpm} BPM${t.alt ? ` (ou ${t.alt})` : ''}` : null, t.key ? `${t.key}${t.keyAlt ? ` (mêmes notes que ${t.keyAlt})` : ''}` : null].filter(Boolean).join(' · ');
+  return [t.bpm ? `${t.bpm} BPM` : null, t.key || null].filter(Boolean).join(' · ');
 }
 // Résultat d'analyse → gardé (en bleu). La description du beatmaker reste prioritaire.
 function keepAnalysis(item, res, how) {
@@ -389,8 +390,8 @@ function openBpmSheet(item) {
   const show = (t) => {
     const cur = tbFor(item.id);
     out.replaceChildren(...(cur ? [
-      h('div', { class: 'bpm-res' }, h('b', { class: 'tb' }, bpmText(cur)), cur.unsure ? h('span', { class: 'bpm-warn' }, 'Clé à confirmer (son peu net)') : null),
-      h('p', { class: 'hint' }, 'Estimé à l’écoute, en bleu sur la prod. La description du beatmaker reste prioritaire si elle donne le BPM ou la clé. « Mêmes notes » : tu peux chanter dans l’une ou l’autre.'),
+      h('div', { class: 'bpm-res' }, h('b', { class: 'tb' }, bpmText(cur))),
+      h('p', { class: 'hint' }, 'Trouvé à partir du son, en bleu sur la prod. Si la description du beatmaker donne le BPM ou la clé, c’est elle qui compte.'),
     ] : []));
     if (t === null) return;
   };
@@ -1719,7 +1720,7 @@ function openBeat(item, plan) {
       item.url ? h('button', { type: 'button', class: 'ghost', onclick: () => copyText(item.url) }, 'Copier le lien') : null),
     WEB ? h('a', { class: 'link d-yt', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube', icon('ext')) : null,
     WEB ? h('a', { class: 'link d-yt', href: `https://tunebat.com/Search?q=${encodeURIComponent(`${beatName(item.title)} ${item.channel || ''}`.trim())}`, target: '_blank', rel: 'noopener' }, 'Vérifier sur Tunebat', icon('ext')) : null,
-    WEB && tbFor(item.id)?.src === 'audio' ? h('p', { class: 'hint' }, `En bleu, estimé à l’écoute : ${bpmText(tbFor(item.id))}${tbFor(item.id).unsure ? ' (clé à confirmer)' : ''}.`) : null,
+    WEB && tbFor(item.id)?.src === 'audio' ? h('p', { class: 'hint' }, `En bleu, trouvé à partir du son : ${bpmText(tbFor(item.id))}.`) : null,
     ...beatDetails(item, r, findTerms()),
     claude,
   ]);
