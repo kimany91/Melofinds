@@ -253,6 +253,16 @@ class Remote:
                     C.reply(code, {"cmd": cmd, "ok": True, "p": it.id})
                 else:
                     C.reply(code, {"cmd": cmd, "ok": False, "p": it.id, "err": "couleur ou icône inconnue"})
+            elif cmd == "tags":  # BPM / clé trouvés (ou corrigés) après le téléchargement
+                k = str(msg.get("key") or "")
+                k = k if re.fullmatch(r"[A-G][#b]? (min|maj)", k) else None
+                b = msg.get("bpm")
+                b = int(b) if isinstance(b, (int, float)) and not isinstance(b, bool) and 50 <= b <= 220 else None
+                if not k and not b:
+                    C.reply(code, {"cmd": cmd, "ok": False, "p": it.id, "err": "ni clé ni BPM"})
+                else:
+                    new = L.set_tags(it, k, b, bool(msg.get("fk", True)), bool(msg.get("fb", True)), bool(msg.get("user")), cfg)
+                    C.reply(code, {"cmd": cmd, "ok": True, "p": it.id, "new": new})
             elif cmd == "fav":
                 if bool(msg.get("on")) != it.fav:
                     L.toggle_fav(it, cfg)

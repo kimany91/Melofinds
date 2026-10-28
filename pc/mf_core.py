@@ -32,7 +32,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.18.0"
+VERSION = "3.19.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -471,15 +471,37 @@ def check_licence(title, desc, lic, limit=None):
     return lic, limit, None
 
 
-def build_name(title, key=None, bpm=None, lic=None, limit=None, tb_key=False, tb_bpm=False):
-    """« Titre [C# min, 150 BPM] [FFP] ». Ce que Tunebat a trouvé va dans son propre groupe :
-    « Titre [C# min] [TB 150 BPM] », « Titre [TB C# min, 150 BPM] »."""
+# Clé / BPM trouvés par l'analyse du son (pas écrits par le beatmaker) : groupe à part,
+# « [(Finded) Key B minor, 140 BPM] », pour savoir d'un coup d'œil d'où ça vient.
+FOUND_TAG = "(Finded)"
+
+
+def key_words(key):
+    """« B min » → « Key B minor », « C# maj » → « Key C# major »."""
+    m = re.fullmatch(r"([A-G][#b]?) (min|maj)", str(key or ""))
+    if not m:
+        return f"Key {key}"
+    return f"Key {m.group(1)} {'minor' if m.group(2) == 'min' else 'major'}"
+
+
+def tag_groups(key=None, bpm=None, tb_key=False, tb_bpm=False):
+    """« [C# min, 150 BPM] », « [C# min] [(Finded) 150 BPM] », « [(Finded) Key C# minor, 150 BPM] »."""
     own = [x for x, tb in ((key, tb_key), (f"{bpm} BPM" if bpm else None, tb_bpm)) if x and not tb]
-    found = [x for x, tb in ((key, tb_key), (f"{bpm} BPM" if bpm else None, tb_bpm)) if x and tb]
-    base = clean_title(title)[:110].rstrip(" -,.")
-    name = f"{base} [{', '.join(own)}]" if own else base
+    found = [x for x, tb in ((key_words(key) if key else None, tb_key), (f"{bpm} BPM" if bpm else None, tb_bpm)) if x and tb]
+    parts = []
+    if own:
+        parts.append(f"[{', '.join(own)}]")
     if found:
-        name = f"{name} [TB {', '.join(found)}]"
+        parts.append(f"[{FOUND_TAG} {', '.join(found)}]")
+    return " ".join(parts)
+
+
+def build_name(title, key=None, bpm=None, lic=None, limit=None, tb_key=False, tb_bpm=False):
+    """« Titre [C# min, 150 BPM] [FFP] ». Ce qui a été trouvé par l'analyse du son va dans son
+    propre groupe : « Titre [C# min] [(Finded) 150 BPM] », « Titre [(Finded) Key C# minor, 150 BPM] »."""
+    base = clean_title(title)[:110].rstrip(" -,.")
+    tags = tag_groups(key, bpm, tb_key, tb_bpm)
+    name = f"{base} {tags}" if tags else base
     lt = licence_tag(lic, limit)
     if lt:
         name = f"{name} [{lt}]"
@@ -1070,7 +1092,7 @@ def download(video_id, root, info, out=None, progress=None):
         return False, "vidéo trop longue ou en direct (15 min max)"
     desc = meta.get("description") or ""
     vt = meta.get("title") or ""
-    # Clé / BPM : ceux que tu as donnés, sinon la description, sinon Tunebat (marqués [TB …]).
+    # Clé / BPM : ceux que tu as donnés, sinon la description, sinon trouvés par l'analyse (marqués [(Finded) …]).
     key, tb_k = pick_value(valid_key(info.get("key")), bool(info.get("tbKey")), find_key(vt, desc))
     bpm, tb_b = pick_value(valid_bpm(info.get("bpm")), bool(info.get("tbBpm")), find_bpm(vt, desc))
     if not key or not bpm:

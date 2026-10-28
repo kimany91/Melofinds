@@ -539,9 +539,10 @@ class Tunebat(unittest.TestCase):
 
     def test_nom_avec_tb(self):
         t = '[FREE] Lucki Type Beat "Haze"'
-        self.assertEqual(mpc.build_name(t, "C# min", 150, "ffp", tb_key=True, tb_bpm=True), "Lucki Type Beat 'Haze' [TB C# min, 150 BPM] [FFP]")
-        self.assertEqual(mpc.build_name(t, "C# min", 150, tb_bpm=True), "Lucki Type Beat 'Haze' [C# min] [TB 150 BPM]")
-        self.assertEqual(mpc.build_name(t, "C# min", None, tb_key=True), "Lucki Type Beat 'Haze' [TB C# min]")
+        self.assertEqual(mpc.build_name(t, "C# min", 150, "ffp", tb_key=True, tb_bpm=True), "Lucki Type Beat 'Haze' [(Finded) Key C# minor, 150 BPM] [FFP]")
+        self.assertEqual(mpc.build_name(t, "C# min", 150, tb_bpm=True), "Lucki Type Beat 'Haze' [C# min] [(Finded) 150 BPM]")
+        self.assertEqual(mpc.build_name(t, "B min", None, tb_key=True), "Lucki Type Beat 'Haze' [(Finded) Key B minor]")
+        self.assertEqual(mpc.build_name(t, "Bb maj", None, tb_key=True), "Lucki Type Beat 'Haze' [(Finded) Key Bb major]")
         self.assertEqual(mpc.build_name(t, "C# min", 150), "Lucki Type Beat 'Haze' [C# min, 150 BPM]")
         self.assertNotIn("free", mpc.build_name(t, "C# min", 150, "fnp", tb_key=True).lower())
 
@@ -557,6 +558,50 @@ class Tunebat(unittest.TestCase):
         self.assertEqual(L.parse_name_tb("Haze [TB C# min, 150 BPM]")[5], {"key", "bpm"})
         self.assertEqual(L.parse_name("Haze [TB C# min, 150 BPM] [F]"), ("Haze", "[TB C# min, 150 BPM] [F]", "C# min", 150, "F"))
         self.assertEqual(L.parse_name_tb("Haze [TB toto]")[:2], ("Haze [TB toto]", ""))
+
+    def test_lecture_du_nom_finded(self):
+        r = L.parse_name_tb("Haze [(Finded) Key B minor, 140 BPM] [FFP]")
+        self.assertEqual(r, ("Haze", "[(Finded) Key B minor, 140 BPM] [FFP]", "B min", 140, "FFP", {"key", "bpm"}))
+        self.assertEqual(L.parse_name_tb("Haze [C# min] [(Finded) 150 BPM]")[2:], ("C# min", 150, "", {"bpm"}))
+        self.assertEqual(L.parse_name_tb("Haze [(Finded) Key Bb major]")[2], "Bb maj")
+        # le nom refait à partir de la lecture est identique (pas de renommage en boucle)
+        name = mpc.build_name("Haze", "B min", 140, "ffp", tb_key=True, tb_bpm=True)
+        title, suffix, key, bpm, lic, tb = L.parse_name_tb(name)
+        self.assertEqual(mpc.build_name(title, key, bpm, "ffp", tb_key="key" in tb, tb_bpm="bpm" in tb), name)
+
+    def _projet(self, name):
+        d = Path(tempfile.mkdtemp(prefix="mf-tags-"))
+        mpc.P.set(d / "prog")
+        root = d / "Projets FL"
+        root.mkdir()
+        mpc.save_config({"dossier": str(root), "devices": [], "flmake": {"on": False, "dossier": str(root)}})
+        wav = mpc.unique_project(root, name)
+        wav.parent.mkdir()
+        wav.write_bytes(fake_wav(1))
+        return root, next(x for x in L.scan_projects() if x.name == name)
+
+    def test_tags_trouves_apres_coup(self):
+        root, it = self._projet("Haze [FFP]")
+        self.assertEqual(L.set_tags(it, "B min", 140), "Haze [(Finded) Key B minor, 140 BPM] [FFP]")
+        self.assertTrue((root / "Haze [(Finded) Key B minor, 140 BPM] [FFP]" / "Haze [(Finded) Key B minor, 140 BPM] [FFP].wav").exists())
+        # nouvelle analyse : remplace ce qui avait été trouvé
+        it = next(x for x in L.scan_projects() if x.title == "Haze")
+        self.assertEqual(L.set_tags(it, "A min", 142), "Haze [(Finded) Key A minor, 142 BPM] [FFP]")
+        # correction à la main : plus marquée « Finded »
+        it = next(x for x in L.scan_projects() if x.title == "Haze")
+        self.assertEqual(L.set_tags(it, "A min", None, user=True), "Haze [A min] [(Finded) 142 BPM] [FFP]")
+        # rien de nouveau : pas de renommage
+        it = next(x for x in L.scan_projects() if x.title == "Haze")
+        self.assertEqual(L.set_tags(it, "A min", 142, user=True), "Haze [A min, 142 BPM] [FFP]")
+        it = next(x for x in L.scan_projects() if x.title == "Haze")
+        self.assertEqual(L.set_tags(it, "A min", 142, user=True), it.name)
+
+    def test_tags_ne_touchent_pas_au_beatmaker(self):
+        root, it = self._projet("Nuit [C# min, 150 BPM]")
+        # ce que le beatmaker a écrit reste ; l'analyse ne fait que compléter
+        self.assertEqual(L.set_tags(it, "D min", 151), "Nuit [C# min, 150 BPM]")
+        root, it = self._projet("Nuit [150 BPM]")
+        self.assertEqual(L.set_tags(it, "D min", 151), "Nuit [150 BPM] [(Finded) Key D minor]")
 
     def test_renommer_garde_le_tb(self):
         d = Path(tempfile.mkdtemp(prefix="mf-tb-"))
@@ -764,6 +809,16 @@ class EcouteEtGestionDepuisLApp(unittest.TestCase):
         self.assertEqual(it.extra["color"], L.PALETTE[3])
         r.command(self.CODE, {"cmd": "ren", "p": "p:inconnu"}, mpc.load_config())
         self.assertFalse(self.sent[-1]["ok"])
+        # BPM / clé arrivés après coup : jamais par-dessus ceux du beatmaker…
+        r.command(self.CODE, {"cmd": "tags", "p": it.id, "key": "D min", "bpm": 151}, mpc.load_config())
+        self.assertEqual(self.sent[-1]["new"], new)
+        # …sauf correction à la main ; valeurs bizarres refusées
+        r.command(self.CODE, {"cmd": "tags", "p": it.id, "key": "<x>", "bpm": "151"}, mpc.load_config())
+        self.assertFalse(self.sent[-1]["ok"])
+        r.command(self.CODE, {"cmd": "tags", "p": it.id, "key": "D min", "user": True}, mpc.load_config())
+        self.assertTrue(self.sent[-1]["ok"], self.sent[-1])
+        self.assertIn("[D min, 150 BPM]", self.sent[-1]["new"])
+        self.assertTrue((self.root / self.sent[-1]["new"] / f"{self.sent[-1]['new']}.wav").exists())
         # la liste part à l'appareil qui l'a demandée
         r.tick(mpc.load_config()["devices"], mpc.load_config())
         self.assertEqual(self.files[-1][0], "projets.json")

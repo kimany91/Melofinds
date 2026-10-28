@@ -22,6 +22,8 @@ import mf_flmake as FM
 
 LIC_RE = re.compile(r"^(FFP(?:, UPTO(?: \d+)?)?|F)$")
 KEY_RE = re.compile(r"^[A-G][#b]?(?: (?:min|maj))?$")
+KEY_WORDS_RE = re.compile(r"^Key ([A-G][#b]?) (minor|major)$", re.I)
+FOUND_PREFIXES = ("TB ", "(Finded) ")  # « TB » : anciens noms (Melofinds PC < 3.19)
 BPM_RE = re.compile(r"^(\d{2,3}) BPM$")
 TAIL_RE = re.compile(r"\s*(\[[^\[\]]*\]|\(\d+\))\s*$")
 BAD_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -59,7 +61,8 @@ def parse_name(name):
 
 
 def parse_name_tb(name):
-    """Comme parse_name, plus ce qui a été trouvé avec Tunebat (« [TB 150 BPM] ») : {"key", "bpm"}."""
+    """Comme parse_name, plus ce qui a été trouvé par l'analyse du son (« [(Finded) Key C# minor,
+    150 BPM] », ou « [TB 150 BPM] » des anciennes versions) : {"key", "bpm"}."""
     rest, groups, tb = name, [], set()
     while True:
         m = TAIL_RE.search(rest)
@@ -76,10 +79,15 @@ def parse_name_tb(name):
             lic = inner
             keep.append(g)
             continue
-        found = inner[:3] == "TB "
-        parts = [p.strip() for p in (inner[3:] if found else inner).split(",")]
-        if parts and all(KEY_RE.match(p) or BPM_RE.match(p) for p in parts):
+        pre = next((x for x in FOUND_PREFIXES if inner.startswith(x)), "")
+        found = bool(pre)
+        parts = [p.strip() for p in inner[len(pre):].split(",")]
+        if parts and all(KEY_RE.match(p) or BPM_RE.match(p) or KEY_WORDS_RE.match(p) for p in parts):
             for p in parts:
+                kw = KEY_WORDS_RE.match(p)
+                if kw:
+                    note = kw.group(1)[0].upper() + kw.group(1)[1:]
+                    p = f"{note} {'min' if kw.group(2).lower() == 'minor' else 'maj'}"
                 if BPM_RE.match(p):
                     bpm = int(BPM_RE.match(p).group(1))
                     tb.discard("bpm")
@@ -522,12 +530,12 @@ def rewrite_flp(flp, mapping, old_title, new_title):
     return data, changed
 
 
-def rename_plan(item, new_title):
+def rename_plan(item, new_title, suffix=None):
     """Ce que le renommage va faire (affiché avant de confirmer)."""
     title = clean_new_title(new_title)
     if not title:
         raise LibError("nom vide")
-    new = f"{title} {item.suffix}".strip()
+    new = f"{title} {item.suffix if suffix is None else suffix}".strip()
     plan = {"new": new, "title": title, "wav": None, "folder": None, "files": [], "flp": None}
     if item.wav:
         plan["wav"] = (item.wav, item.wav.with_name(new + item.wav.suffix))
@@ -552,10 +560,28 @@ def _free(src, dst):
         return False
 
 
-def rename(item, new_title, cfg=None):
+def set_tags(item, key=None, bpm=None, found_key=True, found_bpm=True, user=False, cfg=None):
+    """Clé / BPM arrivés après le téléchargement (analyse du son sur le téléphone, ou
+    correction à la main) : ajoutés au nom de la prod partout, comme un renommage.
+    Ce que le beatmaker a écrit n'est jamais remplacé, sauf correction à la main."""
+    tb = set(item.extra.get("tb") or [])
+    nk, nb = item.key or "", item.bpm
+    tk, tbb = "key" in tb, "bpm" in tb
+    if key and KEY_RE.match(key) and (not nk or tk or user):
+        nk, tk = key, bool(found_key) and not user
+    if bpm and 50 <= int(bpm) <= 220 and (not nb or tbb or user):
+        nb, tbb = int(bpm), bool(found_bpm) and not user
+    lic = f"[{item.lic}]" if item.lic else ""
+    suffix = " ".join(x for x in (C.tag_groups(nk or None, nb, tk, tbb), lic) if x)
+    if suffix == item.suffix:
+        return item.name
+    return rename(item, item.title, cfg, suffix=suffix)
+
+
+def rename(item, new_title, cfg=None, suffix=None):
     """Renomme la prod partout. Tout ou rien. Renvoie le nouveau nom."""
     cfg = cfg if cfg is not None else C.load_config()
-    plan = rename_plan(item, new_title)
+    plan = rename_plan(item, new_title, suffix)
     new = plan["new"]
     if new == item.name:
         return new

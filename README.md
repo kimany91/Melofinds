@@ -149,10 +149,15 @@ ouvre le site dans Chrome) :
   d'usage non lucratif, la prod est rangée en `[F]` même si l'app disait free for profit
   (titre « FREE FOR PROFIT », description que YouTube lui avait cachée). Une prod que l'app
   n'avait pas pu lire passe en `[FFP]` si la description le dit clairement.
-- Clé ou BPM manquants : le PC les cherche sur Tunebat et les range à part dans le nom :
-  `Titre [C# min] [TB 150 BPM] [FFP].wav`, `Titre [TB C# min, 150 BPM].wav`. Ce que tu as
-  précisé ou ce que dit la description passe toujours avant Tunebat. FLmake utilise aussi
-  ces valeurs (BPM du projet, clé de Graillon) et le panneau les affiche en bleu.
+- Clé ou BPM manquants : ceux trouvés par l'analyse du son (téléphone, ou Tunebat sur le PC)
+  sont rangés à part dans le nom, marqués **(Finded)** : `Titre [C# min] [(Finded) 150 BPM]
+  [FFP].wav`, `Titre [(Finded) Key B minor, 140 BPM].wav`. Ce qui est écrit par le beatmaker
+  reste sans marque et passe toujours avant. Dans l'APK, « Sur mon PC » trouve d'abord le BPM
+  et la clé (quelques secondes) ; sinon, dès qu'ils sont trouvés (bouton BPM, fiche, copie
+  d'écoute), l'app les envoie et le PC **renomme la prod partout** (dossier, sons, projet FL)
+  — jamais par-dessus les valeurs du beatmaker. Une correction à la main part sans
+  « (Finded) ». Anciens noms `[TB …]` toujours compris. FLmake utilise aussi ces valeurs
+  (BPM du projet, clé de Graillon) et le panneau les affiche en bleu.
 - Sécurité : envois signés (HMAC-SHA256, clé qui ne passe jamais par ntfy) ; un envoi ne
   contient qu'un identifiant de vidéo ; seul un vrai .wav entre dans l'unique dossier
   choisi sur le PC ; 15 min max par vidéo, 40 par heure, envois de plus de 48 h refusés.

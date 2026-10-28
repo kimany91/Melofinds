@@ -1007,7 +1007,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 28/10/2026 à 13:27</p>
+    <p class="build-stamp">Version du 28/10/2026 à 13:34</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -3981,6 +3981,7 @@ function keepAnalysis(item, res, how) {
   syncTbUi();
   refreshItem(item);
   haptic('success');
+  pcSyncTags(ytIdOf(item) || item.id);
   return t;
 }
 function monoOf(buf) {
@@ -4433,6 +4434,7 @@ function openBpmSheet(item, failed = '') {
       syncTbUi();
       refreshItem(item);
       haptic('success');
+      pcSyncTags(ytIdOf(item) || item.id);
       ui.say('Corrigé : c’est gardé pour cette prod.');
       show();
     });
@@ -7552,6 +7554,13 @@ async function sendToPc(item) {
   if (!pc.info) { openPcSetup(item); return; }
   let r = null;
   try { r = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
+  // BPM / clé manquants : l'APK les trouve d'abord (quelques secondes) pour que le PC les
+  // mette dans le nom, marqués « (Finded) ». Sinon ils partiront dès qu'ils sont trouvés.
+  if (r && (!r.bpm || !r.key) && nativeYt.ok && !tbFor(id) && !pc.queue[id]) {
+    toast('Je trouve le BPM et la clé avant d’envoyer…');
+    try { await Promise.race([ytRun(item, quietUi), wait(25000)]); } catch { /* envoyée sans */ }
+    try { r = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
+  }
   // Le PC nomme le fichier « Titre [Clé, BPM].wav » (sans « free ») ; il relit aussi la description.
   // Licence → étiquette du fichier sur le PC : [FFP], [F] ou [FFP, UPTO 5000]
   const msg = { v: id, t: String(item.title || '').slice(0, 200), bpm: r?.bpm || null, key: r?.key || null, tbBpm: r?.bpmTb || undefined, tbKey: r?.keyTb || undefined,
@@ -7776,7 +7785,7 @@ function onPcViewMessage(d, m, fresh) {
     if (!m.ok) pcLib.cmds = pcLib.cmds.filter((c) => !(c.msg.p === p && c.msg.cmd === m.cmd && c.at < (d.time || 0) * 1000));
     savePcLib();
     if (fresh) {
-      const what = { ren: 'Projet renommé sur ton PC', style: 'Icône et couleur changées sur ton PC', fav: 'Favori mis à jour sur ton PC' }[m.cmd] || 'Fait sur ton PC';
+      const what = { ren: 'Projet renommé sur ton PC', style: 'Icône et couleur changées sur ton PC', fav: 'Favori mis à jour sur ton PC', tags: 'BPM et clé ajoutés au nom sur ton PC' }[m.cmd] || 'Fait sur ton PC';
       toast(m.ok ? (m.new ? `${what} : ${String(m.new).slice(0, 80)}` : what) : `Le PC n’a pas pu le faire : ${String(m.err || '').slice(0, 90)}`);
     }
     renderPcView();
@@ -7801,6 +7810,7 @@ async function onPcLib(d, m) {
     renderPcView();
     pcSync();
     pcSendLinks();
+    pcSyncAllTags();
   } catch { /* pièce jointe expirée (3 h) : on garde la liste qu'on a */ }
 }
 
@@ -7917,7 +7927,7 @@ function askPcLib(force) {
   ntfyPublish({ cmd: 'lib' }).then(() => { if (force) toast(pcOn() ? 'Le PC envoie sa liste…' : 'PC éteint : la liste arrivera quand il se rallume'); }).catch(() => { if (force) toast('Pas de réseau'); });
 }
 
-async function pcCommand(msg, label) {
+async function pcCommand(msg, label, quiet = false) {
   const c = { id: randHex(6), msg, at: Date.now(), lastSent: 0 };
   pcLib.cmds.push(c);
   savePcLib();
@@ -7925,11 +7935,33 @@ async function pcCommand(msg, label) {
   try {
     await ntfyPublish(msg);
     c.lastSent = Date.now();
-    toast(pcOn() ? `${label}…` : `${label} : ton PC est éteint, ce sera fait dès qu’il se rallume`);
+    if (!quiet) toast(pcOn() ? `${label}…` : `${label} : ton PC est éteint, ce sera fait dès qu’il se rallume`);
   } catch {
-    toast(`${label} : pas de réseau, ça partira dès que tu en as`);
+    if (!quiet) toast(`${label} : pas de réseau, ça partira dès que tu en as`);
   }
   savePcLib();
+}
+// BPM / clé trouvés (ou corrigés) après l'envoi : le PC les ajoute au nom de la prod
+// (« [(Finded) Key B minor, 140 BPM] », sans marque si corrigés à la main). Jamais par-dessus
+// ce que le beatmaker a écrit, sauf correction à la main.
+function pcSyncTags(id) {
+  if (!WEB || !pc.info || !pcLib.data || !id) return;
+  if (!pc.info.version || versionLt(pc.info.version, '3.19.0')) return; // les PC d'avant ne savent pas
+  const t = tbFor(id);
+  if (!t) return;
+  const user = t.src === 'user';
+  for (const p of pcProjects().filter((x) => x.y === id)) {
+    const canKey = t.key && t.key !== p.k && (!p.k || p.tb.includes('key') || user);
+    const canBpm = t.bpm && t.bpm !== p.b && (!p.b || p.tb.includes('bpm') || user);
+    const key = canKey ? t.key : null;
+    const bpm = canBpm ? t.bpm : null;
+    if (!key && !bpm) continue;
+    if (pcLib.cmds.some((c) => c.msg.cmd === 'tags' && c.msg.p === p.p && c.msg.key === key && c.msg.bpm === bpm)) continue;
+    pcCommand({ cmd: 'tags', p: p.p, key, bpm, fk: !user, fb: !user, user: user || undefined }, 'BPM et clé envoyés au PC', !user);
+  }
+}
+function pcSyncAllTags() {
+  for (const p of pcLib.data?.projects || []) if (p.y && tbFor(p.y)) pcSyncTags(p.y);
 }
 // Changements pas encore confirmés par le PC : renvoyés s'il était éteint trop longtemps
 async function resendPcCmds() {
@@ -7949,6 +7981,12 @@ function pcProjects() {
     if (c.msg.cmd === 'fav') p.fav = c.msg.on ? 1 : 0;
     if (c.msg.cmd === 'style') { p.c = c.msg.c || p.c; p.ic = c.msg.i || p.ic; }
     if (c.msg.cmd === 'ren') { p.t = c.msg.t; p.renaming = true; }
+    if (c.msg.cmd === 'tags') {
+      const tb = new Set(p.tb);
+      if (c.msg.key) { p.k = c.msg.key; if (c.msg.fk) tb.add('key'); else tb.delete('key'); }
+      if (c.msg.bpm) { p.b = c.msg.bpm; if (c.msg.fb) tb.add('bpm'); else tb.delete('bpm'); }
+      p.tb = [...tb];
+    }
   }
   return ps;
 }
