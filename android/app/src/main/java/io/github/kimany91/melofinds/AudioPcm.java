@@ -21,6 +21,8 @@ final class AudioPcm {
 
     static final class Out {
         int rate;
+        int rateReported; // fréquence annoncée par le décodeur
+        int rateMeasured; // fréquence mesurée (échantillons / temps réel)
         double seconds;   // durée gardée
         double duration;  // durée du morceau
     }
@@ -63,6 +65,11 @@ final class AudioPcm {
             boolean outDone = false;
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             long guard = System.currentTimeMillis() + 30000;
+            // contrôle de vitesse : un son lu à la mauvaise fréquence fausse la clé et le BPM
+            long firstPts = -1;
+            long lastPts = -1;
+            long framesBeforeLast = 0;
+            long framesTotal = 0;
 
             while (!outDone) {
                 if (System.currentTimeMillis() > guard) throw new IOException("décodage trop long");
@@ -103,6 +110,10 @@ final class AudioPcm {
                     boolean isFloat = enc == AudioFormat.ENCODING_PCM_FLOAT;
                     int bytes = isFloat ? 4 : 2;
                     int frames = info.size / (bytes * ch);
+                    if (firstPts < 0) firstPts = info.presentationTimeUs;
+                    lastPts = info.presentationTimeUs;
+                    framesBeforeLast = framesTotal;
+                    framesTotal += frames;
                     double usPerFrame = 1e6 / rate;
                     for (int f = 0; f < frames; f++) {
                         long t = info.presentationTimeUs + (long) (f * usPerFrame);
@@ -127,10 +138,18 @@ final class AudioPcm {
                 dec.releaseOutputBuffer(oi, false);
             }
             if (n < rate / step * 5) throw new IOException("son trop court");
-            int outRate = rate / step;
+            int realRate = rate;
+            int measured = 0;
+            if (lastPts - firstPts > 2_000_000 && framesBeforeLast > 0) {
+                measured = (int) Math.round(framesBeforeLast / ((lastPts - firstPts) / 1e6));
+                if (Math.abs(measured / (double) rate - 1) > 0.03) realRate = nearestRate(measured);
+            }
+            int outRate = Math.round(realRate / (float) step);
             writeWav(dest, pcm, n, outRate);
             Out o = new Out();
             o.rate = outRate;
+            o.rateReported = rate;
+            o.rateMeasured = measured;
             o.seconds = n / (double) outRate;
             o.duration = durUs / 1e6;
             return o;
@@ -141,6 +160,17 @@ final class AudioPcm {
             }
             ex.release();
         }
+    }
+
+    private static int nearestRate(int r) {
+        int best = r;
+        int[] std = { 8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000 };
+        double d = 1e9;
+        for (int s : std) {
+            double e = Math.abs(Math.log(r / (double) s));
+            if (e < d) { d = e; best = s; }
+        }
+        return d < 0.02 ? best : r;
     }
 
     private static void writeWav(File dest, short[] pcm, int n, int rate) throws IOException {

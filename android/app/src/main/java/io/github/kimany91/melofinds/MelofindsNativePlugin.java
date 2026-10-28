@@ -506,6 +506,8 @@ public class MelofindsNativePlugin extends Plugin {
                         r.put("path", wav.getAbsolutePath());
                         r.put("size", wav.length());
                         r.put("rate", o.rate);
+                        r.put("rateReported", o.rateReported);
+                        r.put("rateMeasured", o.rateMeasured);
                         r.put("seconds", o.seconds);
                         r.put("duration", o.duration);
                         r.put("format", p.format);

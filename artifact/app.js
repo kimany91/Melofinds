@@ -255,7 +255,7 @@ function bpmText(t) {
 function keepAnalysis(item, res, how) {
   if (!res || (!res.bpm && !res.key)) return null;
   const sure = res.keyConf >= 0.3;
-  const t = { bpm: res.bpm, key: res.key, alt: res.bpmAlt, keyAlt: res.keyAlt, unsure: !sure, at: Date.now(), src: 'audio', how };
+  const t = { bpm: res.bpm, key: res.key, alt: res.bpmAlt, keyAlt: res.keyAlt, unsure: !sure, at: Date.now(), src: 'audio', how, dbg: res.dbg || '' };
   tbStore(item.id, t);
   syncTbUi();
   refreshItem(item);
@@ -593,7 +593,11 @@ async function ytAnalyze(item, ui) {
     if (!w) throw new Error('Son illisible');
     await wait(20);
     const res = analyzeAudio(w.mono, w.rate);
-    if (res) { res.duration = r.duration; res.ms = r.ms; }
+    if (res) {
+      res.duration = r.duration;
+      const fixed = r.rateMeasured && r.rateReported && Math.abs(r.rateMeasured / r.rateReported - 1) > 0.03;
+      res.dbg = [`${r.format || '?'} ${r.kbps || '?'} kb/s`, `${r.rateReported || r.rate} Hz${fixed ? ` (mesuré ${r.rateMeasured} Hz : corrigé)` : ''}`, r.ms?.total ? `${(r.ms.total / 1000).toFixed(1)} s` : ''].filter(Boolean).join(' · ');
+    }
     return res;
   } finally { mfn().dropShared({ path: r.path }).catch(() => {}); }
 }
@@ -683,11 +687,37 @@ function openBpmSheet(item, failed = '') {
   };
   const show = (t) => {
     const cur = tbFor(item.id);
+    const mine = cur?.src === 'user';
     out.replaceChildren(...(cur ? [
-      h('div', { class: 'bpm-res' }, h('b', { class: 'tb' }, bpmText(cur))),
-      h('p', { class: 'hint' }, 'Trouvé à partir du son, en bleu sur la prod. Si la description du beatmaker donne le BPM ou la clé, c’est elle qui compte.'),
+      h('div', { class: 'bpm-res' }, h('b', { class: mine ? null : 'tb' }, bpmText(cur))),
+      h('p', { class: 'hint' }, mine ? 'Corrigé par toi : c’est ce qui s’affiche sur la prod.' : 'Trouvé à partir du son, en bleu sur la prod. Si la description du beatmaker donne le BPM ou la clé, c’est elle qui compte.'),
+      cur.dbg ? h('p', { class: 'bpm-dbg' }, `Son analysé : ${cur.dbg}`) : null,
+      fixForm(cur),
     ] : []));
     if (t === null) return;
+  };
+  // Correction à la main (clé et / ou BPM) : gardée et prioritaire
+  const fixForm = (cur) => {
+    const box = h('div', { class: 'bpm-fix', hidden: true });
+    const open = h('button', { type: 'button', class: 'link' }, cur.src === 'user' ? 'Modifier' : 'Pas la bonne clé ou le bon BPM ? Corriger');
+    const keys = [];
+    for (const m of ['min', 'maj']) for (const n of ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']) keys.push(`${n} ${m}`);
+    const sel = h('select', { 'aria-label': 'Clé' }, h('option', { value: '' }, 'Clé : ne pas changer'), ...keys.map((k) => h('option', { value: k, selected: k === cur.key }, k)));
+    const bpmIn = h('input', { type: 'number', inputmode: 'numeric', min: '40', max: '250', value: cur.bpm || '', 'aria-label': 'BPM', placeholder: 'BPM' });
+    const save = h('button', { type: 'button', class: 'primary' }, 'Enregistrer');
+    save.addEventListener('click', () => {
+      const bpm = Math.round(Number(bpmIn.value));
+      const t = { bpm: bpm >= 40 && bpm <= 250 ? bpm : cur.bpm, key: sel.value || cur.key, src: 'user', at: Date.now(), was: cur.src === 'user' ? cur.was : { bpm: cur.bpm, key: cur.key, dbg: cur.dbg || '' }, dbg: cur.dbg || '' };
+      tbStore(item.id, t);
+      syncTbUi();
+      refreshItem(item);
+      haptic('success');
+      ui.say('Corrigé : c’est gardé pour cette prod.');
+      show();
+    });
+    open.addEventListener('click', () => { box.hidden = !box.hidden; });
+    box.append(h('div', { class: 'bpm-fix-row' }, sel, bpmIn), save);
+    return h('div', {}, open, box);
   };
   const run = async (job) => {
     if (bpmJob.id) return;
@@ -792,7 +822,11 @@ function analyzed(item, plan) {
       ],
     };
   }
-  if (tb) {
+  if (tb?.src === 'user') {
+    // corrigé à la main : passe avant tout, affiché comme une info sûre
+    if (tb.bpm) r.bpm = tb.bpm;
+    if (tb.key) r.key = tb.key;
+  } else if (tb) {
     r.tbSrc = tb.src === 'audio' ? 'écouté' : 'Tunebat';
     if (!r.bpm && tb.bpm) { r.bpm = tb.bpm; r.bpmTb = true; }
     if (!r.key && tb.key) { r.key = tb.key; r.keyTb = true; }
