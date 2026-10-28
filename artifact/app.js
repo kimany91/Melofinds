@@ -277,7 +277,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 // Ce que sait faire l'APK installée (les anciennes versions n'ont pas tout)
-const nativeYt = { desc: false, scan: false, tba: false, checked: false };
+const nativeYt = { desc: false, scan: false, tba: false, used: false, checked: false };
 if (isNative()) {
   document.documentElement.classList.add('apk');
   (async () => {
@@ -286,6 +286,7 @@ if (isNative()) {
       nativeYt.desc = f.includes('ytDesc');
       nativeYt.scan = f.includes('scanQr');
       nativeYt.tba = f.includes('tbAnalyzer');
+      nativeYt.used = f.includes('usedBy');
     } catch { /* ancienne version de l'APK */ }
     nativeYt.checked = true;
   })();
@@ -413,6 +414,134 @@ function openBpmSheet(item, note = '') {
   ]);
   show();
 }
+// --- Déjà posé dessus (APK) : le téléphone cherche sur YouTube et SoundCloud les sons qui
+// citent la prod (src/core/usedby.js choisit quoi chercher et quoi garder), puis compare le
+// son de chacun à celui de la prod (empreinte, comme Shazam). Les sons ne vont que dans le
+// cache de l'appli et sont effacés aussitôt. Sur le site : liens de recherche.
+const usedCache = (() => { const c = local.get('usedBy', {}); return c && typeof c === 'object' ? c : {}; })();
+const usedJobs = {};
+function usedStore(id, v) {
+  usedCache[id] = v;
+  const ids = Object.keys(usedCache);
+  if (ids.length > 150) for (const k of ids.slice(0, ids.length - 150)) delete usedCache[k];
+  local.set('usedBy', usedCache);
+}
+const usedUrl = (hit) => (hit.service === 'yt' ? `https://www.youtube.com/watch?v=${hit.id}` : /^https:\/\/(?:m\.)?soundcloud\.com\//.test(hit.url || '') ? hit.url : '');
+const keepHit = (hit) => {
+  const { service, id, url, title, uploader, duration, views, level } = hit;
+  return { service, id, url, title: String(title || '').slice(0, 200), uploader: String(uploader || '').slice(0, 100), duration, views, level };
+};
+
+async function findUsedBy(item) {
+  const n = mfn();
+  const prod = ytIdOf(item);
+  if (!n || !nativeYt.used || !prod || usedJobs[item.id]) return;
+  haptic();
+  const job = { phase: 'search', rows: [], done: 0, total: 0 };
+  usedJobs[item.id] = job;
+  syncUsed(item);
+  try {
+    const queries = usedByQueries(item);
+    if (!queries.length) throw new Error('Je ne trouve ni le nom de la prod ni le beatmaker à chercher.');
+    const res = await n.usedBySearch({ queries, sc: true });
+    const items = Array.isArray(res?.items) ? res.items : [];
+    const errs = Object.values(res?.errors || {}).filter(Boolean);
+    if (!items.length && errs.length) throw new Error(`Recherche impossible : ${errs[0]}`);
+    job.rows = pickHits(items, item).map((hit) => ({ hit, sound: null, verdict: null }));
+    job.total = job.rows.length;
+    job.phase = 'check';
+    syncUsed(item);
+    await pool(job.rows, 2, async (row) => {
+      const q = row.hit.service === 'yt' ? { prod, service: 'yt', id: row.hit.id } : { prod, service: 'sc', url: row.hit.url };
+      try { row.sound = await n.soundMatch(q); } catch (e) { row.sound = { status: 'fail', err: e?.message || '' }; }
+      row.verdict = usedVerdict(row.hit.level, row.sound);
+      job.done++;
+      syncUsed(item);
+    });
+    const ORDER = { same: 0, text: 1, differs: 2 };
+    const shown = job.rows.filter((r) => r.verdict).sort((a, b) => ORDER[a.verdict] - ORDER[b.verdict]);
+    const fails = job.rows.filter((r) => r.sound?.status === 'fail');
+    usedStore(item.id, {
+      at: Date.now(),
+      checked: job.total,
+      soundErr: job.total && fails.length === job.total ? String(fails[0].sound.err || '').slice(0, 160) : '',
+      rows: shown.map((r) => ({ hit: keepHit(r.hit), verdict: r.verdict, offset: Number(r.sound?.offset) || 0 })),
+    });
+    if (shown.some((r) => r.verdict === 'same')) haptic('success');
+  } catch (e) {
+    usedStore(item.id, { at: Date.now(), err: String(e?.message || 'ça n’a pas marché').slice(0, 200), rows: [] });
+    haptic('warn');
+  } finally {
+    delete usedJobs[item.id];
+    syncUsed(item);
+  }
+}
+
+const USED_BADGE = {
+  same: ['✓ Même prod', 'Vérifié au son'],
+  text: ['Cite la prod', 'Son pas vérifié : écoute pour être sûr'],
+  differs: ['Cite la prod', 'Le son ne colle pas : prod accélérée ou pitchée ?'],
+};
+function usedRow(row) {
+  const { hit, verdict } = row;
+  const url = usedUrl(hit);
+  const [badge, sub] = USED_BADGE[verdict] || USED_BADGE.text;
+  const meta = [hit.uploader, hit.service === 'yt' ? 'YouTube' : 'SoundCloud', Number(hit.views) > 0 ? `${fmtViews(Number(hit.views))} vues` : null].filter(Boolean).join(' · ');
+  return h(url ? 'a' : 'div', { class: `used-row ${verdict}`, href: url || null, target: url ? '_blank' : null, rel: url ? 'noopener' : null },
+    WEB && hit.service === 'yt' ? h('img', { src: `https://i.ytimg.com/vi/${hit.id}/mqdefault.jpg`, alt: '', loading: 'lazy', decoding: 'async', onerror: (e) => e.currentTarget.remove() }) : null,
+    h('span', { class: 'used-t' }, h('b', {}, hit.title), h('small', {}, meta), h('small', { class: 'used-sub' }, sub)),
+    h('span', { class: 'used-badge' }, badge));
+}
+function usedBody(item) {
+  const job = usedJobs[item.id];
+  const done = usedCache[item.id];
+  const links = usedByLinks(item);
+  const linkRow = links.length ? h('div', { class: 'd-actions' }, ...links.map((l) => h('a', { class: 'ghost', href: l.url, target: '_blank', rel: 'noopener noreferrer' }, l.label, icon('ext')))) : null;
+  if (!isNative() || !nativeYt.used) {
+    return [
+      h('p', { class: 'hint' }, isNative() && nativeYt.checked
+        ? 'Mets l’appli à jour : elle cherche les sons posés sur la prod et vérifie le son toute seule.'
+        : 'L’appli Android cherche les sons posés sur cette prod et compare leur son à la prod. Ici, cherche toi-même :'),
+      isNative() && nativeYt.checked ? h('div', { class: 'd-actions' }, h('a', { class: 'ghost', href: APK_URL, rel: 'noopener' }, 'Mettre à jour l’appli')) : linkRow,
+    ];
+  }
+  if (job) {
+    const rows = job.rows.filter((r) => r.verdict);
+    return [
+      h('p', { class: 'bpm-status' }, job.phase === 'search' ? 'Je cherche sur YouTube et SoundCloud…' : `Je compare le son : ${job.done} / ${job.total}…`),
+      ...rows.map(usedRow),
+    ];
+  }
+  const btn = h('button', { type: 'button', class: done ? 'ghost' : 'primary', onclick: () => findUsedBy(item) }, done ? 'Chercher à nouveau' : 'Chercher qui a posé dessus');
+  if (!done) {
+    return [
+      h('p', { class: 'hint' }, 'Je cherche sur YouTube et SoundCloud les sons qui citent cette prod, puis je compare leur son à celui de la prod (comme Shazam). Les sons ne sont pas gardés.'),
+      h('div', { class: 'd-actions' }, btn),
+    ];
+  }
+  const rows = done.rows || [];
+  const same = rows.filter((r) => r.verdict === 'same').length;
+  let msg;
+  if (done.err) msg = done.err;
+  else if (!rows.length) msg = done.checked ? `${done.checked} son${done.checked > 1 ? 's' : ''} trouvé${done.checked > 1 ? 's' : ''}, aucun sur cette prod.` : 'Aucun son trouvé qui cite cette prod.';
+  else msg = `${rows.length} son${rows.length > 1 ? 's' : ''} sur cette prod${same ? ` (${same} vérifié${same > 1 ? 's' : ''} au son)` : ''}.`;
+  return [
+    h('p', { class: 'bpm-status' }, msg),
+    done.soundErr ? h('p', { class: 'hint' }, `Son pas vérifié : ${done.soundErr}`) : null,
+    ...rows.map(usedRow),
+    h('p', { class: 'hint' }, 'Je ne trouve que les sons qui citent la prod ou le beatmaker dans leur titre : il peut y en avoir d’autres.'),
+    h('div', { class: 'd-actions' }, btn, ...(links.length ? links.map((l) => h('a', { class: 'ghost', href: l.url, target: '_blank', rel: 'noopener noreferrer' }, l.label, icon('ext'))) : [])),
+  ].filter(Boolean);
+}
+function usedSection(item) {
+  if (!ytIdOf(item)) return null;
+  return h('div', { class: 'd-sec used', 'data-used': item.id }, h('h4', {}, 'Déjà posé dessus'), ...usedBody(item));
+}
+function syncUsed(item) {
+  const box = $(`[data-used="${CSS.escape(item.id)}"]`);
+  if (box) box.replaceChildren(h('h4', {}, 'Déjà posé dessus'), ...usedBody(item));
+}
+
 function refreshItem(item) {
   if (session?.items?.has(item.id)) renderResults();
   if ($('#view-saved')?.classList.contains('active') && isSaved(item.id)) renderSavedProds();
@@ -1682,6 +1811,7 @@ function openBeat(item, plan) {
     WEB ? h('a', { class: 'link d-yt', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube', icon('ext')) : null,
     WEB ? h('a', { class: 'link d-yt', href: `https://tunebat.com/Search?q=${encodeURIComponent(`${beatName(item.title)} ${item.channel || ''}`.trim())}`, target: '_blank', rel: 'noopener' }, 'Vérifier sur Tunebat', icon('ext')) : null,
     WEB && tbFor(item.id)?.src === 'audio' ? h('p', { class: 'hint' }, `En bleu, trouvé à partir du son : ${bpmText(tbFor(item.id))}.`) : null,
+    usedSection(item),
     ...beatDetails(item, r, findTerms()),
     claude,
   ]);

@@ -23,6 +23,7 @@ const MODULES = [
   'src/core/filter.js',
   'src/core/ytparse.js',
   'src/core/tunebat.js',
+  'src/core/usedby.js',
   'src/youtube/demo.js',
 ];
 

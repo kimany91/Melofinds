@@ -76,6 +76,13 @@ jobs:
           chmod +x gradlew
           ./gradlew testReleaseUnitTest --no-daemon
 
+      - name: Essai réel de la recherche « déjà posé dessus » (sans bloquer)
+        continue-on-error: true
+        working-directory: android
+        env:
+          MF_LIVE: '1'
+        run: ./gradlew testReleaseUnitTest --no-daemon --tests '*UsedByLiveTest*'
+
       - name: Construire l'APK
         working-directory: android
         run: |

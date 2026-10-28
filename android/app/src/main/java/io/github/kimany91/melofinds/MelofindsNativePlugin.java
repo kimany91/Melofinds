@@ -18,6 +18,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanner;
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -26,8 +27,8 @@ import java.util.concurrent.Executors;
 /**
  * Pont entre l'app web Melofinds et Android : retour haptique, liens, clé et BPM par l'outil
  * Analyzer de Tunebat (la prod est téléchargée dans le cache de l'app puis effacée),
- * descriptions complètes des vidéos, scanner du QR code de Melofinds PC. Aucun accès aux
- * fichiers du téléphone.
+ * descriptions complètes des vidéos, scanner du QR code de Melofinds PC, « déjà posé dessus »
+ * (recherche YouTube / SoundCloud + comparaison du son). Aucun accès aux fichiers du téléphone.
  */
 @CapacitorPlugin(name = "MelofindsNative")
 public class MelofindsNativePlugin extends Plugin {
@@ -75,6 +76,7 @@ public class MelofindsNativePlugin extends Plugin {
         features.put("ytDesc");
         features.put("scanQr");
         features.put("tbAnalyzer");
+        features.put("usedBy");
         r.put("features", features);
         call.resolve(r);
     }
@@ -149,5 +151,122 @@ public class MelofindsNativePlugin extends Plugin {
             r.put("d", d);
             call.resolve(r);
         }).start();
+    }
+
+    // ------------------------------------------------------------------ déjà posé dessus
+
+    private static final ExecutorService SEARCH = Executors.newFixedThreadPool(4);
+    // 2 comparaisons à la fois : chaque son est téléchargé puis décodé
+    private static final ExecutorService MATCH = Executors.newFixedThreadPool(2);
+    private static final Object PROD_LOCK = new Object();
+    private static String prodId = null;
+    private static SoundPrint prodPrint = null;
+
+    /**
+     * Cherche les morceaux qui citent la prod : { queries: [...] (4 au plus) } →
+     * { items: [{ service, id, url, title, uploader, uploaderUrl, duration, views, thumb }], errors }.
+     */
+    @PluginMethod
+    public void usedBySearch(PluginCall call) {
+        JSArray arr = call.getArray("queries", new JSArray());
+        List<String> qs = new ArrayList<>();
+        for (int i = 0; i < arr.length() && qs.size() < 4; i++) {
+            String q = arr.optString(i, "").trim();
+            if (q.length() >= 2 && q.length() <= 120 && !qs.contains(q)) qs.add(q);
+        }
+        boolean sc = Boolean.TRUE.equals(call.getBoolean("sc", true));
+        new Thread(() -> {
+            List<String> jobsWhat = new ArrayList<>();
+            List<java.util.concurrent.Future<List<UsedBy.Hit>>> jobs = new ArrayList<>();
+            for (String q : qs) {
+                jobsWhat.add("yt");
+                jobs.add(SEARCH.submit(() -> UsedBy.search("yt", q, 20)));
+                if (sc) {
+                    jobsWhat.add("sc");
+                    jobs.add(SEARCH.submit(() -> UsedBy.search("sc", q, 10)));
+                }
+            }
+            JSArray items = new JSArray();
+            JSObject errors = new JSObject();
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (int i = 0; i < jobs.size(); i++) {
+                try {
+                    for (UsedBy.Hit h : jobs.get(i).get(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                        String k = h.service + ":" + (h.id != null ? h.id : h.url);
+                        if (!seen.add(k)) continue;
+                        JSObject o = new JSObject();
+                        o.put("service", h.service);
+                        if (h.id != null) o.put("id", h.id);
+                        o.put("url", h.url);
+                        o.put("title", h.title);
+                        o.put("uploader", h.uploader);
+                        o.put("uploaderUrl", h.uploaderUrl);
+                        o.put("duration", h.duration);
+                        o.put("views", h.views);
+                        if (h.thumb != null) o.put("thumb", h.thumb);
+                        items.put(o);
+                    }
+                } catch (Exception e) {
+                    Throwable c = e.getCause() != null ? e.getCause() : e;
+                    String m = c.getMessage();
+                    errors.put(jobsWhat.get(i), m == null ? c.getClass().getSimpleName() : m.length() > 160 ? m.substring(0, 160) : m);
+                }
+            }
+            JSObject r = new JSObject();
+            r.put("items", items);
+            r.put("errors", errors);
+            call.resolve(r);
+        }).start();
+    }
+
+    /**
+     * Le morceau est-il posé sur la prod ? { prod: id YouTube, service: "yt" | "sc", id | url }
+     * → { status: "ok", same, score, ratio, offset, spread } ou { status: "noaudio" | "fail", err }.
+     * Les sons ne vont que dans le cache de l'app et sont effacés aussitôt.
+     */
+    @PluginMethod
+    public void soundMatch(PluginCall call) {
+        String prod = call.getString("prod", "");
+        String service = call.getString("service", "yt");
+        String id = call.getString("id", "");
+        String url = call.getString("url", "");
+        if (!YtStream.VIDEO_ID.matcher(prod).matches()) { call.reject("Prod invalide"); return; }
+        if ("yt".equals(service) ? !YtStream.VIDEO_ID.matcher(id).matches() : !"sc".equals(service) || !UsedBy.SC_URL.matcher(url).matches()) {
+            call.reject("Morceau invalide");
+            return;
+        }
+        File dir = new File(getContext().getCacheDir(), "usedby");
+        dir.mkdirs();
+        MATCH.submit(() -> {
+            JSObject r = new JSObject();
+            try {
+                SoundPrint p;
+                synchronized (PROD_LOCK) {
+                    if (!prod.equals(prodId) || prodPrint == null) {
+                        prodPrint = null;
+                        prodId = prod;
+                        prodPrint = UsedBy.youtubePrint(prod, dir, 300);
+                    }
+                    p = prodPrint;
+                }
+                SoundPrint s = "yt".equals(service) ? UsedBy.youtubePrint(id, dir, 90) : UsedBy.soundcloudPrint(url, dir, 90);
+                if (s == null) {
+                    r.put("status", "noaudio");
+                } else {
+                    SoundPrint.Match m = SoundPrint.compare(p, s);
+                    r.put("status", "ok");
+                    r.put("same", m.same);
+                    r.put("score", m.score);
+                    r.put("ratio", m.ratio);
+                    r.put("offset", m.offset);
+                    r.put("spread", m.spread);
+                }
+            } catch (Throwable e) {
+                String m = e.getMessage();
+                r.put("status", "fail");
+                r.put("err", m == null ? e.getClass().getSimpleName() : m.length() > 160 ? m.substring(0, 160) : m);
+            }
+            call.resolve(r);
+        });
     }
 }

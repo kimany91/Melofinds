@@ -14,8 +14,9 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /**
- * Décode le son téléchargé (AAC / Opus) avec le décodeur d'Android en un WAV mono 16 bits, à
- * la fréquence d'origine et sur tout le morceau : un fichier « normal » pour Tunebat Analyzer.
+ * Décode le son téléchargé (AAC / Opus) avec le décodeur d'Android : en WAV mono 16 bits à la
+ * fréquence d'origine (un fichier « normal » pour Tunebat Analyzer), ou en empreinte sonore
+ * (pour savoir si un morceau est posé sur la prod).
  */
 final class AudioPcm {
 
@@ -27,7 +28,17 @@ final class AudioPcm {
         double duration;  // durée du morceau
     }
 
+    /** Reçoit le son décodé, en mono, échantillon par échantillon. */
+    private interface Sink {
+        /** Fréquence annoncée par le décodeur (peut arriver avant le premier échantillon). */
+        void rate(int rate, double keepSec);
+        void sample(float v);
+        int count();
+    }
+
     private AudioPcm() { }
+
+    // ------------------------------------------------------------------ WAV (Tunebat)
 
     /** Tout le morceau (10 min au plus), à la fréquence d'origine. */
     static Out toWav(File src, File dest) throws IOException {
@@ -36,6 +47,77 @@ final class AudioPcm {
 
     /** {@code step} : 1 = fréquence d'origine, 0 = réduite à ~22–24 kHz. */
     static Out toWav(File src, File dest, double windowSec, int stepWanted) throws IOException {
+        final class Wav implements Sink {
+            short[] pcm = new short[0];
+            int n = 0;
+            int step = 1;
+            float acc = 0;
+            int accN = 0;
+
+            @Override public void rate(int rate, double keepSec) {
+                if (n > 0) return;
+                step = stepWanted > 0 ? stepWanted : rate >= 32000 ? 2 : 1;
+                pcm = new short[(int) (keepSec * rate / step) + rate];
+            }
+
+            @Override public void sample(float v) {
+                acc += v;
+                if (++accN == step) {
+                    if (n < pcm.length) {
+                        float x = Math.max(-1f, Math.min(1f, acc / step));
+                        pcm[n++] = (short) Math.round(x * 32767f);
+                    }
+                    acc = 0;
+                    accN = 0;
+                }
+            }
+
+            @Override public int count() { return n * step; }
+        }
+        Wav w = new Wav();
+        Out o = decode(src, windowSec, w);
+        if (w.n < o.rateReported / w.step * 5) throw new IOException("son trop court");
+        int realRate = o.rateReported;
+        if (o.rateMeasured > 0 && Math.abs(o.rateMeasured / (double) o.rateReported - 1) > 0.03) realRate = nearestRate(o.rateMeasured);
+        int outRate = Math.round(realRate / (float) w.step);
+        writeWav(dest, w.pcm, w.n, outRate);
+        o.rate = outRate;
+        o.seconds = w.n / (double) outRate;
+        return o;
+    }
+
+    // ------------------------------------------------------------------ empreinte
+
+    /** Empreinte sonore de {@code windowSec} secondes au milieu du son. */
+    static SoundPrint print(File src, double windowSec) throws IOException {
+        final class Prints implements Sink {
+            SoundPrint.Resampler rs;
+            int seen = 0;
+
+            @Override public void rate(int rate, double keepSec) {
+                if (seen > 0 && rs != null) return;
+                rs = new SoundPrint.Resampler(rate, (int) (keepSec * SoundPrint.SR) + SoundPrint.SR);
+            }
+
+            @Override public void sample(float v) {
+                seen++;
+                if (rs != null) rs.push(v);
+            }
+
+            @Override public int count() { return seen; }
+        }
+        Prints p = new Prints();
+        Out o = decode(src, windowSec, p);
+        if (p.rs == null || p.rs.length() < SoundPrint.SR * 5) throw new IOException("son trop court");
+        // un décodeur qui annonce la mauvaise fréquence fausserait tout : on ne compare pas
+        if (o.rateMeasured > 0 && Math.abs(o.rateMeasured / (double) o.rateReported - 1) > 0.03) throw new IOException("vitesse du son douteuse");
+        return SoundPrint.of(p.rs.samples(), p.rs.length());
+    }
+
+    // ------------------------------------------------------------------ décodage
+
+    /** Décode {@code windowSec} secondes au milieu du son (tout s'il est plus court). */
+    private static Out decode(File src, double windowSec, Sink sink) throws IOException {
         MediaExtractor ex = new MediaExtractor();
         MediaCodec dec = null;
         try {
@@ -64,11 +146,7 @@ final class AudioPcm {
             int enc = AudioFormat.ENCODING_PCM_16BIT;
             // durée connue : tampon à la bonne taille (pas 10 min de mémoire pour une prod de 3 min)
             double keep = durUs > 0 ? Math.min(windowSec, durUs / 1e6 + 2) : windowSec;
-            int step = stepWanted > 0 ? stepWanted : rate >= 32000 ? 2 : 1;
-            short[] pcm = new short[(int) (keep * rate / step) + rate];
-            int n = 0;
-            float acc = 0;
-            int accN = 0;
+            sink.rate(rate, keep);
             boolean inDone = false;
             boolean outDone = false;
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
@@ -101,11 +179,7 @@ final class AudioPcm {
                     rate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE);
                     ch = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
                     if (of.containsKey(MediaFormat.KEY_PCM_ENCODING)) enc = of.getInteger(MediaFormat.KEY_PCM_ENCODING);
-                    int s2 = stepWanted > 0 ? stepWanted : rate >= 32000 ? 2 : 1;
-                    if (n == 0) {
-                        step = s2;
-                        pcm = new short[(int) (keep * rate / step) + rate];
-                    }
+                    if (sink.count() == 0) sink.rate(rate, keep);
                     continue;
                 }
                 if (oi < 0) continue;
@@ -126,39 +200,24 @@ final class AudioPcm {
                     for (int f = 0; f < frames; f++) {
                         long t = info.presentationTimeUs + (long) (f * usPerFrame);
                         if (t >= endUs) { outDone = true; break; }
+                        if (t < startUs) continue;
                         float m = 0;
                         for (int c = 0; c < ch; c++) {
                             int at = (f * ch + c) * bytes;
                             m += isFloat ? b.getFloat(at) : b.getShort(at) / 32768f;
                         }
-                        if (t < startUs) continue;
-                        acc += m / ch;
-                        if (++accN == step) {
-                            if (n < pcm.length) {
-                                float v = Math.max(-1f, Math.min(1f, acc / step));
-                                pcm[n++] = (short) Math.round(v * 32767f);
-                            }
-                            acc = 0;
-                            accN = 0;
-                        }
+                        sink.sample(m / ch);
                     }
                 }
                 dec.releaseOutputBuffer(oi, false);
             }
-            if (n < rate / step * 5) throw new IOException("son trop court");
-            int realRate = rate;
             int measured = 0;
             if (lastPts - firstPts > 2_000_000 && framesBeforeLast > 0) {
                 measured = (int) Math.round(framesBeforeLast / ((lastPts - firstPts) / 1e6));
-                if (Math.abs(measured / (double) rate - 1) > 0.03) realRate = nearestRate(measured);
             }
-            int outRate = Math.round(realRate / (float) step);
-            writeWav(dest, pcm, n, outRate);
             Out o = new Out();
-            o.rate = outRate;
             o.rateReported = rate;
             o.rateMeasured = measured;
-            o.seconds = n / (double) outRate;
             o.duration = durUs / 1e6;
             return o;
         } finally {

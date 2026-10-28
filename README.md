@@ -200,6 +200,23 @@ Quand la description ne donne pas le BPM ou la clé, chaque prod a un petit bout
 - Les valeurs s'affichent **en bleu** (« BPM · TB ») et partent au PC (« (Finded) » dans le
   nom) ; la description du beatmaker reste prioritaire.
 
+## « Déjà posé dessus » : les sons de rappeurs sur la prod
+
+Dans le panneau d'une prod, **Chercher qui a posé dessus** :
+- **Appli Android** : le téléphone cherche sur YouTube et SoundCloud (NewPipe Extractor,
+  gratuit, sans clé) le nom de la prod et le beatmaker (« Lune prod Orin », « prod. Orin »…).
+  Les autres prods (type beat, instru, free…), les tutos et les vidéos du beatmaker sont
+  écartés (`src/core/usedby.js`). Puis il **compare le son** de chaque morceau à celui de la
+  prod, comme Shazam (`SoundPrint.java` : pics du spectre reliés deux à deux, même décalage
+  dans le temps = même prod, même avec une voix par-dessus). Les sons ne vont que dans le
+  cache de l'appli et sont effacés aussitôt.
+- Affiché : **✓ Même prod** (vérifié au son), ou **Cite la prod** (le titre cite la prod et
+  le beatmaker, son pas vérifiable). Dans le doute, rien : pas de faux « même prod ».
+- Essais (prods synthétiques avec voix, réencodées en AAC / Opus) : 12 sons sur 12 reconnus,
+  aucune erreur sur 87 paires de prods différentes, même avec la même batterie, le même
+  tempo et la même clé. Limite : une prod accélérée ou pitchée n'est pas reconnue au son.
+- **Site web** : liens de recherche YouTube, SoundCloud et Spotify.
+
 ## Mini-jeu pendant la recherche
 
 Pendant qu'une recherche charge (web et APK), un petit jeu façon dinosaure de Chrome :
@@ -217,6 +234,7 @@ arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion �
 
 - **Tunebat Analyzer** : bouton BPM (voir plus haut) : la prod est téléchargée, analysée par
   Tunebat dans une fenêtre visible, puis effacée.
+- **Déjà posé dessus** (voir plus haut) : recherche YouTube / SoundCloud et comparaison du son.
 - **Descriptions complètes** (licence, BPM, clé) : quand YouTube ne donne que le début,
   l'appli lit la page de la vidéo depuis le téléphone, sinon via NewPipe Extractor
   (`YtDescription.java`) ; puis le
