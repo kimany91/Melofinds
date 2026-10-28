@@ -45,6 +45,7 @@ import java.util.concurrent.Executors;
 import org.schabi.newpipe.extractor.exceptions.AgeRestrictedContentException;
 import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException;
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException;
+import org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException;
 
 /**
  * Pont entre l'app web Melofinds et Android.
@@ -528,6 +529,8 @@ public class MelofindsNativePlugin extends Plugin {
                 throw last != null ? last : new IOException("aucun son lisible");
             } catch (ReCaptchaException e) {
                 call.reject("YouTube demande une vérification (trop de demandes depuis ce réseau). Réessaie dans un moment.", "captcha");
+            } catch (SignInConfirmNotBotException e) {
+                call.reject("YouTube demande de confirmer que tu n'es pas un robot sur ce réseau (souvent un VPN ou un Wi-Fi public). Essaie avec une autre connexion (4G ou Wi-Fi de la maison).", "bot");
             } catch (AgeRestrictedContentException e) {
                 call.reject("Vidéo réservée aux adultes : YouTube ne donne pas le son sans compte.", "age");
             } catch (ContentNotAvailableException e) {
