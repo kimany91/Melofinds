@@ -894,3 +894,8 @@ body.mobile .chan-txt b { font-size: 17px; }
 .bpm-fix { display: grid; gap: 8px; margin-top: 8px; }
 .bpm-fix-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 8px; }
 .bpm-fix select, .bpm-fix input { min-width: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel); color: inherit; font: inherit; }
+.qr-scan { position: fixed; inset: 0; z-index: 90; background: #000; display: grid; place-items: center; align-content: center; gap: 14px; padding: 16px; }
+.qr-video { width: min(92vw, 420px); aspect-ratio: 1; object-fit: cover; border-radius: 18px; background: #111; }
+.qr-frame { position: absolute; width: min(60vw, 260px); aspect-ratio: 1; border: 3px solid rgba(255, 255, 255, .9); border-radius: 18px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .25); pointer-events: none; top: 50%; left: 50%; transform: translate(-50%, -62%); }
+.qr-scan p { color: #fff; margin: 0; font-size: 15px; }
+.qr-scan .ghost { color: #fff; border-color: rgba(255, 255, 255, .5); background: transparent; }

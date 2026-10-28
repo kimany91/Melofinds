@@ -18,6 +18,7 @@ import http.client
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -32,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.19.1"
+VERSION = "3.20.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -279,6 +280,29 @@ def default_folder():
 def parse_pairing(text):
     m = PAIR_RE.match(str(text or "").strip().lower())
     return (m.group(1), m.group(2)) if m else None
+
+
+# Appairage par QR code : le PC crée le code et la clé, le téléphone scanne. Le lien ouvre
+# l'app web ; la clé est après « # », elle n'est donc jamais envoyée à un serveur.
+WEB_APP = "https://kimany91.github.io/Melofinds/"
+
+
+def new_pairing():
+    return f"melofinds-{secrets.token_hex(16)}", secrets.token_hex(32)
+
+
+def pairing_url(code, key):
+    return f"{WEB_APP}#pair={code}.{key}"
+
+
+def qr_rows(text):
+    """Lignes du QR code (True = carré noir), marge comprise ; None si segno manque."""
+    try:
+        import segno
+    except ImportError:
+        return None
+    q = segno.make(text, error="m", micro=False)
+    return [[bool(x) for x in row] for row in q.matrix_iter(scale=1, border=4)]
 
 
 def version_tuple(v):

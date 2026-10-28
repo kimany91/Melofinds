@@ -136,8 +136,13 @@ construction analyse l'installateur avec Windows Defender avant de le publier.
 Le raccourci ouvre le **panneau de gestion** (avec un bouton « Ouvrir Melofinds Web » qui
 ouvre le site dans Chrome) :
 - **Accueil** : « Mettre en ligne » / « Mettre hors ligne », dernières prods reçues ;
-- **Appareils** : téléphones appairés (nom, type, dernière activité), ajouter avec le
-  code d'appairage, renommer, retirer ;
+- **Appareils** : téléphones appairés (nom, type, dernière activité), renommer, retirer.
+  « Ajouter un appareil » affiche un **QR code** : le scanner avec l'appli Android
+  (« Scanner le QR code du PC », scanner de Google, sans accès à l'appareil photo pour
+  Melofinds), dans l'app web (appareil photo) ou avec l'appareil photo du téléphone (le lien
+  ouvre Melofinds et relie tout seul). Le PC crée le code et la clé ; la clé est après « # »
+  dans le lien, jamais envoyée à un serveur. Le téléphone est ajouté dès qu'il se manifeste
+  (sinon retiré si on annule). Coller le code du téléphone reste possible ;
 - **Dossier & réglages** : dossier des projets, emplacement du programme, journal,
   mises à jour, désinstallation (les prods restent dans leur dossier).
 
@@ -244,6 +249,12 @@ arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion �
   Si YouTube refuse (vidéo privée, trop de demandes…), la fenêtre BPM s'ouvre avec noTube.
   Code : `YtAudio.java` (sans Android, testé sur ordinateur par `YtAudioTest`),
   `AudioPcm.java` (décodage), `ytAudio` dans le module natif.
+- **Descriptions complètes** (licence, BPM, clé) : quand YouTube ne donne que le début,
+  l'appli lit la page de la vidéo depuis le téléphone, sinon via NewPipe Extractor ; puis le
+  PC en secours. Pour le site web : clé YouTube **du site** (API officielle gratuite,
+  réservée à l'adresse du site, constante `SITE_YT_KEY` dans `artifact/app.js`) si elle est
+  créée — 1 unité pour 50 vidéos, personne n'a de clé à taper. Les services « sans clé »
+  (YouTube Operational API, Invidious, Jina…) ne marchent plus en 2026.
 - **Avec noTube (secours)** : dans la fenêtre BPM, « Autoriser l'accès aux sons
   téléchargés » (une seule fois : autorisation « Musique et audio » d'Android — le
   sélecteur de dossiers d'Android interdit de choisir Téléchargements depuis Android 11),

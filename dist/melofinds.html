@@ -900,6 +900,11 @@ body.mobile .chan-txt b { font-size: 17px; }
 .bpm-fix { display: grid; gap: 8px; margin-top: 8px; }
 .bpm-fix-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 8px; }
 .bpm-fix select, .bpm-fix input { min-width: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel); color: inherit; font: inherit; }
+.qr-scan { position: fixed; inset: 0; z-index: 90; background: #000; display: grid; place-items: center; align-content: center; gap: 14px; padding: 16px; }
+.qr-video { width: min(92vw, 420px); aspect-ratio: 1; object-fit: cover; border-radius: 18px; background: #111; }
+.qr-frame { position: absolute; width: min(60vw, 260px); aspect-ratio: 1; border: 3px solid rgba(255, 255, 255, .9); border-radius: 18px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .25); pointer-events: none; top: 50%; left: 50%; transform: translate(-50%, -62%); }
+.qr-scan p { color: #fff; margin: 0; font-size: 15px; }
+.qr-scan .ghost { color: #fff; border-color: rgba(255, 255, 255, .5); background: transparent; }
 
 </style>
 
@@ -920,6 +925,7 @@ body.mobile .chan-txt b { font-size: 17px; }
   <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3.5Z" fill="currentColor"/></symbol>
   <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-loop" viewBox="0 0 24 24"><path d="M4 11V9a3 3 0 0 1 3-3h11M15 3l3 3-3 3M20 13v2a3 3 0 0 1-3 3H6M9 21l-3-3 3-3" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-qr" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M14 14h2.5v2.5H14zM17.5 17.5H20V20h-2.5zM14 18h2v2h-2zM18 14h2v2h-2z" fill="currentColor"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 </svg>
 
@@ -1007,7 +1013,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 28/10/2026 à 13:48</p>
+    <p class="build-stamp">Version du 28/10/2026 à 15:57</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -4289,7 +4295,7 @@ if (isNative()) {
 // Son YouTube direct (APK) : le téléphone récupère lui-même le son de la vidéo (NewPipe
 // Extractor, libre et gratuit), l'analyse puis l'efface. Rien à télécharger, rien dans
 // les fichiers du téléphone. L'app web seule (navigateur) garde noTube.
-const nativeYt = { ok: false, desc: false, checked: false };
+const nativeYt = { ok: false, desc: false, scan: false, checked: false };
 const YT_STEP = { find: 'Je trouve le son de la vidéo…', download: 'Téléchargement du son…', decode: 'Décodage…' };
 const ytListeners = new Map();
 if (isNative()) {
@@ -4298,6 +4304,7 @@ if (isNative()) {
       const f = (await mfn().info())?.features || [];
       nativeYt.ok = f.includes('ytAudio');
       nativeYt.desc = f.includes('ytDesc');
+      nativeYt.scan = f.includes('scanQr');
     } catch { /* ancienne version de l'APK */ }
     nativeYt.checked = true;
   })();
@@ -6010,6 +6017,8 @@ function applyPcDesc(it, id) {
   return true;
 }
 async function pcAskDesc(items) {
+  // 1. clé du site (web et APK)  2. le téléphone lui-même (APK)  3. le PC
+  if (SITE_YT_KEY) await siteAskDesc(items);
   if (nativeYt.desc) await nativeAskDesc(items);
   if (!WEB || !pc.info || !pcCode()) return 0;
   const now = Date.now();
@@ -6058,6 +6067,34 @@ function applyDescFound(found) {
 }
 // Appli Android : le téléphone lit lui-même les descriptions complètes sur YouTube (comme le
 // PC), sans attendre le PC. Ce qui reste illisible part ensuite au PC s'il est là.
+// Clé YouTube DU SITE (API officielle, gratuite) : créée une fois par le propriétaire,
+// réservée à l'adresse du site (kimany91.github.io) dans Google Cloud, donc inutilisable
+// ailleurs. Seulement pour lire les descriptions : 1 unité pour 50 vidéos (10 000 / jour
+// gratuites). Personne n'a de clé à taper. Vide tant qu'elle n'est pas créée.
+const SITE_YT_KEY = '';
+const siteDescAsked = new Map();
+async function siteAskDesc(items) {
+  if (!WEB || !SITE_YT_KEY) return 0;
+  const now = Date.now();
+  const ids = [...new Set(items.filter(needsDesc).map((i) => ytIdOf(i) || i.id))]
+    .filter((id) => /^[\w-]{11}$/.test(id) && !(now - (siteDescAsked.get(id) || 0) < 10 * 60e3)).slice(0, 200);
+  if (!ids.length) return 0;
+  ids.forEach((id) => siteDescAsked.set(id, now));
+  const found = {};
+  await pool(chunk(ids, 50), 2, async (batch) => {
+    try {
+      const u = `https://www.googleapis.com/youtube/v3/videos?part=snippet&fields=items(id,snippet/description)&id=${batch.join(',')}&key=${SITE_YT_KEY}`;
+      const res = await fetch(u);
+      if (!res.ok) return;
+      for (const it of (await res.json())?.items || []) {
+        if (/^[\w-]{11}$/.test(it?.id) && typeof it?.snippet?.description === 'string') found[it.id] = it.snippet.description.slice(0, DESC_MAX);
+      }
+    } catch { /* réseau : le téléphone ou le PC prennent le relais */ }
+  });
+  const n = applyDescFound(found);
+  if (n) setStatus(`${n} description${n > 1 ? 's' : ''} lue${n > 1 ? 's' : ''} en entier : licences, BPM et clés vérifiés`, 1, true);
+  return n;
+}
 const nativeDescAsked = new Map();
 async function nativeAskDesc(items) {
   if (!nativeYt.desc) return 0;
@@ -8306,7 +8343,9 @@ function renderPcView() {
   const old = pc.info?.version && versionLt(pc.info.version, '3.11.0');
   $('#pcLive').replaceChildren(...[
     h('div', { class: `pc-status${st.ok ? ' ok' : ''}${st.off ? ' off' : ''}` }, h('span', { class: 'pc-led', 'aria-hidden': 'true' }), h('div', {}, h('b', {}, st.t), h('span', {}, st.s))),
-    !pc.info ? h('div', { class: 'actions' }, h('button', { type: 'button', class: 'primary', onclick: () => openPcSetup() }, 'Connecter mon PC')) : null,
+    !pc.info ? h('div', { class: 'actions' },
+      h('button', { type: 'button', class: 'primary', onclick: scanPcQr }, icon('qr'), 'Scanner le QR code du PC'),
+      h('button', { type: 'button', class: 'ghost', onclick: () => openPcSetup() }, 'Installer / autre façon')) : null,
     old ? h('div', { class: 'pc-old' }, h('div', {}, h('b', {}, `Ton PC a la version ${pc.info.version}`),
       h('span', {}, 'Mets-le à jour : tes projets et la dernière version de chacun arrivent alors tout seuls sur ce téléphone, écoutables même PC éteint.')), pcUpdateBtn()) : null,
     pc.cur ? h('button', { type: 'button', class: 'pcq-cur', 'aria-label': `Fiche de « ${displayTitle(pc.cur.t)} »`, onclick: () => openPcQueueItem(pc.cur.v) }, h('span', { class: 'pcq-k' }, 'En cours'), h('b', {}, displayTitle(pc.cur.t)),
@@ -8343,6 +8382,105 @@ function renderPcView() {
   grid.replaceChildren(...(list.length ? list.slice(0, 120).map(pcCard) : [h('p', { class: 'muted' }, all.length ? 'Aucun projet ne correspond.' : 'Aucun projet dans le dossier des projets du PC.')]));
 }
 
+// --- Appairage par QR code : Melofinds PC affiche un QR (« Ajouter un appareil ») qui contient
+// le lien de l'app avec « #pair=code.clé ». Scanné dans l'APK (scanner de Google), dans l'app
+// (appareil photo), ou avec l'appareil photo du téléphone (le lien ouvre l'app et relie tout seul).
+// La clé est après « # » : elle n'est jamais envoyée à un serveur.
+const PAIR_RE = /^(melofinds-[a-f0-9]{32})\.([a-f0-9]{64})$/;
+function pairFromText(t) {
+  const s = String(t || '').trim();
+  const m = s.match(/#pair=([^&\s]+)/);
+  let raw = m ? m[1] : s;
+  try { raw = decodeURIComponent(raw); } catch { /* tel quel */ }
+  const p = raw.toLowerCase().match(PAIR_RE);
+  return p ? { code: p[1], key: p[2] } : null;
+}
+async function pcPairWith(p) {
+  if (!WEB || !p) return;
+  if (p.code === pcCode() && p.key === pcKey()) { toast('Ce téléphone est déjà relié à ce PC'); return; }
+  local.set('pcCode', p.code);
+  local.set('pcKey', p.key);
+  pc.info = null;
+  local.set('pcInfo', null);
+  pc.es?.close();
+  pc.es = null;
+  pcLib.data = null;
+  pcLib.cmds = [];
+  savePcLib();
+  listenPc();
+  haptic('success');
+  toast('Téléphone relié à ton PC !');
+  try { await ntfyPublish({ ping: 1 }); } catch { /* il se manifestera au prochain envoi */ }
+  syncPcUi();
+  if ($('#drawer').classList.contains('open') && $('#pcStatus')) openPcSetup();
+}
+// Appareil photo dans la page (navigateurs qui savent lire les QR codes)
+function webScanQr() {
+  return new Promise((resolve) => {
+    let stream = null; let stop = false; let timer = 0;
+    const video = h('video', { playsinline: true, muted: true, autoplay: true, class: 'qr-video' });
+    const close = (v) => {
+      stop = true; clearTimeout(timer);
+      stream?.getTracks().forEach((t) => t.stop());
+      box.remove();
+      resolve(v || null);
+    };
+    const box = h('div', { class: 'qr-scan', role: 'dialog', 'aria-label': 'Scanner le QR code du PC' },
+      video, h('div', { class: 'qr-frame', 'aria-hidden': 'true' }),
+      h('p', {}, 'Vise le QR code affiché sur ton PC'),
+      h('button', { type: 'button', class: 'ghost', onclick: () => close(null) }, 'Annuler'));
+    document.body.append(box);
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        if (stop) { stream.getTracks().forEach((t) => t.stop()); return; }
+        video.srcObject = stream;
+        await video.play().catch(() => {});
+        const det = new window.BarcodeDetector({ formats: ['qr_code'] });
+        const tick = async () => {
+          if (stop) return;
+          try {
+            const codes = video.readyState >= 2 ? await det.detect(video) : [];
+            const hit = codes.find((c) => pairFromText(c.rawValue));
+            if (hit) { close(hit.rawValue); return; }
+          } catch { /* image suivante */ }
+          timer = setTimeout(tick, 200);
+        };
+        tick();
+      } catch {
+        toast('Appareil photo refusé : ouvre l’appareil photo du téléphone et vise le QR code du PC');
+        close(null);
+      }
+    })();
+  });
+}
+async function scanPcQr() {
+  haptic();
+  let text = null;
+  if (nativeYt.scan) {
+    try { text = (await mfn().scanQr())?.text || null; } catch (e) {
+      if (e?.code === 'cancel') return;
+      if (!('BarcodeDetector' in window)) { toast('Scanner indisponible sur ce téléphone : ouvre l’appareil photo et vise le QR code du PC'); return; }
+    }
+  }
+  if (!text && 'BarcodeDetector' in window && navigator.mediaDevices?.getUserMedia) text = await webScanQr();
+  else if (!text && !nativeYt.scan) {
+    toast(isNative() ? 'Mets l’appli à jour pour scanner (lien en bas de la recherche), ou ouvre l’appareil photo et vise le QR code du PC' : 'Ouvre l’appareil photo de ton téléphone et vise le QR code du PC : il ouvre Melofinds et relie tout seul');
+    return;
+  }
+  if (!text) return;
+  const p = pairFromText(text);
+  if (!p) { haptic('warn'); toast('Ce QR code n’est pas celui de Melofinds PC'); return; }
+  pcPairWith(p);
+}
+// Lien du QR ouvert avec l'appareil photo du téléphone : relié tout de suite
+setTimeout(() => {
+  if (!/#pair=/.test(location.hash)) return;
+  const p = pairFromText(location.hash);
+  try { history.replaceState(null, '', location.pathname + location.search); } catch { /* rien */ }
+  if (p) pcPairWith(p); else toast('Ce lien d’appairage est incomplet : rescanne le QR code du PC');
+}, 400);
+
 function cmdBlock(text) {
   return h('div', { class: 'cmd' }, h('code', {}, text), h('button', { type: 'button', class: 'ghost', onclick: () => copyText(text) }, 'Copier'));
 }
@@ -8375,9 +8513,11 @@ function openPcSetup(pending) {
       h('a', { class: 'primary dl-exe', href: PC_EXE_URL, target: '_blank', rel: 'noopener' }, icon('down'), 'MelofindsSetup.exe'),
       h('p', { class: 'hint' }, 'Ouvre ce lien sur ton PC (ou envoie-le-toi), lance le fichier : choisis où installer le programme et où arrivent les prods. Il installe tout seul ce qui manque et crée un raccourci « Melofinds PC » sur le bureau.'),
       h('p', { class: 'hint' }, 'Si Windows affiche « Windows a protégé votre ordinateur » : « Informations complémentaires » → « Exécuter quand même » (le programme n’est pas signé par Microsoft, c’est normal).')),
-    h('div', { class: 'd-sec' }, h('h4', {}, '2. Ajouter ce téléphone'),
+    h('div', { class: 'd-sec' }, h('h4', {}, '2. Relier ce téléphone'),
+      h('div', { class: 'actions' }, h('button', { type: 'button', class: 'primary', onclick: scanPcQr }, icon('qr'), 'Scanner le QR code du PC')),
+      h('p', { class: 'hint' }, 'Sur le PC : « Melofinds PC » → onglet « Appareils » → « Ajouter un appareil » : un QR code s’affiche. Scanne-le ici (ou avec l’appareil photo du téléphone). Rien à copier.'),
+      h('p', { class: 'hint' }, 'Autre façon : copie ce code et colle-le dans l’installateur ou dans « Ajouter un appareil ». Chaque téléphone a son propre code.'),
       cmdBlock(pairing),
-      h('p', { class: 'hint' }, 'Colle ce code dans l’installateur, ou plus tard : raccourci « Melofinds PC » → onglet « Appareils » → « Ajouter un appareil ». Chaque téléphone a son propre code.'),
       h('p', { class: 'hint' }, 'Dans le panneau Melofinds PC : « Mettre en ligne » / « Mettre hors ligne », démarrage automatique avec l’ordinateur, appareils connectés, dossier des prods.')),
     h('div', { class: 'd-sec' }, h('h4', {}, '3. Vérifier'), h('div', { class: 'actions' }, test, upd)),
     h('div', { class: 'd-sec' }, h('h4', {}, 'Envois récents'), h('div', { id: 'pcList', class: 'pc-list' })),

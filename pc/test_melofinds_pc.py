@@ -116,6 +116,16 @@ class Installation(unittest.TestCase):
         self.assertEqual(mpc.parse_pairing("  " + tok.upper() + "\n"), ("melofinds-" + "0a" * 16, "5b" * 32))
         self.assertIsNone(mpc.parse_pairing("melofinds-123.abc"))
         self.assertIsNone(mpc.parse_pairing(tok + "; del C:"))
+        # QR code : le PC crée un code valide, la clé reste après « # » (jamais envoyée au site)
+        code, key = mpc.new_pairing()
+        url = mpc.pairing_url(code, key)
+        self.assertEqual(mpc.parse_pairing(url.split("#pair=")[1]), (code, key))
+        self.assertTrue(url.startswith("https://kimany91.github.io/Melofinds/#pair="))
+        self.assertNotEqual(mpc.new_pairing(), (code, key))
+        rows = mpc.qr_rows(url)
+        if rows is not None:  # segno installé (toujours dans le programme Windows)
+            self.assertGreater(len(rows), 40)
+            self.assertTrue(all(len(r) == len(rows) for r in rows))
 
     def test_versions(self):
         self.assertGreater(mpc.version_tuple("2.0.10"), mpc.version_tuple("2.0.9"))

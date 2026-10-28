@@ -26,6 +26,7 @@ public class YtAudioTest {
     public void descriptionDeLaPage() {
         assertEquals("FREE & more\nBPM: 140\n\"Key\" / C#m", YtAudio.unescapeJson("FREE \\u0026 more\\nBPM: 140\\n\\\"Key\\\" \\/ C#m"));
         assertEquals(null, YtAudio.description("../etc"));
+        assertEquals("FREE for profit\nYT & SC only <3", YtAudio.htmlToText("FREE <b>for</b> profit<br>YT &amp; SC only &lt;3"));
     }
 
     /** Vraie vidéo YouTube : seulement si MF_NET_TEST=1 (réseau). */

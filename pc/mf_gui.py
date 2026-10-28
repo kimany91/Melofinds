@@ -1455,7 +1455,7 @@ def manager_window(selftest=False):
         devs.heading(col, text=txt, anchor="w")
         devs.column(col, width=w)
     devs.pack(fill="both", expand=True)
-    dev_empty = label(dc, "Aucun appareil. Sur ton téléphone : Melofinds Web → Mon PC → Copier le code, puis « Ajouter un appareil ».", 10, MUTED, wrap=560)
+    dev_empty = label(dc, "Aucun appareil. Touche « Ajouter un appareil » et scanne le QR code avec ton téléphone.", 10, MUTED, wrap=560)
     dbar = tk.Frame(devp, bg=BG)
     dbar.pack(fill="x", pady=(12, 0))
 
@@ -1466,7 +1466,58 @@ def manager_window(selftest=False):
         f = tk.Frame(dlg, bg=PANEL, padx=24, pady=20)
         f.pack(fill="both", expand=True)
         label(f, "Ajouter un appareil", 14, bold=True).pack(anchor="w")
-        label(f, "Sur le téléphone : Melofinds Web → Mon PC → Copier, puis colle le code ici.", 9, MUTED).pack(anchor="w", pady=(4, 12))
+        # 1) QR code : le PC crée le code, le téléphone le scanne (rien à copier)
+        qcode, qkey = C.new_pairing()
+        rows = C.qr_rows(C.pairing_url(qcode, qkey))
+        qr = {"dev": None, "done": False}
+        if rows:
+            cfg0 = C.load_config()
+            qr["dev"] = I.add_device(cfg0, f"{qcode}.{qkey}", "Téléphone (QR code)")["id"]
+            C.save_config(cfg0)
+            I.go_online()
+            label(f, "Scanne ce QR code avec ton téléphone : appli Melofinds → Mon PC → « Scanner le QR code du PC » "
+                     "(ou l'appareil photo du téléphone : il ouvre Melofinds et le relie tout seul).", 9, MUTED, wrap=520).pack(anchor="w", pady=(4, 10))
+            px = max(4, min(7, 300 // len(rows)))
+            cv = tk.Canvas(f, width=len(rows) * px, height=len(rows) * px, bg="#ffffff", highlightthickness=0)
+            for y, row in enumerate(rows):
+                for x, on in enumerate(row):
+                    if on:
+                        cv.create_rectangle(x * px, y * px, x * px + px, y * px + px, fill="#000000", width=0)
+            cv.pack(anchor="center")
+            qstat = label(f, "En attente du téléphone…", 10, MUTED)
+            qstat.pack(anchor="center", pady=(8, 4))
+            label(f, "Ou colle le code du téléphone (Melofinds Web → Mon PC → Copier) :", 9, MUTED).pack(anchor="w", pady=(10, 6))
+        else:
+            label(f, "Sur le téléphone : Melofinds Web → Mon PC → Copier, puis colle le code ici.", 9, MUTED).pack(anchor="w", pady=(4, 12))
+
+        def drop_qr():
+            """Le QR n'a pas servi : l'appareil préparé est retiré."""
+            if qr["dev"] and not qr["done"]:
+                c = C.load_config()
+                c["devices"] = [x for x in c["devices"] if x["id"] != qr["dev"]]
+                C.save_config(c)
+                qr["dev"] = None
+
+        def poll():
+            try:
+                alive = dlg.winfo_exists()
+            except tk.TclError:
+                alive = False
+            if not alive or not qr["dev"] or qr["done"]:
+                return
+            info = C.load_state()["devices"].get(qcode, {})
+            if info.get("last_seen"):
+                qr["done"] = True
+                c = C.load_config()
+                for x in c["devices"]:
+                    if x["id"] == qr["dev"] and x.get("name") == "Téléphone (QR code)":
+                        x["name"] = (name.get().strip() or info.get("ua") or "Téléphone")[:40]
+                C.save_config(c)
+                dlg.destroy()
+                refresh()
+                toast("Téléphone relié !")
+                return
+            dlg.after(1500, poll)
         code = tk.StringVar()
         e = entry(f, code, width=70)
         e.configure(font=(MONO, 9))
@@ -1478,6 +1529,10 @@ def manager_window(selftest=False):
         err.pack(anchor="w", pady=(8, 0))
 
         def ok():
+            if not code.get().strip() and qr["dev"]:
+                err.configure(text="Scanne le QR code avec le téléphone, ou colle son code ici.")
+                return
+            drop_qr()
             cfg = C.load_config()
             try:
                 I.add_device(cfg, code.get(), name.get().strip())
@@ -1491,12 +1546,19 @@ def manager_window(selftest=False):
             toast("Appareil ajouté")
         row = tk.Frame(f, bg=PANEL)
         row.pack(fill="x", pady=(14, 0))
+        def cancel():
+            drop_qr()
+            dlg.destroy()
+            refresh()
         Btn(row, "Ajouter", ok, kind="primary").pack(side="right")
-        Btn(row, "Annuler", dlg.destroy).pack(side="right", padx=8)
-        e.focus_set()
+        Btn(row, "Annuler", cancel).pack(side="right", padx=8)
+        dlg.protocol("WM_DELETE_WINDOW", cancel)
+        if not qr["dev"]:
+            e.focus_set()
         dlg.update_idletasks()
-        dlg.geometry(f"+{root.winfo_rootx() + 220}+{root.winfo_rooty() + 140}")
+        dlg.geometry(f"+{root.winfo_rootx() + 220}+{root.winfo_rooty() + 60}")
         dlg.grab_set()
+        dlg.after(1500, poll)
 
     def selected_device():
         sel = devs.selection()

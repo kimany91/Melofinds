@@ -70,6 +70,8 @@ dependencies {
     // Son YouTube direct (même version que l'appli NewPipe)
     implementation 'com.github.TeamNewPipe:NewPipeExtractor:e8f89145a830b4d6cae32412007f24ea8b36c73a'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
+    // Scanner de QR code de Google (sans accès à l'appareil photo pour Melofinds)
+    implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'
     testImplementation "junit:junit:$junitVersion"
 }
 

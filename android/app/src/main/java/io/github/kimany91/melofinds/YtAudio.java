@@ -10,6 +10,7 @@ import org.schabi.newpipe.extractor.exceptions.ReCaptchaException;
 import org.schabi.newpipe.extractor.stream.AudioStream;
 import org.schabi.newpipe.extractor.stream.AudioTrackType;
 import org.schabi.newpipe.extractor.stream.DeliveryMethod;
+import org.schabi.newpipe.extractor.stream.Description;
 import org.schabi.newpipe.extractor.stream.StreamExtractor;
 
 import java.io.ByteArrayOutputStream;
@@ -218,6 +219,31 @@ public final class YtAudio {
      */
     public static String description(String videoId) {
         if (videoId == null || !VIDEO_ID.matcher(videoId).matches()) return null;
+        String d = pageDescription(videoId);
+        return d != null ? d : newPipeDescription(videoId);
+    }
+
+    /** Secours : la description par NewPipe Extractor (API de l'appli YouTube). */
+    static String newPipeDescription(String videoId) {
+        try {
+            init();
+            StreamExtractor ex = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=" + videoId);
+            ex.fetchPage();
+            Description d = ex.getDescription();
+            if (d == null || d.content().isEmpty()) return null;
+            String t = d.type() == Description.Type.HTML ? htmlToText(d.content()) : d.content();
+            return t.length() > DESC_MAX ? t.substring(0, DESC_MAX) : t;
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
+    static String htmlToText(String html) {
+        String t = html.replaceAll("(?i)<br\\s*/?>", "\n").replaceAll("<[^>]+>", "");
+        return t.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&nbsp;", " ");
+    }
+
+    private static String pageDescription(String videoId) {
         HttpURLConnection c = null;
         try {
             c = (HttpURLConnection) new URL("https://www.youtube.com/watch?v=" + videoId + "&hl=en").openConnection();

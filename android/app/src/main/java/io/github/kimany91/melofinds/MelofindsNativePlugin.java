@@ -42,6 +42,11 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import com.google.mlkit.vision.barcode.common.Barcode;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanner;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
+
 import org.schabi.newpipe.extractor.exceptions.AgeRestrictedContentException;
 import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException;
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException;
@@ -464,8 +469,34 @@ public class MelofindsNativePlugin extends Plugin {
         JSArray features = new JSArray();
         features.put("ytAudio");
         features.put("ytDesc");
+        features.put("scanQr");
         r.put("features", features);
         call.resolve(r);
+    }
+
+    // ------------------------------------------------------------------ QR code du PC
+
+    /**
+     * Scanne un QR code avec le scanner de Google (services Google Play) : pas besoin de
+     * donner l'accès à l'appareil photo à Melofinds. Renvoie { text }.
+     */
+    @PluginMethod
+    public void scanQr(PluginCall call) {
+        Activity a = getActivity();
+        if (a == null) { call.reject("Appli pas prête", "fail"); return; }
+        GmsBarcodeScannerOptions opts = new GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .build();
+        GmsBarcodeScanner scanner = GmsBarcodeScanning.getClient(a, opts);
+        scanner.startScan()
+            .addOnSuccessListener(b -> {
+                JSObject r = new JSObject();
+                String raw = b.getRawValue();
+                r.put("text", raw == null ? "" : raw.length() > 500 ? raw.substring(0, 500) : raw);
+                call.resolve(r);
+            })
+            .addOnCanceledListener(() -> call.reject("Annulé", "cancel"))
+            .addOnFailureListener(e -> call.reject("Scanner indisponible : " + e.getMessage(), "fail"));
     }
 
     // ------------------------------------------------------------------ son YouTube direct
