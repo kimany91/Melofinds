@@ -42,12 +42,12 @@ function toast(msg, action) {
   const t = $('#toast');
   $('#toastMsg').textContent = msg;
   const btn = $('#toastAction');
-  btn.hidden = !action;
+  btn.hidden = !action?.label;
   btn.onclick = null;
-  if (action) { btn.textContent = action.label; btn.onclick = () => { t.classList.remove('show'); action.run(); }; }
+  if (action?.label) { btn.textContent = action.label; btn.onclick = () => { t.classList.remove('show'); action.run(); }; }
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), action ? 5000 : 2200);
+  toastTimer = setTimeout(() => t.classList.remove('show'), action?.ms || (action?.label ? 5000 : 2200));
 }
 
 // ---------------------------------------------------------------------------
@@ -224,8 +224,17 @@ function tbStore(id, t) {
   if (ids.length > 800) for (const k of ids.slice(0, ids.length - 800)) delete tbCache[k];
   local.set('tbCache', tbCache);
 }
-// Recherche Tunebat faite par le navigateur lui-même (le PC n'est pas nécessaire).
-// manual : bouton Tunebat touché → on cherche même si une recherche a déjà échoué.
+// BPM / clé d'un morceau sorti sur Spotify, cherchés par le navigateur lui-même (sans le PC).
+// Tunebat bloque les navigateurs (protection Cloudflare) : l'app passe par ReccoBeats, même
+// catalogue Spotify, API ouverte aux sites web. Le PC, lui, utilise toujours Tunebat.
+// manual : bouton TB touché → on cherche même si une recherche a déjà échoué.
+async function rbGet(path, params = {}) {
+  const u = new URL(RB_API + path);
+  for (const [k, v] of Object.entries(params)) if (v != null && v !== '') u.searchParams.set(k, v);
+  const res = await fetch(u, { headers: { accept: 'application/json' } });
+  if (!res.ok) throw new Error(`reccobeats ${res.status}`);
+  return res.json();
+}
 async function tbLookup(item, { manual = false } = {}) {
   if (!WEB || !item?.id) return null;
   const c = tbCache[item.id];
@@ -234,16 +243,17 @@ async function tbLookup(item, { manual = false } = {}) {
   (tbLookup.busy ||= new Set()).add(item.id);
   syncTbUi();
   try {
-    for (const q of tbQueries({ title: item.title, channel: item.channel })) {
-      const res = await fetch(TB_SEARCH + encodeURIComponent(q), { headers: { accept: 'application/json' } });
-      if (!res.ok) throw new Error(`tunebat ${res.status}`);
-      const pick = tbPick((await res.json())?.data?.items, { title: item.title, channel: item.channel, duration: item.duration });
-      if (pick) {
-        const t = { bpm: pick.bpm, key: pick.key, at: Date.now() };
-        tbStore(item.id, t);
-        refreshItem(item);
-        return t;
-      }
+    const ctx = { title: item.title, channel: item.channel, duration: item.duration };
+    for (const q of rbQueries(ctx)) {
+      const body = await rbGet('/track/search', { ...q, size: 25 });
+      const pick = rbPick(body?.content, ctx);
+      if (!pick) continue;
+      const f = rbFeatures(await rbGet(`/track/${encodeURIComponent(pick.id)}/audio-features`));
+      if (!f) continue;
+      const t = { ...f, at: Date.now(), src: 'rb', name: pick.name.slice(0, 120), by: (pick.artists[0] || '').slice(0, 80), href: /^https:\/\/open\.spotify\.com\//.test(pick.href) ? pick.href : '' };
+      tbStore(item.id, t);
+      refreshItem(item);
+      return t;
     }
     const t = { none: true, at: Date.now() };
     tbStore(item.id, t);
@@ -262,7 +272,7 @@ function tbState(id) {
   const c = tbCache[id];
   return c?.bpm || c?.key ? 'ok' : c?.none ? 'none' : c?.fail ? 'fail' : '';
 }
-const TB_LABEL = { '': 'Chercher le BPM et la clé sur Tunebat', busy: 'Recherche sur Tunebat…', ok: 'Trouvé sur Tunebat (en bleu) : toucher pour chercher à nouveau', none: 'Pas trouvé sur Tunebat : toucher pour réessayer', fail: 'Tunebat n’a pas répondu : toucher pour réessayer' };
+const TB_LABEL = { '': 'Chercher le BPM et la clé (morceaux sortis sur Spotify)', busy: 'Recherche du BPM et de la clé…', ok: 'BPM et clé trouvés (en bleu) : toucher pour chercher à nouveau', none: 'Pas trouvé : toucher pour réessayer', fail: 'Pas de réponse : toucher pour réessayer' };
 function tbButton(item) {
   const st = tbState(item.id);
   return h('button', { type: 'button', class: `tb-btn${st ? ` ${st}` : ''}`, 'data-tb': item.id, 'aria-label': TB_LABEL[st], title: TB_LABEL[st],
@@ -280,14 +290,15 @@ async function tbAsk(item) {
   if (tbLookup.busy?.has(item.id)) return;
   const t = await tbLookup(item, { manual: true });
   if (!t) return;
-  if (t.fail) { toast(navigator.onLine === false ? 'Pas de réseau : réessaie quand tu en as' : 'Tunebat n’a pas répondu à ce navigateur : réessaie dans un moment'); return; }
-  if (t.none) { toast('Pas trouvé sur Tunebat (aucun son sorti avec cette prod)'); return; }
+  if (t.fail) { toast(navigator.onLine === false ? 'Pas de réseau : réessaie quand tu en as' : 'Le service de BPM n’a pas répondu : réessaie dans un moment'); return; }
+  if (t.none) { toast('Pas trouvé : cette prod n’est pas sortie sur Spotify (ou sous un autre nom). Regarde la description, ou vérifie sur Tunebat depuis la fiche.', { ms: 6000 }); return; }
   // ce que la description disait déjà reste prioritaire ; Tunebat complète, en bleu
   let own = null;
   try { own = analyzeVideo({ id: item.id, title: item.title, description: item.description || '' }, null); } catch { /* sans analyse */ }
   const found = [t.bpm ? `${t.bpm} BPM` : null, t.key].filter(Boolean).join(' · ');
   const kept = [own?.bpm && t.bpm && own.bpm !== t.bpm ? `${own.bpm} BPM` : null, own?.key && t.key && own.key !== t.key ? own.key : null].filter(Boolean).join(' · ');
-  toast(kept ? `Tunebat : ${found}. La description dit ${kept} : je garde la description` : `Tunebat : ${found}`);
+  const from = t.name ? ` (« ${t.name} »${t.by ? ` de ${t.by}` : ''}, sur Spotify)` : '';
+  toast(kept ? `Trouvé : ${found}${from}. La description dit ${kept} : je garde la description` : `Trouvé : ${found}${from}`, { ms: 6000 });
 }
 function refreshItem(item) {
   if (session?.items?.has(item.id)) renderResults();
@@ -1557,9 +1568,11 @@ function openBeat(item, plan) {
       saveBtn,
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => openStudio(item) }, icon('mic'), 'Rec dessus') : null,
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc(item) }, icon('down'), 'Sur mon PC') : null,
-      WEB ? h('button', { type: 'button', class: 'ghost tb-ghost', onclick: () => tbAsk(item) }, 'Tunebat : BPM et clé') : null,
+      WEB ? h('button', { type: 'button', class: 'ghost tb-ghost', onclick: () => tbAsk(item) }, 'Trouver BPM et clé') : null,
       item.url ? h('button', { type: 'button', class: 'ghost', onclick: () => copyText(item.url) }, 'Copier le lien') : null),
     WEB ? h('a', { class: 'link d-yt', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube', icon('ext')) : null,
+    WEB ? h('a', { class: 'link d-yt', href: `https://tunebat.com/Search?q=${encodeURIComponent(`${beatName(item.title)} ${item.channel || ''}`.trim())}`, target: '_blank', rel: 'noopener' }, 'Vérifier sur Tunebat', icon('ext')) : null,
+    WEB && tbFor(item.id)?.name ? h('p', { class: 'hint' }, `BPM et clé en bleu : morceau « ${tbFor(item.id).name} »${tbFor(item.id).by ? ` de ${tbFor(item.id).by}` : ''} sur Spotify (via ReccoBeats).`) : null,
     ...beatDetails(item, r, findTerms()),
     claude,
   ]);

@@ -49,3 +49,23 @@ jobs:
           ID=$(node -e 'try{const j=require("./b.json");const c=j.content||j.items||j.data||[];console.log((c[0]||{}).id||"")}catch{}')
           echo "id ReccoBeats : $ID"
           if [ -n "$ID" ]; then probe "ReccoBeats (BPM / clé)" "https://api.reccobeats.com/v1/track/$ID/audio-features"; fi
+      - name: ReccoBeats de bout en bout (code de l'app, vraie API)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cat > rb-e2e.mjs <<'JS'
+          import { rbQueries, rbPick, rbFeatures, RB_API } from './src/core/tunebat.js';
+          const get = async (p, q = {}) => { const u = new URL(RB_API + p); for (const [k, v] of Object.entries(q)) u.searchParams.set(k, v);
+            const r = await fetch(u, { headers: { origin: 'https://kimany91.github.io', accept: 'application/json' } });
+            console.log(r.status, r.headers.get('access-control-allow-origin'), u.pathname); return r.json(); };
+          const ctx = { title: 'Nemzzz Type Beat "nemzzzjazz"', channel: 'shrugg' };
+          for (const q of rbQueries(ctx)) {
+            const pick = rbPick((await get('/track/search', { ...q, size: 25 })).content, ctx);
+            if (!pick) continue;
+            const f = rbFeatures(await get(`/track/${pick.id}/audio-features`));
+            console.log('trouvé :', pick.name, pick.artists.join(', '), JSON.stringify(f));
+            if (!f) process.exit(1);
+            process.exit(0);
+          }
+          console.log('rien trouvé'); process.exit(1);
+          JS
+          node rb-e2e.mjs

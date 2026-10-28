@@ -55,29 +55,82 @@ export function tbKey(k) {
   return `${m[1].toUpperCase()}${m[2] || ''} ${m[3].toLowerCase().startsWith('maj') ? 'maj' : 'min'}`;
 }
 
+/** Le morceau correspond-il à la vidéo ? {score} ou null.
+ *  Même beatmaker et titre proche, titre proche et même durée (4 s), ou beatmaker + durée. */
+export function matchScore({ n, artists = [], durMs }, { title, channel, duration }) {
+  const name = beatName(title);
+  const ch = tbNorm(String(channel || '').replace(/\s*(beats?|music|- topic)$/i, ''));
+  n = String(n || '');
+  const nameScore = Math.max(similarity(n, name), similarity(n, title), name && tbNorm(n).includes(tbNorm(name)) && tbNorm(name).length >= 4 ? 0.8 : 0);
+  const artistOk = !!ch && ch.length >= 3 && artists.some((a) => {
+    const an = tbNorm(String(a).replace(/^prod\.?\s*(by\s*)?/i, ''));
+    return an.length >= 3 && (similarity(an, ch) >= 0.8 || ch.includes(an) || an.includes(ch));
+  });
+  const d = Number(durMs) / 1000;
+  const durOk = Number(duration) > 0 && d > 0 && Math.abs(d - Number(duration)) <= 4;
+  const ok = (artistOk && nameScore >= 0.6) || (durOk && nameScore >= 0.5) || (artistOk && durOk);
+  return ok ? { score: nameScore + (artistOk ? 1 : 0) + (durOk ? 1 : 0) } : null;
+}
+
 /** Choisit le résultat Tunebat qui correspond à la vidéo, ou null. */
 export function tbPick(items, { title, channel, duration }) {
-  const name = beatName(title);
-  const ch = tbNorm(channel);
   let best = null;
   for (const it of Array.isArray(items) ? items : []) {
     if (!it || typeof it !== 'object') continue;
     const n = String(it.n || '');
     const artists = Array.isArray(it.as) ? it.as.map(String) : [];
-    const nameScore = Math.max(similarity(n, name), similarity(n, title), name && tbNorm(n).includes(tbNorm(name)) && tbNorm(name).length >= 4 ? 0.8 : 0);
-    const artistOk = !!ch && artists.some((a) => {
-      const an = tbNorm(a);
-      return an.length >= 3 && (similarity(an, ch) >= 0.8 || ch.includes(an) || an.includes(ch));
-    });
-    const d = Number(it.d) / 1000;
-    const durOk = Number(duration) > 0 && d > 0 && Math.abs(d - Number(duration)) <= 4;
-    const ok = (artistOk && nameScore >= 0.6) || (durOk && nameScore >= 0.5) || (artistOk && durOk);
-    if (!ok) continue;
+    const m = matchScore({ n, artists, durMs: it.d }, { title, channel, duration });
+    if (!m) continue;
     const bpm = Math.round(Number(it.b));
     const key = tbKey(it.k);
     if (!(bpm >= 50 && bpm <= 220) && !key) continue;
-    const score = nameScore + (artistOk ? 1 : 0) + (durOk ? 1 : 0);
+    const { score } = m;
     if (!best || score > best.score) best = { score, bpm: bpm >= 50 && bpm <= 220 ? bpm : null, key, name: n, artists };
   }
   return best && { bpm: best.bpm, key: best.key, name: best.name, artists: best.artists };
+}
+
+// ---------------------------------------------------------------------------
+// ReccoBeats : même catalogue (morceaux sortis sur Spotify), mais son API répond aux
+// navigateurs (en-têtes CORS pour le site de l'app, sans clé) : c'est elle que l'app web
+// utilise. Tunebat bloque les navigateurs (protection Cloudflare).
+
+export const RB_API = 'https://api.reccobeats.com/v1';
+const PITCH = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+/** Clé ReccoBeats (classe de hauteur 0-11 + mode 1 majeur / 0 mineur) → « G maj ». */
+export function rbKey(key, mode) {
+  const k = Number(key);
+  if (!Number.isInteger(k) || k < 0 || k > 11 || (mode !== 0 && mode !== 1)) return null;
+  return `${PITCH[k]} ${mode === 1 ? 'maj' : 'min'}`;
+}
+
+/** Recherches ReccoBeats : [{ searchText, artist? }] (titre de la prod, avec ou sans beatmaker). */
+export function rbQueries({ title, channel }) {
+  const name = beatName(title);
+  const ch = String(channel || '').replace(/\s*(beats?|prod|music|- topic)$/i, '').trim();
+  const out = [];
+  if (tbNorm(name).length >= 3 && tbNorm(ch).length >= 3) out.push({ searchText: name, artist: ch });
+  if (tbNorm(name).length >= 3) out.push({ searchText: name });
+  return out;
+}
+
+/** Morceau ReccoBeats qui correspond à la vidéo, ou null : { id, name, artists, href }. */
+export function rbPick(content, ctx) {
+  let best = null;
+  for (const it of Array.isArray(content) ? content : []) {
+    if (!it || typeof it !== 'object' || !it.id) continue;
+    const artists = (Array.isArray(it.artists) ? it.artists : []).map((a) => String(a?.name || '')).filter(Boolean);
+    const m = matchScore({ n: it.trackTitle, artists, durMs: it.durationMs }, ctx);
+    if (m && (!best || m.score > best.score)) best = { score: m.score, id: String(it.id), name: String(it.trackTitle || ''), artists, href: String(it.href || '') };
+  }
+  return best && { id: best.id, name: best.name, artists: best.artists, href: best.href };
+}
+
+/** Réponse « audio-features » → { bpm, key } (BPM arrondi entre 50 et 220). */
+export function rbFeatures(f) {
+  const t = Number(f?.tempo);
+  const bpm = t >= 50 && t <= 220 ? Math.round(t) : null;
+  const key = rbKey(f?.key, f?.mode);
+  return bpm || key ? { bpm, key } : null;
 }

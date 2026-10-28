@@ -176,15 +176,19 @@ ouvre le site dans Chrome) :
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
-## Bouton Tunebat (version web)
+## Bouton BPM et clé « TB » (version web)
 
-Chaque prod a un petit bouton **TB** : un appui cherche le BPM et la clé sur Tunebat,
-directement depuis le navigateur (le PC n'est pas nécessaire). Ce qui est trouvé
-s'affiche **en bleu** (« 145 BPM · TB », « D maj »), sur la carte et dans la fiche, et
-reste gardé dans ce navigateur. Si la description donne déjà le BPM ou la clé, elle
-reste prioritaire : le message montre ce que Tunebat a trouvé et ce qui est gardé. Le
-bouton devient bleu quand Tunebat a trouvé, grisé si rien n'est trouvé (toucher pour
-réessayer). La fiche cherche aussi toute seule quand le BPM ou la clé manquent.
+Chaque prod a un petit bouton **TB** : un appui cherche le BPM et la clé du morceau s'il
+est sorti sur Spotify, directement depuis le navigateur (le PC n'est pas nécessaire).
+Tunebat bloque les navigateurs (protection Cloudflare) : l'app passe par **ReccoBeats**
+(gratuit, sans clé, API ouverte aux sites web, même catalogue Spotify). Le résultat ne
+compte que s'il correspond vraiment à la vidéo (même beatmaker et titre proche, ou titre
+proche et même durée) ; sinon « pas trouvé » plutôt qu'un faux BPM.
+
+Ce qui est trouvé s'affiche **en bleu** (« 145 BPM · TB », « D maj »), sur la carte et
+dans la fiche (avec le morceau Spotify reconnu), et reste gardé dans ce navigateur. La
+description du beatmaker reste prioritaire : le message montre les deux. La fiche a aussi
+un lien « Vérifier sur Tunebat ». Le PC, lui, utilise toujours Tunebat au téléchargement.
 
 ## Chaîne du beatmaker (version web)
 
