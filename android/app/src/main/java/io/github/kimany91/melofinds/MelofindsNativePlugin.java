@@ -463,6 +463,7 @@ public class MelofindsNativePlugin extends Plugin {
         r.put("android", Build.VERSION.SDK_INT);
         JSArray features = new JSArray();
         features.put("ytAudio");
+        features.put("ytDesc");
         r.put("features", features);
         call.resolve(r);
     }
@@ -542,6 +543,34 @@ public class MelofindsNativePlugin extends Plugin {
                 call.reject("Son introuvable" + (m != null && m.length() < 160 ? " : " + m : ""), "fail");
             }
         });
+    }
+
+    // descriptions : 6 à la fois, à part du son (ne se bloquent pas l'un l'autre)
+    private static final ExecutorService DESC = Executors.newFixedThreadPool(6);
+
+    /** Descriptions complètes de vidéos YouTube : { d: { id: texte } } (60 au plus). */
+    @PluginMethod
+    public void ytDescriptions(PluginCall call) {
+        JSArray arr = call.getArray("ids", new JSArray());
+        List<String> ids = new ArrayList<>();
+        for (int i = 0; i < arr.length() && ids.size() < 60; i++) {
+            String id = arr.optString(i, "");
+            if (YtAudio.VIDEO_ID.matcher(id).matches() && !ids.contains(id)) ids.add(id);
+        }
+        new Thread(() -> {
+            JSObject d = new JSObject();
+            List<java.util.concurrent.Future<String>> jobs = new ArrayList<>();
+            for (String id : ids) jobs.add(DESC.submit(() -> YtAudio.description(id)));
+            for (int i = 0; i < ids.size(); i++) {
+                try {
+                    String t = jobs.get(i).get(40, java.util.concurrent.TimeUnit.SECONDS);
+                    if (t != null) d.put(ids.get(i), t);
+                } catch (Exception ignored) { }
+            }
+            JSObject r = new JSObject();
+            r.put("d", d);
+            call.resolve(r);
+        }).start();
     }
 
     private void ytStep(String id, String step) {

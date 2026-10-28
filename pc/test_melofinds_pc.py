@@ -54,6 +54,12 @@ class Names(unittest.TestCase):
     def test_detection_cle_bpm(self):
         self.assertEqual(mpc.find_key("bpm: 155 key: B min"), "B min")
         self.assertEqual(mpc.find_key("Tonalité : F# mineur"), "F# min")
+        self.assertEqual(mpc.find_key("140bpm C#m\nFree for profit YouTube/SoundCloud only"), "C# min")
+        self.assertEqual(mpc.find_key("🔑 C#m | 140 BPM"), "C# min")
+        self.assertEqual(mpc.find_key("📈 140 BPM 🎹 Gm"), "G min")
+        self.assertEqual(mpc.find_key("Bbm 150 BPM"), "Bb min")
+        self.assertIsNone(mpc.find_key("150 BPM am I right"))
+        self.assertIsNone(mpc.find_key("🎹 Beat made in FL"))
         self.assertEqual(mpc.find_bpm("prod. wondor D# Minor | 155 BPM"), 155)
         self.assertIsNone(mpc.find_bpm("12 bpm"))
         self.assertIsNone(mpc.valid_key("F# min; rm -rf /"))

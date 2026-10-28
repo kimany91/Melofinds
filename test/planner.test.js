@@ -56,4 +56,14 @@ test('BPM et tonalité', () => {
   assert.equal(extractKey('', 'BPM: 145 | Key: C# minor'), 'C# min');
   assert.equal(extractKey('', 'Key: Bbm'), 'Bb min');
   assert.equal(extractKey('Key Glock Type Beat', ''), null);
+  // écritures courtes à côté du BPM, ou avec un émoji
+  assert.equal(extractKey('', '140bpm C#m\nFree for profit for YouTube/SoundCloud only'), 'C# min');
+  assert.equal(extractKey('', '🔑 C#m | 140 BPM'), 'C# min');
+  assert.equal(extractKey('', '📈 140 BPM 🎹 Gm'), 'G min');
+  assert.equal(extractKey('', 'Bbm 150 BPM'), 'Bb min');
+  assert.equal(extractKey('', '🎼 F# minor'), 'F# min');
+  // pas de fausse clé
+  assert.equal(extractKey('', '140 BPM by Nova, a beat for you'), null);
+  assert.equal(extractKey('', '🎹 Beat made in FL'), null);
+  assert.equal(extractKey('', '150 BPM am I right'), null);
 });

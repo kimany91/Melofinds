@@ -22,6 +22,12 @@ public class YtAudioTest {
         assertEquals(0L, YtAudio.clen("https://x.googlevideo.com/videoplayback?itag=140"));
     }
 
+    @Test
+    public void descriptionDeLaPage() {
+        assertEquals("FREE & more\nBPM: 140\n\"Key\" / C#m", YtAudio.unescapeJson("FREE \\u0026 more\\nBPM: 140\\n\\\"Key\\\" \\/ C#m"));
+        assertEquals(null, YtAudio.description("../etc"));
+    }
+
     /** Vraie vidéo YouTube : seulement si MF_NET_TEST=1 (réseau). */
     @Test
     public void sonDUneVraieVideo() throws Exception {

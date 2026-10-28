@@ -551,12 +551,16 @@ if (isNative()) {
 // Son YouTube direct (APK) : le téléphone récupère lui-même le son de la vidéo (NewPipe
 // Extractor, libre et gratuit), l'analyse puis l'efface. Rien à télécharger, rien dans
 // les fichiers du téléphone. L'app web seule (navigateur) garde noTube.
-const nativeYt = { ok: false, checked: false };
+const nativeYt = { ok: false, desc: false, checked: false };
 const YT_STEP = { find: 'Je trouve le son de la vidéo…', download: 'Téléchargement du son…', decode: 'Décodage…' };
 const ytListeners = new Map();
 if (isNative()) {
   (async () => {
-    try { nativeYt.ok = ((await mfn().info())?.features || []).includes('ytAudio'); } catch { /* ancienne version de l'APK */ }
+    try {
+      const f = (await mfn().info())?.features || [];
+      nativeYt.ok = f.includes('ytAudio');
+      nativeYt.desc = f.includes('ytDesc');
+    } catch { /* ancienne version de l'APK */ }
     nativeYt.checked = true;
   })();
   try { mfn()?.addListener('ytProgress', (e) => ytListeners.get(e?.id)?.say(YT_STEP[e?.step] || 'Un instant…')); } catch { /* ancienne version */ }
@@ -811,15 +815,17 @@ function analyzed(item, plan) {
   const key = `${(item.description || '').length}|${item.title}|${plan ? 1 : 0}|${tb ? `${tb.bpm}/${tb.key}` : ''}|${item.partial ? 1 : 0}|${item.status}`;
   if (item._r && item._key === key) return item._r;
   const r = analyzeVideo({ id: item.id, title: item.title, description: item.description || '', foundBy: item.foundBy }, plan || null);
-  // « Free for profit » vu SEULEMENT dans le titre, description pas lue en entier
-  // (YouTube bloque, quota, mode sans clé) : on ne le range pas en Free for profit.
-  // La fin de la description dit souvent « YouTube & SoundCloud only » ou « licence pour Spotify ».
+  // « Free for profit » vu dans le titre ou le DÉBUT de la description, mais description pas
+  // lue en entier (YouTube bloque, quota, mode sans clé) : jamais rangée en Free for profit,
+  // même si le début le dit fort. La fin dit souvent « YouTube & SoundCloud only », « licence
+  // pour Spotify »… et c'est souvent là aussi que sont le BPM et la clé.
   const descMissing = item.partial || item.status === 'unread' || !String(item.description || '').trim();
-  if (r.license.category === 'ffp' && r.license.confidence !== 'haute' && descMissing) {
+  if (r.license.category === 'ffp' && descMissing) {
+    const seenInDesc = !!String(item.description || '').trim();
     r.license = {
       ...r.license, category: 'unknown', label: 'À vérifier', spotify: '?', confidence: 'faible', titleOnly: true,
       reasons: [
-        { text: '« Free for profit » seulement dans le titre.', quote: r.license.reasons[0]?.quote || '' },
+        { text: seenInDesc ? '« Free for profit » au début de la description : la suite n’a pas été lue.' : '« Free for profit » seulement dans le titre.', quote: r.license.reasons[0]?.quote || '' },
         { text: 'Description pas lue en entier (YouTube a bloqué la suite) : impossible de savoir si c’est limité à YouTube / SoundCloud ou s’il faut une licence pour Spotify. Rangée dans « À vérifier ».', quote: '' },
       ],
     };
@@ -2266,6 +2272,7 @@ function applyPcDesc(it, id) {
   return true;
 }
 async function pcAskDesc(items) {
+  if (nativeYt.desc) await nativeAskDesc(items);
   if (!WEB || !pc.info || !pcCode()) return 0;
   const now = Date.now();
   if (items.some((i) => applyPcDesc(i, ytIdOf(i) || i.id))) { renderResults(); saveSession(); }
@@ -2287,13 +2294,18 @@ async function onPcDesc(d) {
   let body;
   try { const res = await fetch(url); if (!res.ok) return; body = await res.json(); } catch { return; }
   const found = body && typeof body.d === 'object' ? body.d : {};
+  const n = applyDescFound(found);
+  if (n) setStatus(`Ton PC a lu ${n} description${n > 1 ? 's' : ''} : licences vérifiées`, 1, true);
+}
+// Descriptions complètes reçues (PC ou appli Android) → verdicts, BPM et clé mis à jour
+function applyDescFound(found) {
   let n = 0;
-  for (const [id, raw] of Object.entries(found)) {
+  for (const [id, raw] of Object.entries(found || {})) {
     if (!/^[\w-]{11}$/.test(id) || typeof raw !== 'string') continue;
     pcDescCache.set(id, raw.slice(0, DESC_MAX));
     for (const it of [session?.items?.get(id), state.beats.find((b) => b.id === id), pc.queue[id]?.it]) if (applyPcDesc(it, id)) n++;
   }
-  if (!n) return;
+  if (!n) return 0;
   persist.save('beats');
   savePc();
   saveSession();
@@ -2304,7 +2316,23 @@ async function onPcDesc(d) {
     const it = session?.items?.get(open) || state.beats.find((b) => b.id === open) || (pc.queue[open]?.it ? pc.queue[open].it : null);
     if (it) openBeat(it, session?.plan || null);
   }
-  setStatus(`Ton PC a lu ${n} description${n > 1 ? 's' : ''} : licences vérifiées`, 1, true);
+  return n;
+}
+// Appli Android : le téléphone lit lui-même les descriptions complètes sur YouTube (comme le
+// PC), sans attendre le PC. Ce qui reste illisible part ensuite au PC s'il est là.
+const nativeDescAsked = new Map();
+async function nativeAskDesc(items) {
+  if (!nativeYt.desc) return 0;
+  const now = Date.now();
+  const ids = [...new Set(items.filter(needsDesc).map((i) => ytIdOf(i) || i.id))]
+    .filter((id) => /^[\w-]{11}$/.test(id) && !(now - (nativeDescAsked.get(id) || 0) < 10 * 60e3)).slice(0, 60);
+  if (!ids.length) return 0;
+  ids.forEach((id) => nativeDescAsked.set(id, now));
+  let found = {};
+  try { found = (await mfn().ytDescriptions({ ids }))?.d || {}; } catch { return 0; }
+  const n = applyDescFound(found);
+  if (n) setStatus(`${n} description${n > 1 ? 's' : ''} lue${n > 1 ? 's' : ''} en entier : licences, BPM et clés vérifiés`, 1, true);
+  return n;
 }
 
 async function apiReadPending(pending) {

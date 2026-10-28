@@ -32,7 +32,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.19.0"
+VERSION = "3.19.1"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -328,15 +328,35 @@ _BPM_PATTERNS = [
 ]
 
 
+# « 🔑 C#m », « 🎹 Gm » ; et collée au BPM (« 140bpm C#m », « C#m 140 BPM ») avec la note en
+# majuscule et le mode écrit (« 150 BPM am I right » n'est pas une clé). Comme l'app web.
+_KEY_EMOJI = re.compile(r"(?:🔑|🗝️?|🎹|🎼)\s*(?:key\s*[:=\-|]?\s*)?([A-Ga-g])\s*(#|♯|b|♭)?\s*(minor|major|min|maj|mineur|majeur|m)?(?![a-z])", re.I)
+_KEY_NEAR_BPM = [
+    re.compile(r"\d{2,3}\s*-?\s*bpm\s*[|,/•·–-]*\s*([a-g])(#|♯|b|♭)?\s?(minor|major|min|maj|mineur|majeur|m)(?![a-z])", re.I),
+    re.compile(r"(?:^|[\s|•·,/(\[-])([a-g])(#|♯|b|♭)?\s?(minor|major|min|maj|mineur|majeur|m)\s*[|,/•·–-]*\s*\d{2,3}\s*-?\s*bpm", re.I),
+]
+
+
+def _fmt_key(note, acc, mode):
+    note, acc, mode = note.upper(), (acc or "").lower(), (mode or "").lower()
+    a = "#" if acc in ("#", "♯", "sharp") else "b" if acc in ("b", "♭", "flat") else ""
+    md = " min" if mode in ("m", "min", "minor", "mineur") else " maj" if mode in ("maj", "major", "majeur") else ""
+    return f"{note}{a}{md}"
+
+
 def find_key(*texts):
     for t in texts:
+        e = _KEY_EMOJI.search(t or "")
+        if e and (e.group(2) or e.group(3) or "key" in e.group(0).lower()):
+            return _fmt_key(*e.groups())
         for rx in _KEY_PATTERNS:
             m = rx.search(t or "")
             if m:
-                note, acc, mode = m.group(1).upper(), (m.group(2) or "").lower(), (m.group(3) or "").lower()
-                a = "#" if acc in ("#", "♯", "sharp") else "b" if acc in ("b", "♭", "flat") else ""
-                md = " min" if mode in ("m", "min", "minor", "mineur") else " maj" if mode in ("maj", "major", "majeur") else ""
-                return f"{note}{a}{md}"
+                return _fmt_key(*m.groups())
+        for rx in _KEY_NEAR_BPM:
+            for m in rx.finditer(t or ""):
+                if m.group(1).isupper():
+                    return _fmt_key(*m.groups())
     return None
 
 
