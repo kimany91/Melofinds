@@ -1242,7 +1242,8 @@ class LicenceEtAnnulation(unittest.TestCase):
                   "\"FREE FOR PROFIT\" only applies to YouTube and soundcloud.",
                   "This beat is NOT free for all plats. You can only use for profit on Soundcloud and YouTube.",
                   "Purchase a lease to distribute your music on platforms like Spotify and Apple Music.",
-                  "Ce beat est GRATUIT pour un usage NON LUCRATIF"):
+                  "Ce beat est GRATUIT pour un usage NON LUCRATIF",
+                  "[BUY 2 GET 5 FREE]] Purchase: https://bsta.rs/1cvebj\nLease: $20\nKey: Abm\nBPM: 153\n[[FREE FOR USE ON SOUNDCLOUD AND YOUTUBE | TAG MY PROD {ORIN INC} IF YOU UPLOAD]]"):
             self.assertEqual(mpc.check_licence("[FREE FOR PROFIT] Type Beat", d, "ffp")[0], "fnp", d)
 
     def test_vrais_free_for_profit_gardes(self):

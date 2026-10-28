@@ -171,7 +171,8 @@ const PLATFORM_ONLY = [
 // « Free (for profit) for YouTube or SoundCloud placement », « free on YouTube & SoundCloud » :
 // gratuit, mais seulement cité pour YouTube / SoundCloud (gardé si la phrase ne cite pas
 // aussi Spotify & co sans restriction, voir platformFree()).
-const PLATFORM_FREE = new RegExp(String.raw`(?:${FFP}|\bffp|\bf4p|\bfree|\bgratuit\w*)\s*(?:to\s*use\s*)?(?:use\s*)?(?:(?:on|for|in|sur|pour)\s*(?:the\s*)?|[(\[]\s*)${PLAT_LIST}\b`, 'g');
+// (aussi « free for use on SoundCloud and YouTube », « free to use on YT »)
+const PLATFORM_FREE = new RegExp(String.raw`(?:${FFP}|\bffp|\bf4p|\bfree|\bgratuit\w*)\s*(?:(?:to|for)\s*(?:use|usage)\s*)?(?:use\s*)?(?:(?:on|for|in|sur|pour)\s*(?:the\s*)?|[(\[]\s*)${PLAT_LIST}\b`, 'g');
 const BROAD = /spotify|apple\s*music|itunes|deezer|tidal|amazon\s*music|all\s*plat\w*|toutes?\s*les\s*plateformes|stream\w*\s*(?:services?|platforms?|sites?)|streaming|dsps?\b|distrib/;
 const RESTRICT_WORDS = /\bonly\b|uniquement|seulement|\bnot\b|n't|\bno\b|\bpas\b|purchase|\bbuy|lease|licen[cs]e|licence|\bneed|\bmust|\bpay|acheter|payer|sauf|except/;
 
@@ -356,13 +357,18 @@ export function findStreamLimit(text) {
  * que si la description ne dit pas le contraire (payer pour Spotify, YouTube
  * only, Spotify ❌…). Dans ce cas la prod est marquée « titre trompeur ».
  */
+const PROMO_FREE = /\b(?:buy\s*\d+\s*(?:get|=|\+)\s*\d+\s*(?:free|gratuit\w*)|get\s*\d+\s*(?:free|gratuit\w*)(?:\s*(?:beats?|leases?|prods?))?|\d+\s*free\s*(?:beats?|leases?|prods?)\s*(?:with|when|for|if)\b[^\n]{0,40}|free\s*(?:beats?|leases?)\s*with\s*(?:every|each|any|your)?\s*(?:purchase|order|lease))/g;
+
 export function analyzeLicense(title = '', description = '') {
   const full = `${title}\n${description}`;
   const norm = normalizeWithMap(full);
   // Même longueur, pour garder les positions des citations : « etc.. » / « e.g. » ne
   // coupent plus une phrase.
   const t = norm.text
-    .replace(/\b(etc|e\.g|i\.e|ex|vs)\.+/g, (m) => m.replace(/\./g, ' '));
+    .replace(/\b(etc|e\.g|i\.e|ex|vs)\.+/g, (m) => m.replace(/\./g, ' '))
+    // promos de la boutique (« BUY 2 GET 5 FREE », « 2 free beats with every purchase ») :
+    // ce « free » ne parle pas de la licence de la prod (même longueur : citations intactes)
+    .replace(PROMO_FREE, (m) => ' '.repeat(m.length));
   const titleLen = normalizeWithMap(title).text.length;
   const inTitle = (h) => h.start < titleLen;
   const inDesc = (h) => h.start > titleLen;
