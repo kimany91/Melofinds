@@ -1,0 +1,14 @@
+{
+  "appId": "io.github.kimany91.melofinds",
+  "appName": "Melofinds",
+  "webDir": "apk/www",
+  "server": {
+    "url": "https://kimany91.github.io/Melofinds/",
+    "errorPath": "index.html",
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0b0b10"
+  }
+}

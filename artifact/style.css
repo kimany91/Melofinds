@@ -877,3 +877,10 @@ body.mobile .chan-txt b { font-size: 17px; }
 .bpm-step { display: grid; gap: 4px; margin-top: 10px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--panel-2); }
 .bpm-step > span { font-size: 13.5px; color: var(--muted); }
 .bpm-step .d-actions { margin-top: 6px; }
+
+/* App Android (APK) */
+.apk-folder { display: grid; gap: 6px; margin-top: 6px; }
+.apk-ok { font-size: 13.5px; color: var(--ffp); font-weight: 600; }
+.cobalt-auto { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.pc-pick { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.apk-link { display: inline-block; margin-left: 12px; }

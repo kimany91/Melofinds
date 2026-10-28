@@ -215,6 +215,30 @@ la description du beatmaker reste prioritaire. Les résultats s'affichent **en b
 (« 150 BPM · ≈ ») et restent gardés dans ce navigateur. La fiche garde aussi un lien
 « Vérifier sur Tunebat ».
 
+## App Android (APK)
+
+La même app que la version web, plus ce que seul Android permet. Lien :
+**https://github.com/kimany91/Melofinds/releases/download/apk/Melofinds.apk** (aussi en
+bas de la page de recherche). Elle affiche l'app web de GitHub Pages : les nouveautés
+arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion ».
+
+- **BPM et clé sans rien choisir** : dans la fenêtre BPM, « Autoriser le dossier
+  Téléchargements » (une seule fois, sélecteur d'Android), puis « 1. Télécharger le MP3
+  (noTube) ». De retour dans Melofinds, l'app trouve le MP3, le relie à la prod (titre,
+  puis durée), l'analyse et **le supprime** (interrupteur, activé par défaut).
+- **Partager → Melofinds** : un son partagé depuis noTube, Fichiers… est relié à la prod
+  (sinon l'app demande laquelle) et analysé ; la copie est effacée ensuite.
+- **Retour haptique** léger sur chaque action (selon le réglage « vibrations » du
+  téléphone), plus marqué quand le BPM est trouvé. La version web Android vibre aussi.
+- **Sécurité** : permissions Internet et micro seulement (aucun accès général aux
+  fichiers) ; l'app ne voit que le dossier autorisé ; elle ne supprime qu'un fichier
+  **audio** placé directement dedans, qu'elle vient d'analyser et qui correspond à la prod.
+- Code : `android/` (Capacitor 8, module natif `MelofindsNativePlugin.java`),
+  `capacitor.config.json`, `apk/www` (écran hors connexion), construction
+  `.github/workflows/apk-build.yml` (version GitHub « apk », jamais « dernière »).
+  Signature : clé jamais dans le dépôt ; avec les secrets `APK_KEYSTORE_B64` et
+  `APK_KEYSTORE_PASSWORD`, les mises à jour de l'APK s'installent sans désinstaller.
+
 ## Chaîne du beatmaker (version web)
 
 Chaque prod affiche le **logo de la chaîne** qui l'a postée. Un appui dessus lance le

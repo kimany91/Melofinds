@@ -1,0 +1,100 @@
+# Construit l'app Android (APK) de Melofinds et la publie dans la version GitHub « apk »
+# (pré-version, jamais marquée « dernière » : la mise à jour du programme PC n'est pas
+# touchée). Lien de téléchargement fixe :
+#   https://github.com/kimany91/Melofinds/releases/download/apk/Melofinds.apk
+#
+# L'APK affiche l'app web de GitHub Pages : les nouveautés de l'app arrivent sans
+# réinstaller. Il n'est reconstruit que si sa partie Android change.
+#
+# Signature : la clé n'est JAMAIS dans le dépôt (public). Si les secrets
+# APK_KEYSTORE_B64 et APK_KEYSTORE_PASSWORD existent, elle est utilisée (mises à jour de
+# l'APK sans désinstaller) ; sinon une clé neuve est créée pour cette construction.
+name: Melofinds Android (APK)
+
+on:
+  push:
+    paths:
+      - 'android/**'
+      - 'apk/**'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/apk-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-build
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      APK_VERSION: ${{ format('1.0.{0}', github.run_number) }}
+      APK_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Capacitor (projet Android à jour)
+        run: |
+          npm ci
+          npx cap sync android
+
+      - name: Clé de signature (hors du dépôt)
+        env:
+          KS_B64: ${{ secrets.APK_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+        run: |
+          d="$RUNNER_TEMP/signing"; mkdir -p "$d"; chmod 700 "$d"
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ]; then
+            echo "$KS_B64" | base64 -d > "$d/release.jks"
+            PASS="$KS_PASS"
+            echo "Clé : secret GitHub (mises à jour sans désinstaller)."
+          else
+            PASS="$(openssl rand -hex 24)"
+            keytool -genkeypair -keystore "$d/release.jks" -storepass "$PASS" -keypass "$PASS" \
+              -alias melofinds -keyalg RSA -keysize 3072 -validity 36500 -dname "CN=Melofinds, O=kimany91" >/dev/null
+            echo "::warning::Pas de secret APK_KEYSTORE_B64 : clé neuve pour cette construction (installer cet APK demandera de désinstaller l'ancien)."
+          fi
+          echo "::add-mask::$PASS"
+          echo "APK_KEYSTORE=$d/release.jks" >> "$GITHUB_ENV"
+          echo "APK_KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
+
+      - name: Construire l'APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/Melofinds.apk"
+
+      - name: Vérifier l'APK (signature, nom, permissions)
+        run: |
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$BT/apksigner" verify --print-certs Melofinds.apk | head -5
+          "$BT/aapt" dump badging Melofinds.apk | grep -E "^package:|^application-label:|uses-permission" | tee badging.txt
+          grep -q "package: name='io.github.kimany91.melofinds'" badging.txt
+          # seulement Internet + micro : aucun accès général aux fichiers
+          ! grep -E "READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|MANAGE_EXTERNAL_STORAGE|READ_MEDIA" badging.txt
+          ls -l Melofinds.apk
+
+      - name: Publier (version « apk »)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="App Android de Melofinds (version $APK_VERSION). Télécharge Melofinds.apk sur ton téléphone Android et ouvre-le (autorise l'installation depuis ton navigateur si Android le demande)."
+          if ! gh release view apk >/dev/null 2>&1; then
+            gh release create apk --title "Melofinds Android" --notes "$NOTES" --prerelease --latest=false
+          else
+            gh release edit apk --notes "$NOTES" --prerelease --latest=false
+          fi
+          gh release upload apk Melofinds.apk --clobber

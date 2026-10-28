@@ -884,6 +884,13 @@ body.mobile .chan-txt b { font-size: 17px; }
 .bpm-step > span { font-size: 13.5px; color: var(--muted); }
 .bpm-step .d-actions { margin-top: 6px; }
 
+/* App Android (APK) */
+.apk-folder { display: grid; gap: 6px; margin-top: 6px; }
+.apk-ok { font-size: 13.5px; color: var(--ffp); font-weight: 600; }
+.cobalt-auto { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.pc-pick { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.apk-link { display: inline-block; margin-left: 12px; }
+
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -989,7 +996,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 28/10/2026 à 11:26</p>
+    <p class="build-stamp">Version du 28/10/2026 à 11:37</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -3962,6 +3969,7 @@ function keepAnalysis(item, res, how) {
   tbStore(item.id, t);
   syncTbUi();
   refreshItem(item);
+  haptic('success');
   return t;
 }
 function monoOf(buf) {
@@ -3984,7 +3992,9 @@ async function analyzeFile(item, file, ui) {
     const from = Math.max(0, Math.floor((mono.length - len) / 2));
     ui.say('Analyse…');
     await wait(30);
-    return analyzeAudio(mono.subarray(from, from + len), buf.sampleRate);
+    const res = analyzeAudio(mono.subarray(from, from + len), buf.sampleRate);
+    if (res) res.duration = buf.duration;
+    return res;
   } catch {
     ui.say('Fichier illisible : prends un MP3, WAV ou M4A');
     return null;
@@ -4043,6 +4053,200 @@ async function listenAndAnalyze(item, ui, seconds = 15) {
 // n'a pas le droit d'en piloter un autre) : un appui pour télécharger, un pour analyser.
 const NOTUBE = 'https://notube.lol';
 const notubeUrl = (item) => `${NOTUBE}/watch?v=${encodeURIComponent(ytIdOf(item))}`;
+
+// ---------------------------------------------------------------------------
+// App Android (APK) : la même app web, avec un pont vers le téléphone (MelofindsNative).
+// - retour haptique léger sur les actions (aussi sur la version web Android) ;
+// - « Télécharger le MP3 » : la prod est mise en attente ; au retour dans l'app, le MP3
+//   est trouvé dans le dossier autorisé (Téléchargements), relié à la prod (titre + durée),
+//   analysé, puis supprimé (seulement lui) ;
+// - « Partager → Melofinds » depuis noTube ou Fichiers : le son est analysé tout seul.
+const isNative = () => Boolean(window.Capacitor?.isNativePlatform?.());
+const mfn = () => (isNative() ? window.Capacitor?.Plugins?.MelofindsNative || null : null);
+const APK_URL = 'https://github.com/kimany91/Melofinds/releases/download/apk/Melofinds.apk';
+
+let hapticAt = 0;
+function haptic(kind = 'tap') {
+  const now = performance.now();
+  if (kind === 'tap' && now - hapticAt < 70) return;
+  hapticAt = now;
+  const n = mfn();
+  if (n) { n.haptic({ kind }).catch(() => {}); return; }
+  try { navigator.vibrate?.(kind === 'success' ? [12, 70, 18] : kind === 'warn' ? [28, 50, 28] : 7); } catch { /* pas de vibreur */ }
+}
+document.addEventListener('click', (e) => {
+  const el = e.target.closest?.('button, a, [role="button"], .chip, .pill, input[type="checkbox"], label, select');
+  if (el && !el.disabled) haptic('tap');
+  // dans l'APK : les liens externes (noTube, YouTube…) s'ouvrent dans le navigateur / l'appli
+  const a = e.target.closest?.('a[href^="http"]');
+  if (a && mfn() && (a.target === '_blank' || !a.href.startsWith(location.origin))) {
+    e.preventDefault();
+    mfn().openUrl({ url: a.href }).catch(() => toast('Impossible d’ouvrir ce lien'));
+  }
+}, true);
+
+// --- Prods qui attendent leur MP3 (téléchargé avec noTube)
+const MP3_WAIT_MS = 3 * 3600e3;
+function mp3Waits() {
+  const list = (local.get('mp3Wait', []) || []).filter((w) => w && /^[\w-]{11}$/.test(w.id) && Date.now() - (w.at || 0) < MP3_WAIT_MS);
+  return list;
+}
+function addMp3Wait(item) {
+  const id = ytIdOf(item);
+  if (!id) return;
+  const list = mp3Waits().filter((w) => w.id !== id);
+  list.push({ id, title: String(item.title || '').slice(0, 200), duration: Number(item.duration) || 0, at: Date.now() });
+  local.set('mp3Wait', list.slice(-20));
+}
+function dropMp3Wait(id) { local.set('mp3Wait', mp3Waits().filter((w) => w.id !== id)); }
+const mp3Delete = () => local.get('mp3Delete', true) !== false;
+
+// Nom de fichier ↔ prod : titre proche (noTube nomme le MP3 avec le titre de la vidéo)
+const fileBase = (name) => String(name || '').replace(/\.[a-z0-9]{2,5}$/i, '').replace(/\(?\b(?:notube|ytmp3|y2mate|320\s*kbps|128\s*kbps|mp3)\b\)?/gi, ' ').replace(/[_]+/g, ' ').trim();
+function nameScore(fileName, title) {
+  const f = fileBase(fileName);
+  if (!f || !title) return 0;
+  const t = String(title);
+  const nf = tbNorm(f); const nt = tbNorm(t); const nb = tbNorm(beatName(t));
+  if (nf && nt && (nf === nt || nf.includes(nt) || nt.includes(nf))) return 1;
+  return Math.max(similarity(f, t), nb.length >= 4 && nf.includes(nb) ? 0.75 : 0, similarity(f, beatName(t)));
+}
+function itemForId(id, fallback) {
+  return session?.items?.get(id) || state.beats.find((b) => b.id === id) || pc.queue[id]?.it
+    || { id, url: `https://www.youtube.com/watch?v=${id}`, title: fallback?.title || id, duration: fallback?.duration || 0 };
+}
+// Lecture d'un fichier du téléphone, par morceaux de 1 Mo (base64 → octets)
+async function readNative(ref, size = 0) {
+  const parts = [];
+  let offset = 0;
+  for (let i = 0; i < 80; i++) {
+    const r = await mfn().readChunk({ uri: ref, offset, length: 1 << 20 });
+    const bin = atob(r.data || '');
+    const u8 = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) u8[k] = bin.charCodeAt(k);
+    parts.push(u8);
+    offset += u8.length;
+    if (r.eof || !u8.length || (size && offset >= size)) break;
+  }
+  return new Blob(parts);
+}
+const quietUi = { say() {}, level() {} };
+const mp3Done = new Set(local.get('mp3Done', []) || []);
+function markDone(uri) { mp3Done.add(uri); local.set('mp3Done', [...mp3Done].slice(-200)); }
+
+let scanning = false;
+async function scanDownloads() {
+  const n = mfn();
+  const waits = mp3Waits();
+  if (!n || scanning || !waits.length || document.visibilityState !== 'visible') return;
+  scanning = true;
+  try {
+    const f = await n.folder();
+    if (!f?.granted) return;
+    const since = Math.min(...waits.map((w) => w.at)) - 120e3;
+    const files = ((await n.listAudio({ since }))?.files || []).filter((x) => !mp3Done.has(x.uri)).sort((a, b) => a.modified - b.modified);
+    for (const file of files) {
+      const left = mp3Waits();
+      if (!left.length) break;
+      // la prod qui correspond : titre proche ; s'il n'y a qu'une prod en attente et qu'un
+      // nouveau fichier, on l'accepte aussi, mais la durée devra confirmer avant de supprimer
+      const scored = left.filter((w) => file.modified >= w.at - 120e3).map((w) => ({ w, s: nameScore(file.name, w.title) })).sort((a, b) => b.s - a.s);
+      const fresh = files.filter((x) => !mp3Done.has(x.uri));
+      let pick = scored[0] && scored[0].s >= 0.45 ? scored[0] : null;
+      if (!pick && scored.length === 1 && left.length === 1 && fresh.length === 1) pick = scored[0];
+      if (!pick) continue;
+      const item = itemForId(pick.w.id, pick.w);
+      bpmJob.id = item.id;
+      syncTbUi();
+      let res = null;
+      try { res = await analyzeFile(item, await readNative(file.uri, file.size), quietUi); } catch { res = null; } finally { bpmJob.id = null; syncTbUi(); }
+      markDone(file.uri);
+      if (!res || (!res.bpm && !res.key)) { haptic('warn'); toast(`Son illisible : ${file.name}`); continue; }
+      const dur = Number(pick.w.duration) || 0;
+      const durOk = !dur || !res.duration || Math.abs(res.duration - dur) <= 8;
+      if (!durOk && pick.s < 0.75) continue; // ni le nom ni la durée ne collent : on ne touche à rien
+      keepAnalysis(item, res, 'téléchargement');
+      dropMp3Wait(pick.w.id);
+      let gone = false;
+      if (mp3Delete() && durOk && (pick.s >= 0.45 || dur)) {
+        try { gone = Boolean((await n.deleteFile({ uri: file.uri }))?.ok); } catch { gone = false; }
+      }
+      toast(`${displayTitle(item.title)} : ${bpmText(tbFor(item.id) || res)}${gone ? ' · MP3 supprimé' : ''}`, { ms: 5000 });
+    }
+  } catch { /* dossier retiré, etc. : on réessaiera */ } finally { scanning = false; }
+}
+
+// --- « Partager → Melofinds »
+async function takeShared() {
+  const n = mfn();
+  if (!n) return;
+  let items = [];
+  try { items = (await n.takeShared())?.items || []; } catch { return; }
+  for (const it of items) {
+    if (!it?.path) continue;
+    let blob = null;
+    try { blob = await readNative(it.path, it.size); } catch { blob = null; }
+    n.dropShared({ path: it.path }).catch(() => {});
+    if (!blob?.size) { toast('Son partagé illisible'); continue; }
+    // à quelle prod ? d'abord celles qui attendent leur MP3, puis la recherche, puis les favoris
+    const pool = [...mp3Waits().map((w) => itemForId(w.id, w)), ...(session?.items ? [...session.items.values()] : []), ...state.beats]
+      .filter((x, i, arr) => ytIdOf(x) && arr.findIndex((y) => ytIdOf(y) === ytIdOf(x)) === i);
+    const best = pool.map((x) => ({ x, s: nameScore(it.name, x.title) })).sort((a, b) => b.s - a.s)[0];
+    if (best && best.s >= 0.45) {
+      bpmJob.id = best.x.id;
+      syncTbUi();
+      let res = null;
+      try { res = await analyzeFile(best.x, blob, quietUi); } finally { bpmJob.id = null; syncTbUi(); }
+      if (res) { keepAnalysis(best.x, res, 'partage'); dropMp3Wait(ytIdOf(best.x)); toast(`${displayTitle(best.x.title)} : ${bpmText(tbFor(best.x.id) || res)}`, { ms: 5000 }); }
+      else toast('Son partagé illisible');
+    } else chooseProdFor(it.name, blob, pool);
+  }
+}
+function chooseProdFor(name, blob, pool) {
+  const list = pool.slice(0, 15);
+  openDrawer('À quelle prod ?', [
+    h('p', { class: 'muted', style: 'margin:0' }, `Je n’ai pas reconnu « ${fileBase(name)} ». Touche la prod de ce son :`),
+    list.length ? h('div', { class: 'pc-list' }, list.map((x) => h('button', { type: 'button', class: 'pc-row pc-pick', onclick: async () => {
+      closeDrawer();
+      const res = await analyzeFile(x, blob, quietUi);
+      if (res) { keepAnalysis(x, res, 'partage'); toast(`${displayTitle(x.title)} : ${bpmText(tbFor(x.id) || res)}`); } else toast('Son illisible');
+    } }, h('span', { class: 'pc-row-main' }, h('b', {}, displayTitle(x.title)), h('span', {}, x.channel || ''))))) : h('p', { class: 'hint' }, 'Fais d’abord une recherche, puis repartage le son.'),
+  ]);
+}
+
+// Dossier autorisé (une fois) + suppression du MP3 après analyse
+const nativeFolder = { granted: false, name: '' };
+async function refreshFolder() { try { Object.assign(nativeFolder, await mfn().folder()); } catch { /* pas dans l'APK */ } return nativeFolder; }
+function nativeFolderRow(onChange) {
+  const row = h('div', { class: 'apk-folder' });
+  const del = h('input', { type: 'checkbox', checked: mp3Delete() });
+  del.addEventListener('change', () => local.set('mp3Delete', del.checked));
+  const draw = () => {
+    row.replaceChildren(
+      nativeFolder.granted
+        ? h('span', { class: 'apk-ok' }, `✓ Dossier « ${nativeFolder.name || 'Téléchargements'} » autorisé`)
+        : h('button', { type: 'button', class: 'primary', onclick: async () => {
+          try { Object.assign(nativeFolder, await mfn().pickFolder()); } catch { toast('Dossier pas autorisé'); }
+          draw();
+          onChange?.();
+          if (nativeFolder.granted) { haptic('success'); scanDownloads(); }
+        } }, 'Autoriser le dossier Téléchargements (une fois)'),
+      h('label', { class: 'cobalt-auto' }, del, ' Supprimer le MP3 après analyse (seulement lui)'),
+    );
+  };
+  draw();
+  refreshFolder().then(() => { draw(); onChange?.(); });
+  return row;
+}
+
+if (isNative()) {
+  document.documentElement.classList.add('apk');
+  refreshFolder();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { scanDownloads(); takeShared(); } });
+  setInterval(() => { if (mp3Waits().length) scanDownloads(); }, 15000);
+  try { mfn()?.addListener('shared', () => takeShared()); } catch { /* ancienne version */ }
+  setTimeout(() => { scanDownloads(); takeShared(); }, 1500);
+}
 
 // Copie d'écoute de la prod gardée sur ce téléphone (prods envoyées sur le PC) : analysée
 // sans jouer de son, même PC éteint. L'instru d'abord (pas de voix dessus).
@@ -4125,11 +4329,16 @@ function openBpmSheet(item) {
   let downloaded = false;
   const onBack = () => {
     if (document.visibilityState !== 'visible' || !downloaded || !$('#drawer').classList.contains('open')) return;
+    if (isNative() && nativeFolder.granted) { ui.say('Je cherche le MP3 dans Téléchargements…'); return; } // scanDownloads s'en charge
     mp3Btn.className = 'primary';
     dlBtn.className = 'ghost';
     ui.say('MP3 téléchargé ? Touche « 2. Analyser le MP3 » et choisis-le (dossier Téléchargements).');
   };
-  dlBtn.addEventListener('click', () => { downloaded = true; ui.say('noTube s’ouvre : télécharge le MP3, puis reviens ici.'); });
+  dlBtn.addEventListener('click', () => {
+    downloaded = true;
+    addMp3Wait(item);
+    ui.say(isNative() ? 'noTube s’ouvre : télécharge le MP3 puis reviens dans Melofinds, je m’occupe du reste.' : 'noTube s’ouvre : télécharge le MP3, puis reviens ici.');
+  });
   document.addEventListener('visibilitychange', onBack);
   mp3Btn.addEventListener('click', () => fileIn.click());
   pcCopyFor(item).then((b) => { if (b) { copyBtn.hidden = false; dlBtn.className = 'ghost'; } });
@@ -4140,7 +4349,9 @@ function openBpmSheet(item) {
     h('h3', { class: 'd-title' }, displayTitle(item.title)),
     h('p', { class: 'muted', style: 'margin:0' }, 'Je trouve le BPM et la clé à partir du son de la prod, analysé sur ton téléphone.'),
     h('div', { class: 'bpm-step' },
-      h('b', {}, 'Sans son, sans PC'), h('span', {}, 'Télécharge le MP3 avec noTube (gratuit, sans compte), reviens ici et choisis-le.'),
+      h('b', {}, 'Sans son, sans PC'),
+      h('span', {}, isNative() ? 'Télécharge le MP3 avec noTube (gratuit, sans compte), puis reviens dans Melofinds : je le trouve, je l’analyse et je le supprime tout seul.' : 'Télécharge le MP3 avec noTube (gratuit, sans compte), reviens ici et choisis-le.'),
+      isNative() ? nativeFolderRow(() => { if (nativeFolder.granted) mp3Btn.hidden = true; }) : null,
       h('div', { class: 'd-actions' }, dlBtn, mp3Btn)),
     h('div', { class: 'd-actions' }, copyBtn, fileBtn, listenBtn, fileIn),
     h('p', { class: 'hint' }, 'Autres façons : « Choisir un fichier audio » (fichier déjà sur le téléphone), la copie du PC (prods envoyées sur ton PC, même éteint), ou « Écouter la prod » au micro (son monté, sans écouteurs).'),
@@ -4149,6 +4360,7 @@ function openBpmSheet(item) {
     out,
   ]);
   drawerOnClose = () => { bpmJob.stop?.(); document.removeEventListener('visibilitychange', onBack); };
+  if (isNative() && nativeFolder.granted) mp3Btn.hidden = true;
   show();
 }
 function refreshItem(item) {
@@ -7813,6 +8025,7 @@ function setupTarget() {
     try { navigator.storage?.persist?.(); } catch { /* le navigateur décide */ }
     const keyBtn = h('button', { type: 'button', class: 'link', id: 'keyBtn', onclick: openKeySettings }, ytKey() ? 'Clé YouTube' : 'Descriptions complètes (clé YouTube, facultatif)');
     $('.results-foot').append(keyBtn);
+    if (!isNative()) $('.results-foot').append(h('a', { class: 'link apk-link', href: APK_URL, rel: 'noopener' }, 'Télécharger l’app Android (APK)'));
     if (!ytKey()) pipedInstances();
     const pcBtn = h('button', { type: 'button', class: 'verify-btn pc-head', id: 'pcHead', title: 'Télécharger les prods sur mon PC', onclick: () => openPcSetup() }, icon('down'), h('span', {}, 'Mon PC'), h('em', { class: 'dot', id: 'pcDot', hidden: !pc.info }, '✓'));
     $('#openVerify').before(pcBtn);
