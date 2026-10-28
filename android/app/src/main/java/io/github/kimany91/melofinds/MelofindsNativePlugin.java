@@ -37,7 +37,14 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import org.schabi.newpipe.extractor.exceptions.AgeRestrictedContentException;
+import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException;
+import org.schabi.newpipe.extractor.exceptions.ReCaptchaException;
 
 /**
  * Pont entre l'app web Melofinds et Android.
@@ -47,7 +54,9 @@ import java.util.Locale;
  *    rangés dans Téléchargements (Download/), ajoutés depuis que la prod attend son MP3 ;
  *  - suppression : seulement un son de Téléchargements, via la demande officielle
  *    d'Android (confirmation, sauf si « Gestion des fichiers multimédias » est autorisée) ;
- *  - fichiers partagés vers Melofinds : copiés dans le cache de l'app, effacés après analyse.
+ *  - fichiers partagés vers Melofinds : copiés dans le cache de l'app, effacés après analyse ;
+ *  - son d'une vidéo YouTube (ytAudio) : récupéré directement, gardé dans le cache de l'app
+ *    le temps de l'analyse puis effacé ; jamais rangé dans les fichiers de l'utilisateur.
  */
 @CapacitorPlugin(
     name = "MelofindsNative",
@@ -451,6 +460,97 @@ public class MelofindsNativePlugin extends Plugin {
         JSObject r = new JSObject();
         r.put("version", BuildConfig.VERSION_NAME);
         r.put("android", Build.VERSION.SDK_INT);
+        JSArray features = new JSArray();
+        features.put("ytAudio");
+        r.put("features", features);
         call.resolve(r);
+    }
+
+    // ------------------------------------------------------------------ son YouTube direct
+
+    // une prod à la fois : les demandes suivantes attendent leur tour
+    private static final ExecutorService YT = Executors.newSingleThreadExecutor();
+
+    /**
+     * Son d'une vidéo YouTube pour l'analyse (BPM / clé), sans site intermédiaire :
+     * { path, size, rate, seconds, duration, format, kbps, ms }. Le WAV (mono, milieu du
+     * morceau) est dans le cache de l'app ; l'app web le lit puis l'efface (dropShared).
+     */
+    @PluginMethod
+    public void ytAudio(PluginCall call) {
+        String id = call.getString("id", "");
+        double window = Math.max(20, Math.min(90, call.getDouble("seconds", 60.0)));
+        if (!YtAudio.VIDEO_ID.matcher(id).matches()) { call.reject("Vidéo invalide"); return; }
+        YT.execute(() -> {
+            long t0 = System.currentTimeMillis();
+            File dir = sharedDir();
+            cleanOld(dir);
+            try {
+                ytStep(id, "find");
+                List<YtAudio.Pick> picks = YtAudio.streams(id);
+                long t1 = System.currentTimeMillis();
+                Exception last = null;
+                for (int i = 0; i < Math.min(3, picks.size()); i++) {
+                    YtAudio.Pick p = picks.get(i);
+                    File raw = new File(dir, "yt-" + id + "." + p.format);
+                    File wav = new File(dir, "yt-" + id + ".wav");
+                    try {
+                        ytStep(id, "download");
+                        long size = YtAudio.download(p, raw);
+                        long t2 = System.currentTimeMillis();
+                        ytStep(id, "decode");
+                        AudioPcm.Out o = AudioPcm.toWav(raw, wav, window);
+                        long t3 = System.currentTimeMillis();
+                        JSObject r = new JSObject();
+                        r.put("path", wav.getAbsolutePath());
+                        r.put("size", wav.length());
+                        r.put("rate", o.rate);
+                        r.put("seconds", o.seconds);
+                        r.put("duration", o.duration);
+                        r.put("format", p.format);
+                        r.put("kbps", p.bitrate / 1000);
+                        r.put("bytes", size);
+                        JSObject ms = new JSObject();
+                        ms.put("find", t1 - t0);
+                        ms.put("download", t2 - t1);
+                        ms.put("decode", t3 - t2);
+                        ms.put("total", t3 - t0);
+                        r.put("ms", ms);
+                        call.resolve(r);
+                        return;
+                    } catch (Exception e) {
+                        last = e;
+                        wav.delete();
+                    } finally {
+                        raw.delete();
+                    }
+                }
+                throw last != null ? last : new IOException("aucun son lisible");
+            } catch (ReCaptchaException e) {
+                call.reject("YouTube demande une vérification (trop de demandes depuis ce réseau). Réessaie dans un moment.", "captcha");
+            } catch (AgeRestrictedContentException e) {
+                call.reject("Vidéo réservée aux adultes : YouTube ne donne pas le son sans compte.", "age");
+            } catch (ContentNotAvailableException e) {
+                call.reject("Vidéo indisponible (supprimée, privée ou bloquée).", "gone");
+            } catch (Throwable e) {
+                String m = e.getMessage();
+                call.reject("Son introuvable" + (m != null && m.length() < 160 ? " : " + m : ""), "fail");
+            }
+        });
+    }
+
+    private void ytStep(String id, String step) {
+        JSObject o = new JSObject();
+        o.put("id", id);
+        o.put("step", step);
+        notifyListeners("ytProgress", o);
+    }
+
+    // restes d'une analyse interrompue (plus de 10 min)
+    private static void cleanOld(File dir) {
+        File[] files = dir.listFiles();
+        if (files == null) return;
+        long old = System.currentTimeMillis() - 10 * 60 * 1000;
+        for (File f : files) if (f.getName().startsWith("yt-") && f.lastModified() < old) f.delete();
     }
 }

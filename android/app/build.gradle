@@ -19,6 +19,20 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    // NewPipe Extractor utilise des outils Java récents : rendus compatibles avec les vieux Android
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+    }
+    testOptions {
+        unitTests.all {
+            testLogging { events 'passed', 'skipped', 'failed'; showStandardStreams = true }
+        }
+    }
+    packaging {
+        resources {
+            excludes += ['META-INF/README.md', 'META-INF/CHANGES', 'META-INF/COPYRIGHT']
+        }
+    }
     // Signature : clé privée gardée HORS du dépôt (secret GitHub, ou clé de la construction)
     signingConfigs {
         release {
@@ -53,6 +67,10 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     implementation project(':capacitor-cordova-android-plugins')
+    // Son YouTube direct (même version que l'appli NewPipe)
+    implementation 'com.github.TeamNewPipe:NewPipeExtractor:e8f89145a830b4d6cae32412007f24ea8b36c73a'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
+    testImplementation "junit:junit:$junitVersion"
 }
 
 apply from: 'capacitor.build.gradle'

@@ -900,6 +900,7 @@ body.mobile .chan-txt b { font-size: 17px; }
 .bpm-step { display: grid; gap: 4px; margin-top: 10px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--panel-2); }
 .bpm-step > span { font-size: 13.5px; color: var(--muted); }
 .bpm-step .d-actions { margin-top: 6px; }
+.bpm-update { margin: 10px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--panel-2); font-size: 13.5px; }
 
 /* App Android (APK) */
 .apk-folder { display: grid; gap: 6px; margin-top: 6px; }
@@ -1019,7 +1020,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 28/10/2026 à 12:32</p>
+    <p class="build-stamp">Version du 28/10/2026 à 12:54</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -3966,11 +3967,11 @@ function tbState(id) {
   const c = tbCache[id];
   return c?.bpm || c?.key ? 'ok' : '';
 }
-const TB_LABEL = { '': 'Trouver le BPM et la clé (écoute de la prod)', busy: 'Écoute en cours…', ok: 'BPM et clé trouvés (en bleu) : toucher pour réécouter' };
+const TB_LABEL = { '': 'Trouver le BPM et la clé (à partir du son de la prod)', busy: 'Analyse en cours…', ok: 'BPM et clé trouvés (en bleu) : toucher pour réécouter' };
 function tbButton(item) {
   const st = tbState(item.id);
   return h('button', { type: 'button', class: `tb-btn${st ? ` ${st}` : ''}`, 'data-tb': item.id, 'aria-label': TB_LABEL[st], title: TB_LABEL[st],
-    onclick: (e) => { e.stopPropagation(); openBpmSheet(item); } }, 'BPM');
+    onclick: (e) => { e.stopPropagation(); if (nativeYt.ok && !tbState(item.id)) quickBpm(item); else openBpmSheet(item); } }, 'BPM');
 }
 function syncTbUi() {
   $$('.tb-btn[data-tb]').forEach((b) => {
@@ -4259,7 +4260,7 @@ function nativeFolderRow(onChange) {
       nativeFolder.granted && del.checked && nativeFolder.manageMediaAvailable && !nativeFolder.manageMedia
         ? h('button', { type: 'button', class: 'link', onclick: async () => { try { await mfn().openManageMedia(); } catch { toast('Réglage introuvable sur ce téléphone'); } } },
           'Supprimer sans confirmation : autoriser « Gestion des fichiers multimédias »')
-        : null,
+        : '',
     );
   };
   del.addEventListener('change', () => draw());
@@ -4278,6 +4279,92 @@ if (isNative()) {
   setInterval(() => { if (mp3Waits().length) scanDownloads(); }, 15000);
   try { mfn()?.addListener('shared', () => takeShared()); } catch { /* ancienne version */ }
   setTimeout(() => { scanDownloads(); takeShared(); }, 1500);
+}
+
+// Son YouTube direct (APK) : le téléphone récupère lui-même le son de la vidéo (NewPipe
+// Extractor, libre et gratuit), l'analyse puis l'efface. Rien à télécharger, rien dans
+// les fichiers du téléphone. L'app web seule (navigateur) garde noTube.
+const nativeYt = { ok: false, checked: false };
+const YT_STEP = { find: 'Je trouve le son de la vidéo…', download: 'Téléchargement du son…', decode: 'Décodage…' };
+const ytListeners = new Map();
+if (isNative()) {
+  (async () => {
+    try { nativeYt.ok = ((await mfn().info())?.features || []).includes('ytAudio'); } catch { /* ancienne version de l'APK */ }
+    nativeYt.checked = true;
+  })();
+  try { mfn()?.addListener('ytProgress', (e) => ytListeners.get(e?.id)?.say(YT_STEP[e?.step] || 'Un instant…')); } catch { /* ancienne version */ }
+}
+// WAV 16 bits → son mono (nombres entre -1 et 1)
+function wavMono(buf) {
+  const dv = new DataView(buf);
+  if (buf.byteLength < 44 || dv.getUint32(0, false) !== 0x52494646) return null; // « RIFF »
+  let p = 12; let rate = 0; let ch = 1; let bits = 16;
+  while (p + 8 <= buf.byteLength) {
+    const id = dv.getUint32(p, false); const size = dv.getUint32(p + 4, true);
+    p += 8;
+    if (id === 0x666d7420) { ch = dv.getUint16(p + 2, true) || 1; rate = dv.getUint32(p + 4, true); bits = dv.getUint16(p + 14, true); } // « fmt  »
+    else if (id === 0x64617461) { // « data »
+      if (bits !== 16 || !rate) return null;
+      const n = Math.floor(Math.min(size, buf.byteLength - p) / (2 * ch));
+      const out = new Float32Array(n);
+      for (let i = 0; i < n; i++) { let v = 0; for (let c = 0; c < ch; c++) v += dv.getInt16(p + (i * ch + c) * 2, true); out[i] = v / ch / 32768; }
+      return { mono: out, rate };
+    }
+    p += size + (size & 1);
+  }
+  return null;
+}
+async function ytAnalyze(item, ui) {
+  const id = ytIdOf(item);
+  if (!id || !nativeYt.ok) throw new Error('Pas disponible ici');
+  ytListeners.set(id, ui);
+  ui.say(YT_STEP.find);
+  let r;
+  try { r = await mfn().ytAudio({ id, seconds: 45 }); } finally { ytListeners.delete(id); }
+  try {
+    ui.say('Analyse…');
+    const w = wavMono(await (await readNative(r.path, r.size)).arrayBuffer());
+    if (!w) throw new Error('Son illisible');
+    await wait(20);
+    const res = analyzeAudio(w.mono, w.rate);
+    if (res) { res.duration = r.duration; res.ms = r.ms; }
+    return res;
+  } finally { mfn().dropShared({ path: r.path }).catch(() => {}); }
+}
+// Une prod à la fois (le téléphone télécharge et analyse dans l'ordre)
+async function ytRun(item, ui) {
+  await waitFor(() => !bpmJob.id, 120000);
+  bpmJob.id = item.id;
+  syncTbUi();
+  try {
+    const res = await ytAnalyze(item, ui);
+    if (!res || (!res.bpm && !res.key)) throw new Error('Pas assez de son exploitable dans cette prod');
+    return keepAnalysis(item, res, 'son YouTube');
+  } finally { bpmJob.id = null; syncTbUi(); }
+}
+// Fiche ouverte sans BPM / clé → trouvé tout seul (une seule tentative par prod)
+const ytTried = new Set();
+let ytQueue = Promise.resolve();
+function ytAuto(item) {
+  const id = ytIdOf(item);
+  if (!id || !nativeYt.ok || tbFor(id) || ytTried.has(id)) return;
+  ytTried.add(id);
+  ytQueue = ytQueue.then(() => (tbFor(id) ? null : ytRun(item, quietUi))).catch(() => {});
+}
+// Bouton BPM dans l'APK : tout se fait d'un coup ; en cas d'échec, les autres façons
+async function quickBpm(item) {
+  if (bpmJob.id === item.id) return;
+  const id = ytIdOf(item);
+  if (id) ytTried.add(id);
+  haptic();
+  const t0 = Date.now();
+  try {
+    const t = await ytRun(item, quietUi);
+    toast(`${bpmText(t)} · trouvé en ${Math.max(1, Math.round((Date.now() - t0) / 1000))} s`);
+  } catch (e) {
+    haptic('warn');
+    openBpmSheet(item, e?.message || 'Son introuvable');
+  }
 }
 
 // Copie d'écoute de la prod gardée sur ce téléphone (prods envoyées sur le PC) : analysée
@@ -4312,7 +4399,7 @@ async function autoAnalyzeOne(fid, blob) {
     if (res) keepAnalysis(item, res, 'copie du PC');
   } finally { bpmJob.id = null; syncTbUi(); }
 }
-function openBpmSheet(item) {
+function openBpmSheet(item, failed = '') {
   const out = h('div', { class: 'bpm-out', 'aria-live': 'polite' });
   const status = h('p', { class: 'bpm-status' }, '');
   const meter = h('div', { class: 'bpm-meter', hidden: true }, h('i'));
@@ -4322,6 +4409,8 @@ function openBpmSheet(item) {
   const copyBtn = h('button', { type: 'button', class: 'primary', hidden: true }, 'Analyser la copie du PC (sans son)');
   const dlBtn = h('a', { class: 'primary', href: notubeUrl(item), target: '_blank', rel: 'noopener noreferrer' }, '1. Télécharger le MP3 (noTube)');
   const mp3Btn = h('button', { type: 'button', class: 'ghost' }, '2. Analyser le MP3');
+  const ytBtn = h('button', { type: 'button', class: 'primary' }, 'Analyser maintenant');
+  const direct = nativeYt.ok && ytIdOf(item);
   const ui = {
     say: (t) => { status.textContent = t; },
     level: (p) => { meter.hidden = false; meter.firstChild.style.width = `${Math.min(100, Math.round(p * 140))}%`; },
@@ -4338,23 +4427,34 @@ function openBpmSheet(item) {
     if (bpmJob.id) return;
     bpmJob.id = item.id;
     syncTbUi();
-    listenBtn.disabled = true; fileBtn.disabled = true; copyBtn.disabled = true; mp3Btn.disabled = true;
+    listenBtn.disabled = true; fileBtn.disabled = true; copyBtn.disabled = true; mp3Btn.disabled = true; ytBtn.disabled = true;
     try {
       const res = await job();
       if (res === null) return;
       if (!res || (!res.bpm && !res.key)) { ui.say('Pas assez de son exploitable : réessaie plus fort, ou avec un fichier'); return; }
-      const how = job === listen ? 'micro' : job === copy ? 'copie du PC' : 'fichier';
+      const how = job === listen ? 'micro' : job === copy ? 'copie du PC' : job === yt ? 'son YouTube' : 'fichier';
       keepAnalysis(item, res, how);
       ui.say(how === 'fichier' ? 'Trouvé ! Tu peux supprimer le MP3 de ton téléphone (Fichiers → Téléchargements) : le BPM et la clé sont gardés.' : 'Trouvé !');
       show();
     } finally {
       bpmJob.id = null;
       meter.hidden = true;
-      listenBtn.disabled = false; fileBtn.disabled = false; copyBtn.disabled = false; mp3Btn.disabled = false;
+      listenBtn.disabled = false; fileBtn.disabled = false; copyBtn.disabled = false; mp3Btn.disabled = false; ytBtn.disabled = false;
       syncTbUi();
     }
   };
   const listen = () => listenAndAnalyze(item, ui);
+  // son YouTube direct (APK) ; s'il échoue, noTube reste possible juste en dessous
+  const notubeStep = h('div', { class: 'bpm-step', hidden: !!direct && !failed });
+  const yt = async () => {
+    try { return await ytAnalyze(item, ui); } catch (e) {
+      ui.say(`${e?.message || 'Son introuvable'} Autre façon : noTube ci-dessous.`);
+      notubeStep.hidden = false;
+      haptic('warn');
+      return null;
+    }
+  };
+  ytBtn.addEventListener('click', () => run(yt));
   const copy = async () => { const b = await pcCopyFor(item); return b ? analyzeFile(item, b, ui) : (ui.say('Copie introuvable sur ce téléphone'), null); };
   copyBtn.addEventListener('click', () => run(copy));
   // étape 1 faite : on revient sur Melofinds → l'étape 2 passe en avant
@@ -4380,11 +4480,17 @@ function openBpmSheet(item) {
   openDrawer('BPM et clé', [
     h('h3', { class: 'd-title' }, displayTitle(item.title)),
     h('p', { class: 'muted', style: 'margin:0' }, 'Je trouve le BPM et la clé à partir du son de la prod, analysé sur ton téléphone.'),
-    h('div', { class: 'bpm-step' },
-      h('b', {}, 'Sans son, sans PC'),
+    direct ? h('div', { class: 'bpm-step' },
+      h('b', {}, 'Automatique (quelques secondes)'),
+      h('span', {}, 'Le téléphone récupère le son de la vidéo, l’analyse puis l’efface : rien à télécharger, rien dans tes fichiers.'),
+      h('div', { class: 'd-actions' }, ytBtn)) : null,
+    isNative() && nativeYt.checked && !nativeYt.ok ? h('p', { class: 'bpm-update' }, 'Nouvelle version de l’app : le BPM et la clé se trouvent tout seuls en quelques secondes, sans noTube. ',
+      h('a', { class: 'link', href: APK_URL, rel: 'noopener' }, 'Installer la mise à jour')) : null,
+    (notubeStep.append(...[
+      h('b', {}, direct ? 'Si ça ne marche pas : noTube' : 'Sans son, sans PC'),
       h('span', {}, isNative() ? 'Télécharge le MP3 avec noTube (gratuit, sans compte), puis reviens dans Melofinds : je le trouve, je l’analyse et je le supprime tout seul.' : 'Télécharge le MP3 avec noTube (gratuit, sans compte), reviens ici et choisis-le.'),
       isNative() ? nativeFolderRow(() => { if (nativeFolder.granted) mp3Btn.hidden = true; }) : null,
-      h('div', { class: 'd-actions' }, dlBtn, mp3Btn)),
+      h('div', { class: 'd-actions' }, dlBtn, mp3Btn)].filter(Boolean)), notubeStep),
     h('div', { class: 'd-actions' }, copyBtn, fileBtn, listenBtn, fileIn),
     h('p', { class: 'hint' }, 'Autres façons : « Choisir un fichier audio » (fichier déjà sur le téléphone), la copie du PC (prods envoyées sur ton PC, même éteint), ou « Écouter la prod » au micro (son monté, sans écouteurs).'),
     meter,
@@ -4394,6 +4500,7 @@ function openBpmSheet(item) {
   drawerOnClose = () => { bpmJob.stop?.(); document.removeEventListener('visibilitychange', onBack); };
   if (isNative() && nativeFolder.granted) mp3Btn.hidden = true;
   show();
+  if (failed) ui.say(`${failed} Autre façon : noTube ci-dessous.`);
 }
 function refreshItem(item) {
   if (session?.items?.has(item.id)) renderResults();
@@ -5646,6 +5753,8 @@ function beatDetails(item, r, terms = []) {
 function openBeat(item, plan) {
   const r = analyzed(item, plan);
   if (needsDesc(item)) pcAskDesc([item]);
+  if (!(r.bpm && r.key)) ytAuto(item); // APK : BPM / clé trouvés tout seuls
+
   const saveBtn = h('button', { type: 'button', class: `ghost${isSaved(item.id) ? ' on' : ''}` }, icon('heart'), isSaved(item.id) ? 'Dans tes favoris' : 'Ajouter aux favoris');
   saveBtn.addEventListener('click', () => {
     const on = toggleSaved(item);

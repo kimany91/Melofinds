@@ -230,7 +230,16 @@ La même app que la version web, plus ce que seul Android permet. Lien :
 bas de la page de recherche). Elle affiche l'app web de GitHub Pages : les nouveautés
 arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion ».
 
-- **BPM et clé sans rien choisir** : dans la fenêtre BPM, « Autoriser l'accès aux sons
+- **BPM et clé tout seuls, en quelques secondes** : toucher « BPM » sur une prod (ou
+  ouvrir sa fiche) suffit. Le téléphone récupère lui-même le son de la vidéo YouTube avec
+  **NewPipe Extractor** (la bibliothèque libre et gratuite de l'appli NewPipe), le
+  télécharge en 4 morceaux à la fois, le décode avec le décodeur d'Android, garde 45 s au
+  milieu (mono, petit WAV dans le cache de l'app), l'analyse et l'efface. Rien à
+  télécharger soi-même, rien dans les fichiers du téléphone, pas de site intermédiaire.
+  Si YouTube refuse (vidéo privée, trop de demandes…), la fenêtre BPM s'ouvre avec noTube.
+  Code : `YtAudio.java` (sans Android, testé sur ordinateur par `YtAudioTest`),
+  `AudioPcm.java` (décodage), `ytAudio` dans le module natif.
+- **Avec noTube (secours)** : dans la fenêtre BPM, « Autoriser l'accès aux sons
   téléchargés » (une seule fois : autorisation « Musique et audio » d'Android — le
   sélecteur de dossiers d'Android interdit de choisir Téléchargements depuis Android 11),
   puis « 1. Télécharger le MP3 (noTube) ». De retour dans Melofinds, l'app trouve le MP3
@@ -242,7 +251,9 @@ arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion �
   (sinon l'app demande laquelle) et analysé ; la copie est effacée ensuite.
 - **Retour haptique** léger sur chaque action (selon le réglage « vibrations » du
   téléphone), plus marqué quand le BPM est trouvé. La version web Android vibre aussi.
-- **Sécurité** : permissions Internet, micro et « Musique et audio » (jamais photos,
+- **Sécurité** : le son YouTube direct ne va que dans le cache de l'app (effacé après
+  analyse, restes effacés au bout de 10 min) ; identifiant de vidéo vérifié ; 25 Mo max.
+  Permissions Internet, micro et « Musique et audio » (jamais photos,
   vidéos ni accès à tous les fichiers) ; l'app ne lit que des sons rangés dans
   Téléchargements, et ne supprime qu'un son de Téléchargements qu'elle vient d'analyser et
   qui correspond à la prod, par la demande officielle d'Android.

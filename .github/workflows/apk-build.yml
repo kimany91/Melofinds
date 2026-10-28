@@ -70,6 +70,21 @@ jobs:
           echo "APK_KEYSTORE=$d/release.jks" >> "$GITHUB_ENV"
           echo "APK_KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
 
+      - name: Tests (sans réseau)
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew testReleaseUnitTest --no-daemon
+
+      # Vraie vidéo YouTube depuis les serveurs de GitHub (souvent bloqués par YouTube :
+      # indicatif seulement, le téléphone passe par sa propre connexion)
+      - name: Essai du son YouTube direct (indicatif)
+        continue-on-error: true
+        working-directory: android
+        env:
+          MF_NET_TEST: '1'
+        run: ./gradlew testReleaseUnitTest --rerun --no-daemon --tests '*YtAudioTest*'
+
       - name: Construire l'APK
         working-directory: android
         run: |

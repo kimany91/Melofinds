@@ -21,6 +21,8 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // NewPipe Extractor (son des vidéos YouTube, libre et gratuit)
+        maven { url 'https://jitpack.io' }
     }
 }
 
