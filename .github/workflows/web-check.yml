@@ -1,0 +1,44 @@
+# Vérifie l'app web à chaque changement : tests du moteur, puis Tunebat interrogé comme
+# le ferait le navigateur depuis le site de l'app (en-tête Origin de GitHub Pages) pour
+# savoir si le bouton Tunebat peut marcher sans le PC.
+name: App web (tests)
+
+on:
+  push:
+    paths:
+      - 'artifact/**'
+      - 'src/**'
+      - 'test/**'
+      - '.github/workflows/web-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tests du moteur
+        run: npm test
+      - name: Tunebat depuis le navigateur (CORS)
+        run: |
+          for q in "nemzzz" "luther type beat"; do
+            echo "=== recherche : $q"
+            curl -sS -m 20 -D headers.txt -o body.json \
+              -H "Origin: https://kimany91.github.io" -H "Referer: https://kimany91.github.io/" \
+              -H "Accept: application/json" \
+              -H "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" \
+              "https://api.tunebat.com/api/tracks/search?term=$(node -e 'console.log(encodeURIComponent(process.argv[1]))' "$q")" || true
+            head -1 headers.txt || true
+            grep -i "access-control\|content-type\|cf-\|server:" headers.txt || echo "(aucun en-tête CORS)"
+            node -e 'try{const j=require("./body.json");const it=j?.data?.items||[];console.log("morceaux :",it.length,it[0]?JSON.stringify({n:it[0].n,b:it[0].b,k:it[0].k}):"")}catch(e){console.log("réponse non JSON :",require("fs").readFileSync("body.json","utf8").slice(0,200))}' || true
+            echo "=== pré-vol (OPTIONS)"
+            curl -sS -m 20 -o /dev/null -D - -X OPTIONS \
+              -H "Origin: https://kimany91.github.io" -H "Access-Control-Request-Method: GET" \
+              "https://api.tunebat.com/api/tracks/search?term=x" | grep -i "^HTTP\|access-control" || true
+          done
