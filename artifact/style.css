@@ -887,5 +887,5 @@ body.mobile .chan-txt b { font-size: 17px; }
 
 /* Mini-jeu pendant la recherche (la note 🎵 qui saute) */
 .note-game { position: relative; margin: 10px 0 4px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel-2); overflow: hidden; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
-.note-game canvas { display: block; width: 100%; height: 150px; cursor: pointer; }
+.note-game canvas { display: block; width: 100%; height: 240px; cursor: pointer; }
 .note-game-x { position: absolute; top: 6px; left: 8px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; }

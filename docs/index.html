@@ -910,7 +910,7 @@ body.mobile .chan-txt b { font-size: 17px; }
 
 /* Mini-jeu pendant la recherche (la note 🎵 qui saute) */
 .note-game { position: relative; margin: 10px 0 4px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel-2); overflow: hidden; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
-.note-game canvas { display: block; width: 100%; height: 150px; cursor: pointer; }
+.note-game canvas { display: block; width: 100%; height: 240px; cursor: pointer; }
 .note-game-x { position: absolute; top: 6px; left: 8px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; }
 
 </style>
@@ -1019,7 +1019,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 28/10/2026 à 12:22</p>
+    <p class="build-stamp">Version du 28/10/2026 à 12:32</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -6678,12 +6678,12 @@ async function runSearch(first) {
 // Mini-jeu pendant la recherche (façon dinosaure de Chrome) : tu es une note 🎵 qui saute
 // par-dessus des barres d'égaliseur ; plus loin, des bémols volent (reste au sol dessous).
 // Toucher / espace / flèche du haut = sauter. Record gardé dans ce navigateur.
+// Le jeu se ferme dès que la recherche est finie.
 const noteGame = (() => {
   const box = () => $('#noteGame');
   let canvas = null; let ctx = null; let raf = 0; let last = 0;
-  let W = 360; let H = 150; let dpr = 1;
+  let W = 360; let H = 240; let dpr = 1;
   let st = 'idle'; // idle | run | over
-  let searchDone = false;
   let me; let obs; let speed; let dist; let spawnIn; let flash; let deco; let shownBest;
   const GROUND = () => H - 26;
   const best = () => Number(local.get('noteBest', 0)) || 0;
@@ -6692,15 +6692,15 @@ const noteGame = (() => {
     return { text: cs.getPropertyValue('--text').trim() || '#e8e6f0', muted: cs.getPropertyValue('--muted').trim() || '#8b879b', line: cs.getPropertyValue('--line-2').trim() || '#33303d' };
   };
   const reset = () => {
-    me = { y: 0, vy: 0, h: 26, w: 20 };
+    me = { y: 0, vy: 0, h: 32, w: 24 };
     obs = []; speed = 260; dist = 0; spawnIn = 0.8; flash = 0;
-    deco = Array.from({ length: 6 }, (_, i) => ({ x: (i + 0.5) * W / 6, y: 18 + ((i * 37) % 50), s: 0.25 + ((i * 13) % 5) / 10 }));
+    deco = Array.from({ length: 8 }, (_, i) => ({ x: (i + 0.5) * W / 8, y: 26 + ((i * 37) % 110), s: 0.25 + ((i * 13) % 5) / 10 }));
   };
   const size = () => {
     const b = box();
     if (!b || !canvas) return;
     W = Math.max(260, Math.min(720, b.clientWidth || 360));
-    H = 150;
+    H = 240;
     dpr = Math.min(3, window.devicePixelRatio || 1);
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     canvas.style.height = `${H}px`;
@@ -6709,20 +6709,20 @@ const noteGame = (() => {
   const jump = () => {
     if (st === 'over') { if (performance.now() - flash > 450) { reset(); st = 'run'; haptic('tap'); } return; }
     if (st === 'idle') { reset(); st = 'run'; }
-    if (me.y === 0) { me.vy = 560; haptic('tap'); }
+    if (me.y === 0) { me.vy = 640; haptic('tap'); }
   };
   const spawn = () => {
     const s = Math.floor(dist / 10);
     if (s > 350 && Math.random() < 0.28) {
-      obs.push({ kind: 'fly', x: W + 20, w: 22, h: 22, y: 34 + Math.random() * 8 }); // au-dessus d'une note au sol
+      obs.push({ kind: 'fly', x: W + 20, w: 26, h: 26, y: 42 + Math.random() * 10 }); // au-dessus d'une note au sol
     } else {
       const n = s > 200 && Math.random() < 0.35 ? 2 : 1;
-      for (let i = 0; i < n; i++) obs.push({ kind: 'bar', x: W + 20 + i * 18, w: 12 + Math.random() * 6, h: 22 + Math.random() * (s > 150 ? 26 : 16), y: 0 });
+      for (let i = 0; i < n; i++) obs.push({ kind: 'bar', x: W + 20 + i * 21, w: 14 + Math.random() * 7, h: 26 + Math.random() * (s > 150 ? 34 : 20), y: 0 });
     }
     spawnIn = (0.75 + Math.random() * 0.9) * (300 / speed) + 0.25;
   };
   const hit = (o) => {
-    const px = 46; const py = me.y; // note : x 46-66, de py à py + 26 au-dessus du sol
+    const px = 46; const py = me.y; // note : x 46-70, de py à py + 32 au-dessus du sol
     const ox = o.x; const oy = o.y;
     return px + me.w - 4 > ox && px + 4 < ox + o.w && py + 3 < oy + o.h && py + me.h - 4 > oy;
   };
@@ -6731,7 +6731,7 @@ const noteGame = (() => {
     ctx.clearRect(0, 0, W, H);
     const g = GROUND();
     // décor : petites notes qui défilent lentement
-    ctx.globalAlpha = 0.18; ctx.fillStyle = c.muted; ctx.font = '14px system-ui, sans-serif';
+    ctx.globalAlpha = 0.18; ctx.fillStyle = c.muted; ctx.font = '16px system-ui, sans-serif';
     for (const d of deco) ctx.fillText('♪', d.x, d.y + 10);
     ctx.globalAlpha = 1;
     // sol (portée)
@@ -6752,12 +6752,12 @@ const noteGame = (() => {
         ctx.lineTo(o.x + o.w - r, g - o.h); ctx.quadraticCurveTo(o.x + o.w, g - o.h, o.x + o.w, g - o.h + r); ctx.lineTo(o.x + o.w, g);
         ctx.fill();
       } else {
-        ctx.fillStyle = '#f59e0b'; ctx.font = 'bold 26px system-ui, sans-serif';
+        ctx.fillStyle = '#f59e0b'; ctx.font = 'bold 30px system-ui, sans-serif';
         ctx.fillText('♭', o.x + 3, g - o.y - 2);
       }
     }
     // la note
-    ctx.font = '28px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+    ctx.font = '34px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
     ctx.textBaseline = 'alphabetic';
     const wob = st === 'idle' ? Math.sin(performance.now() / 220) * 3 : 0;
     ctx.fillText('🎵', 42, g - me.y - 2 + wob);
@@ -6768,9 +6768,8 @@ const noteGame = (() => {
     ctx.textAlign = 'left';
     // messages
     ctx.fillStyle = c.text; ctx.textAlign = 'center'; ctx.font = '600 14px system-ui, sans-serif';
-    if (st === 'idle') ctx.fillText('Touche pour jouer pendant la recherche 🎶', W / 2, 52);
-    if (st === 'over') { ctx.fillText(searchDone ? 'Perdu ! Les résultats sont prêts ↓' : 'Perdu ! Touche pour rejouer', W / 2, 52); }
-    if (st === 'run' && searchDone) { ctx.fillStyle = '#22c55e'; ctx.fillText('Résultats prêts ↓', W / 2, 40); }
+    if (st === 'idle') ctx.fillText('Touche pour jouer pendant la recherche 🎶', W / 2, 70);
+    if (st === 'over') ctx.fillText('Perdu ! Touche pour rejouer', W / 2, 70);
     ctx.textAlign = 'left';
   };
   const step = (t) => {
@@ -6791,7 +6790,6 @@ const noteGame = (() => {
         st = 'over'; flash = performance.now(); haptic('warn');
         const sc = Math.floor(dist / 10);
         if (sc > best()) local.set('noteBest', sc);
-        if (searchDone) setTimeout(() => { if (st === 'over') close(); }, 1600);
       }
     }
     draw();
@@ -6803,7 +6801,6 @@ const noteGame = (() => {
   function open() {
     const b = box();
     if (!b) return;
-    searchDone = false;
     if (!canvas) {
       canvas = h('canvas', { role: 'img', 'aria-label': 'Mini-jeu pendant la recherche : touche pour faire sauter la note' });
       ctx = canvas.getContext('2d');
@@ -6823,10 +6820,10 @@ const noteGame = (() => {
     if (b) b.hidden = true;
     st = 'idle';
   }
-  // fin de la recherche : on ne coupe pas une partie en cours
+  // fin de la recherche : le jeu se ferme toujours (record gardé si la partie était belle)
   function done() {
-    searchDone = true;
-    if (st !== 'run') close();
+    if (st === 'run') { const sc = Math.floor(dist / 10); if (sc > best()) local.set('noteBest', sc); }
+    close();
   }
   return { open, done, close, state: () => ({ st, score: Math.floor((dist || 0) / 10), best: best() }) };
 })();

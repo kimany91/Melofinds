@@ -220,8 +220,8 @@ la description du beatmaker reste prioritaire. Les résultats s'affichent **en b
 Pendant qu'une recherche charge (web et APK), un petit jeu façon dinosaure de Chrome :
 tu es une note 🎵 qui saute (toucher, espace ou flèche du haut) par-dessus des barres
 d'égaliseur ; plus loin, des bémols ♭ volent (reste au sol dessous). La vitesse monte, le
-record est gardé. Si la recherche finit en pleine partie, « Résultats prêts ↓ » s'affiche
-et le jeu se range à la fin de la partie ; sinon il disparaît tout seul. ✕ pour le fermer.
+record est gardé. Le jeu se ferme dès que la recherche est finie (partie en cours ou
+non ; le record est gardé). ✕ pour le fermer avant.
 
 ## App Android (APK)
 
