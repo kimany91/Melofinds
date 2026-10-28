@@ -333,102 +333,12 @@ async function listenAndAnalyze(item, ui, seconds = 15) {
     return analyzeAudio(captureToMono(cap), cap.rate);
   } finally { release(); bpmJob.stop = null; }
 }
-// --- Analyse automatique sans son ni PC : un serveur cobalt (le tien, ou un dont le
-// propriétaire t'a donné une clé — les serveurs publics l'interdisent) télécharge l'audio
-// de la prod ; il est analysé EN MÉMOIRE puis oublié (rien n'est enregistré sur le téléphone).
-const cobaltCfg = () => { const c = local.get('cobalt', null); return c && /^https:\/\/[^\s]+$/.test(c.url || '') ? c : null; };
-const COBALT_ERR = {
-  'error.api.auth.key.missing': 'ce serveur demande une clé', 'error.api.auth.key.invalid': 'clé refusée par le serveur',
-  'error.api.auth.jwt.missing': 'ce serveur est protégé (vérification anti-robots) : il faut ton propre serveur ou une clé',
-  'error.api.rate_exceeded': 'trop de demandes d’un coup : réessaie dans une minute',
-  'error.api.youtube.login': 'YouTube bloque ce serveur pour l’instant', 'error.api.content.video.unavailable': 'vidéo indisponible',
-  'error.api.content.too_long': 'vidéo trop longue pour ce serveur',
-};
-async function cobaltAudio(item, c = cobaltCfg()) {
-  if (!c) throw { code: 'cobalt_none', message: 'pas de serveur réglé' };
-  const headers = { accept: 'application/json', 'content-type': 'application/json', ...(c.key ? { authorization: `Api-Key ${c.key}` } : {}) };
-  let res;
-  try {
-    res = await fetch(c.url, { method: 'POST', headers, body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${ytIdOf(item)}`, downloadMode: 'audio', audioFormat: 'mp3', audioBitrate: '64', disableMetadata: true }) });
-  } catch { throw { code: 'cobalt', message: 'serveur injoignable depuis ce navigateur (adresse, réseau ou réglage CORS)' }; }
-  const b = await res.json().catch(() => ({}));
-  const link = b.status === 'tunnel' || b.status === 'redirect' ? b.url : b.status === 'local-processing' && Array.isArray(b.tunnel) ? b.tunnel[0] : null;
-  if (!link || !/^https?:\/\//.test(link)) {
-    const code = String(b?.error?.code || '');
-    throw { code: 'cobalt', message: COBALT_ERR[code] || (code ? code.replace(/^error\.api\./, '') : `réponse ${res.status}`) };
-  }
-  const r = await fetch(link).catch(() => null);
-  if (!r?.ok) throw { code: 'cobalt', message: `téléchargement refusé (${r?.status || 'réseau'})` };
-  const blob = await r.blob();
-  if (!blob.size || blob.size > 30e6) throw { code: 'cobalt', message: 'fichier vide ou trop lourd' };
-  return blob; // jamais enregistré : analysé puis oublié
-}
-async function cobaltAnalyze(item, ui) {
-  ui.say('Téléchargement de la prod (sans son)…');
-  try {
-    const blob = await cobaltAudio(item);
-    return await analyzeFile(item, blob, ui);
-  } catch (e) {
-    ui.say(`Analyse automatique impossible : ${e?.message || 'erreur'}`);
-    return null;
-  }
-}
-// Résultats de recherche sans BPM ni clé : analysés tout seuls, un à la fois (30 par session).
-const autoBpm = { seen: new Set(), n: 0 };
-function scheduleAutoBpm(rows) {
-  const c = cobaltCfg();
-  if (!WEB || !c || c.auto === false || navigator.connection?.saveData) return;
-  for (const r of rows) {
-    const item = r._item;
-    const id = ytIdOf(item);
-    if (!id || autoBpm.seen.has(id) || autoBpm.n >= 30 || (r.bpm && r.key) || tbFor(id) || (tbCache[id]?.cobaltFail && Date.now() - tbCache[id].at < 864e5)) continue;
-    autoBpm.seen.add(id);
-    autoBpm.n++;
-    autoQueue = autoQueue.then(async () => {
-      await waitFor(() => !bpmJob.id, 120000);
-      if (tbFor(id)) return;
-      bpmJob.id = item.id;
-      syncTbUi();
-      try {
-        const res = await analyzeFile(item, await cobaltAudio(item), { say() {}, level() {} });
-        if (res) keepAnalysis(item, res, 'automatique');
-      } catch { tbStore(id, { cobaltFail: true, at: Date.now() }); } finally { bpmJob.id = null; syncTbUi(); }
-    }).catch(() => {});
-  }
-}
-function cobaltSettings(onSaved) {
-  const c = cobaltCfg() || {};
-  const url = h('input', { type: 'url', placeholder: 'https://ton-serveur-cobalt…', value: c.url || '', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Adresse du serveur cobalt' });
-  const key = h('input', { type: 'text', placeholder: 'Clé (si le serveur en demande une)', value: c.key || '', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Clé du serveur' });
-  const auto = h('input', { type: 'checkbox', checked: c.auto !== false });
-  const msg = h('p', { class: 'hint' }, '');
-  const save = async (test) => {
-    const u = url.value.trim().replace(/\/+$/, '/');
-    if (!u) { local.set('cobalt', null); msg.textContent = 'Analyse automatique coupée.'; onSaved?.(); return; }
-    if (!/^https:\/\//.test(u)) { msg.textContent = 'L’adresse doit commencer par https://'; return; }
-    const cfg = { url: u, key: key.value.trim(), auto: auto.checked };
-    if (test) {
-      msg.textContent = 'Test du serveur…';
-      try {
-        const info = await (await fetch(u, { headers: { accept: 'application/json' } })).json();
-        if (!info?.cobalt) throw new Error();
-        if (Array.isArray(info.cobalt.services) && !info.cobalt.services.includes('youtube')) { msg.textContent = 'Ce serveur ne prend pas YouTube.'; return; }
-        if (info.cobalt.turnstileSitekey && !cfg.key) msg.textContent = 'Serveur protégé par une vérification anti-robots : il faudra une clé. ';
-        else msg.textContent = `Serveur cobalt ${info.cobalt.version || ''} joignable. `;
-      } catch { msg.textContent = 'Pas de réponse cobalt à cette adresse (ou CORS refusé). '; return; }
-    }
-    local.set('cobalt', cfg);
-    msg.textContent += 'Enregistré.';
-    onSaved?.();
-  };
-  return h('details', { class: 'cobalt-set', open: !c.url },
-    h('summary', {}, c.url ? 'Analyse automatique : réglée' : 'Analyse automatique (sans son, sans PC)'),
-    h('p', { class: 'hint' }, 'L’app télécharge la prod en mémoire avec un serveur cobalt, l’analyse puis l’oublie, toute seule pour chaque résultat sans BPM. Les serveurs cobalt publics l’interdisent : utilise le tien (cobalt s’installe en quelques minutes, par exemple sur Railway) ou demande une clé à son propriétaire.'),
-    url, key,
-    h('label', { class: 'cobalt-auto' }, auto, ' Analyser tout seul les résultats de recherche'),
-    h('div', { class: 'd-actions' }, h('button', { type: 'button', class: 'ghost', onclick: () => save(true) }, 'Tester et enregistrer')),
-    msg);
-}
+// --- Sans son ni PC : le MP3 de la prod, téléchargé avec noTube (gratuit, sans compte,
+// sans installation). Son astuce officielle : remplacer « youtube.com » par son domaine dans
+// le lien lance le téléchargement du MP3. L'app ne peut pas le faire à ta place (un site
+// n'a pas le droit d'en piloter un autre) : un appui pour télécharger, un pour analyser.
+const NOTUBE = 'https://notube.lol';
+const notubeUrl = (item) => `${NOTUBE}/watch?v=${encodeURIComponent(ytIdOf(item))}`;
 
 // Copie d'écoute de la prod gardée sur ce téléphone (prods envoyées sur le PC) : analysée
 // sans jouer de son, même PC éteint. L'instru d'abord (pas de voix dessus).
@@ -466,11 +376,12 @@ function openBpmSheet(item) {
   const out = h('div', { class: 'bpm-out', 'aria-live': 'polite' });
   const status = h('p', { class: 'bpm-status' }, '');
   const meter = h('div', { class: 'bpm-meter', hidden: true }, h('i'));
-  const listenBtn = h('button', { type: 'button', class: 'primary' }, icon('mic'), 'Écouter la prod');
+  const listenBtn = h('button', { type: 'button', class: 'ghost' }, icon('mic'), 'Écouter la prod');
   const fileIn = h('input', { type: 'file', accept: 'audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac', hidden: true });
   const fileBtn = h('button', { type: 'button', class: 'ghost' }, 'Choisir un fichier audio');
   const copyBtn = h('button', { type: 'button', class: 'primary', hidden: true }, 'Analyser la copie du PC (sans son)');
-  const autoBtn = h('button', { type: 'button', class: 'primary', hidden: !cobaltCfg() }, 'Analyser automatiquement (sans son)');
+  const dlBtn = h('a', { class: 'primary', href: notubeUrl(item), target: '_blank', rel: 'noopener noreferrer' }, '1. Télécharger le MP3 (noTube)');
+  const mp3Btn = h('button', { type: 'button', class: 'ghost' }, '2. Analyser le MP3');
   const ui = {
     say: (t) => { status.textContent = t; },
     level: (p) => { meter.hidden = false; meter.firstChild.style.width = `${Math.min(100, Math.round(p * 140))}%`; },
@@ -487,47 +398,54 @@ function openBpmSheet(item) {
     if (bpmJob.id) return;
     bpmJob.id = item.id;
     syncTbUi();
-    listenBtn.disabled = true; fileBtn.disabled = true; copyBtn.disabled = true; autoBtn.disabled = true;
+    listenBtn.disabled = true; fileBtn.disabled = true; copyBtn.disabled = true; mp3Btn.disabled = true;
     try {
       const res = await job();
       if (res === null) return;
       if (!res || (!res.bpm && !res.key)) { ui.say('Pas assez de son exploitable : réessaie plus fort, ou avec un fichier'); return; }
-      keepAnalysis(item, res, job === listen ? 'micro' : job === copy ? 'copie du PC' : job === autoJob ? 'automatique' : 'fichier');
-      ui.say('Trouvé !');
+      const how = job === listen ? 'micro' : job === copy ? 'copie du PC' : 'fichier';
+      keepAnalysis(item, res, how);
+      ui.say(how === 'fichier' ? 'Trouvé ! Tu peux supprimer le MP3 de ton téléphone (Fichiers → Téléchargements) : le BPM et la clé sont gardés.' : 'Trouvé !');
       show();
     } finally {
       bpmJob.id = null;
       meter.hidden = true;
-      listenBtn.disabled = false; fileBtn.disabled = false; copyBtn.disabled = false; autoBtn.disabled = false;
+      listenBtn.disabled = false; fileBtn.disabled = false; copyBtn.disabled = false; mp3Btn.disabled = false;
       syncTbUi();
     }
   };
   const listen = () => listenAndAnalyze(item, ui);
   const copy = async () => { const b = await pcCopyFor(item); return b ? analyzeFile(item, b, ui) : (ui.say('Copie introuvable sur ce téléphone'), null); };
   copyBtn.addEventListener('click', () => run(copy));
-  const autoJob = () => cobaltAnalyze(item, ui);
-  autoBtn.addEventListener('click', () => run(autoJob));
-  pcCopyFor(item).then((b) => { if (b) { copyBtn.hidden = false; listenBtn.className = 'ghost'; } });
-  if (cobaltCfg()) listenBtn.className = 'ghost';
+  // étape 1 faite : on revient sur Melofinds → l'étape 2 passe en avant
+  let downloaded = false;
+  const onBack = () => {
+    if (document.visibilityState !== 'visible' || !downloaded || !$('#drawer').classList.contains('open')) return;
+    mp3Btn.className = 'primary';
+    dlBtn.className = 'ghost';
+    ui.say('MP3 téléchargé ? Touche « 2. Analyser le MP3 » et choisis-le (dossier Téléchargements).');
+  };
+  dlBtn.addEventListener('click', () => { downloaded = true; ui.say('noTube s’ouvre : télécharge le MP3, puis reviens ici.'); });
+  document.addEventListener('visibilitychange', onBack);
+  mp3Btn.addEventListener('click', () => fileIn.click());
+  pcCopyFor(item).then((b) => { if (b) { copyBtn.hidden = false; dlBtn.className = 'ghost'; } });
   listenBtn.addEventListener('click', () => run(listen));
   fileBtn.addEventListener('click', () => fileIn.click());
   fileIn.addEventListener('change', () => { const f = fileIn.files?.[0]; if (f) run(() => analyzeFile(item, f, ui)); fileIn.value = ''; });
   openDrawer('BPM et clé', [
     h('h3', { class: 'd-title' }, displayTitle(item.title)),
-    h('p', { class: 'muted', style: 'margin:0' }, 'Trois façons de trouver le BPM et la clé à partir du son de la prod :'),
-    h('ul', { class: 'bpm-ways' },
-      h('li', {}, h('b', {}, 'Sans son'), ' : choisis le fichier de la prod (souvent en téléchargement gratuit dans la description), ou envoie-la sur ton PC : j’analyse la copie gardée sur ce téléphone, même PC éteint.'),
-      h('li', {}, h('b', {}, 'Avec le son'), ' : je fais jouer la prod 15 secondes et je l’écoute au micro (son monté, sans écouteurs).')),
-    h('div', { class: 'd-actions' }, autoBtn, copyBtn, fileBtn, listenBtn, fileIn),
+    h('p', { class: 'muted', style: 'margin:0' }, 'Je trouve le BPM et la clé à partir du son de la prod, analysé sur ton téléphone.'),
+    h('div', { class: 'bpm-step' },
+      h('b', {}, 'Sans son, sans PC'), h('span', {}, 'Télécharge le MP3 avec noTube (gratuit, sans compte), reviens ici et choisis-le.'),
+      h('div', { class: 'd-actions' }, dlBtn, mp3Btn)),
+    h('div', { class: 'd-actions' }, copyBtn, fileBtn, listenBtn, fileIn),
+    h('p', { class: 'hint' }, 'Autres façons : « Choisir un fichier audio » (fichier déjà sur le téléphone), la copie du PC (prods envoyées sur ton PC, même éteint), ou « Écouter la prod » au micro (son monté, sans écouteurs).'),
     meter,
     status,
     out,
-    cobaltSettings(() => { autoBtn.hidden = !cobaltCfg(); if (cobaltCfg()) listenBtn.className = 'ghost'; }),
   ]);
-  drawerOnClose = () => { bpmJob.stop?.(); };
+  drawerOnClose = () => { bpmJob.stop?.(); document.removeEventListener('visibilitychange', onBack); };
   show();
-  // réglé et pas encore de résultat : l'analyse automatique part toute seule
-  if (cobaltCfg() && !tbFor(item.id) && !bpmJob.id) run(autoJob);
 }
 function refreshItem(item) {
   if (session?.items?.has(item.id)) renderResults();
@@ -2902,7 +2820,6 @@ function renderResults() {
     return;
   }
   grid.replaceChildren(...cards, ...skels);
-  scheduleAutoBpm(sorted.slice(0, 24));
 }
 
 function syncVerifiedPill() {
