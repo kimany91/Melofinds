@@ -1,6 +1,5 @@
-# Vérifie l'app web à chaque changement : tests du moteur, puis les services de BPM / clé
-# appelés comme le ferait le navigateur depuis le site de l'app (en-tête Origin de GitHub
-# Pages) : on voit s'ils répondent et s'ils autorisent le site (en-têtes CORS).
+# Vérifie l'app web à chaque changement : tests du moteur (licences, recherche, analyse
+# du BPM et de la clé à partir du son).
 name: App web (tests)
 
 on:
@@ -17,11 +16,7 @@ permissions:
 
 jobs:
   web:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
@@ -30,42 +25,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Tests du moteur
-        if: matrix.os == 'ubuntu-latest'
+      - name: Tests du moteur (licences, recherche, analyse BPM / clé du son)
         run: npm test
-      - name: BPM / clé depuis le navigateur (CORS)
-        run: |
-          ORIGIN="https://kimany91.github.io"
-          UA="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-          probe() {  # $1 = nom, $2 = adresse
-            echo "=== $1"
-            curl -sS -m 25 -D h.txt -o b.json -H "Origin: $ORIGIN" -H "Accept: application/json" -H "User-Agent: $UA" "$2" || true
-            head -1 h.txt || true
-            grep -i "access-control-allow-origin\|cf-mitigated\|content-type" h.txt || echo "(pas d'en-tête CORS)"
-            head -c 400 b.json; echo
-          }
-          probe "Tunebat (recherche)" "https://api.tunebat.com/api/tracks/search?term=nemzzz"
-          probe "ReccoBeats (recherche)" "https://api.reccobeats.com/v1/track/search?searchText=nemzzz&size=3"
-          ID=$(node -e 'try{const j=require("./b.json");const c=j.content||j.items||j.data||[];console.log((c[0]||{}).id||"")}catch{}')
-          echo "id ReccoBeats : $ID"
-          if [ -n "$ID" ]; then probe "ReccoBeats (BPM / clé)" "https://api.reccobeats.com/v1/track/$ID/audio-features"; fi
-      - name: ReccoBeats de bout en bout (code de l'app, vraie API)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          cat > rb-e2e.mjs <<'JS'
-          import { rbQueries, rbPick, rbFeatures, RB_API } from './src/core/tunebat.js';
-          const get = async (p, q = {}) => { const u = new URL(RB_API + p); for (const [k, v] of Object.entries(q)) u.searchParams.set(k, v);
-            const r = await fetch(u, { headers: { origin: 'https://kimany91.github.io', accept: 'application/json' } });
-            console.log(r.status, r.headers.get('access-control-allow-origin'), u.pathname); return r.json(); };
-          const ctx = { title: 'Nemzzz Type Beat "nemzzzjazz"', channel: 'shrugg' };
-          for (const q of rbQueries(ctx)) {
-            const pick = rbPick((await get('/track/search', { ...q, size: 25 })).content, ctx);
-            if (!pick) continue;
-            const f = rbFeatures(await get(`/track/${pick.id}/audio-features`));
-            console.log('trouvé :', pick.name, pick.artists.join(', '), JSON.stringify(f));
-            if (!f) process.exit(1);
-            process.exit(0);
-          }
-          console.log('rien trouvé'); process.exit(1);
-          JS
-          node rb-e2e.mjs

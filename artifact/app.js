@@ -211,8 +211,8 @@ async function copyText(text) {
 }
 
 // Analyse (avec cache par prod)
-// Tunebat : BPM / clé manquants, cherchés sur Tunebat (morceaux sortis sur Spotify).
-// Ce qui vient de Tunebat s'affiche en bleu. Résultats gardés dans ce navigateur.
+// BPM / clé manquants : trouvés à l'écoute de la prod (bouton BPM) ou par le PC (Tunebat).
+// Ils s'affichent en bleu. Résultats gardés dans ce navigateur.
 const tbCache = (() => { const c = local.get('tbCache', {}); return c && typeof c === 'object' ? c : {}; })();
 function tbFor(id) {
   const t = tbCache[id];
@@ -224,59 +224,20 @@ function tbStore(id, t) {
   if (ids.length > 800) for (const k of ids.slice(0, ids.length - 800)) delete tbCache[k];
   local.set('tbCache', tbCache);
 }
-// BPM / clé d'un morceau sorti sur Spotify, cherchés par le navigateur lui-même (sans le PC).
-// Tunebat bloque les navigateurs (protection Cloudflare) : l'app passe par ReccoBeats, même
-// catalogue Spotify, API ouverte aux sites web. Le PC, lui, utilise toujours Tunebat.
-// manual : bouton TB touché → on cherche même si une recherche a déjà échoué.
-async function rbGet(path, params = {}) {
-  const u = new URL(RB_API + path);
-  for (const [k, v] of Object.entries(params)) if (v != null && v !== '') u.searchParams.set(k, v);
-  const res = await fetch(u, { headers: { accept: 'application/json' } });
-  if (!res.ok) throw new Error(`reccobeats ${res.status}`);
-  return res.json();
-}
-async function tbLookup(item, { manual = false } = {}) {
-  if (!WEB || !item?.id) return null;
-  const c = tbCache[item.id];
-  if (!manual && c && (c.bpm || c.key || Date.now() - (c.at || 0) < 864e5)) return c;
-  if (tbLookup.busy?.has(item.id)) return null;
-  (tbLookup.busy ||= new Set()).add(item.id);
-  syncTbUi();
-  try {
-    const ctx = { title: item.title, channel: item.channel, duration: item.duration };
-    for (const q of rbQueries(ctx)) {
-      const body = await rbGet('/track/search', { ...q, size: 25 });
-      const pick = rbPick(body?.content, ctx);
-      if (!pick) continue;
-      const f = rbFeatures(await rbGet(`/track/${encodeURIComponent(pick.id)}/audio-features`));
-      if (!f) continue;
-      const t = { ...f, at: Date.now(), src: 'rb', name: pick.name.slice(0, 120), by: (pick.artists[0] || '').slice(0, 80), href: /^https:\/\/open\.spotify\.com\//.test(pick.href) ? pick.href : '' };
-      tbStore(item.id, t);
-      refreshItem(item);
-      return t;
-    }
-    const t = { none: true, at: Date.now() };
-    tbStore(item.id, t);
-    return t;
-  } catch {
-    const t = { fail: true, at: Date.now() };
-    if (!tbFor(item.id)) tbStore(item.id, t);
-    return t;
-  } finally {
-    tbLookup.busy.delete(item.id);
-    syncTbUi();
-  }
-}
+// BPM / clé calculés à partir du SON de la prod (src/core/audiokey.js), dans le navigateur :
+// l'app fait jouer la prod et l'écoute au micro, ou analyse un fichier audio choisi. Marche
+// pour toutes les prods (pas besoin qu'elles soient sorties sur Spotify) et sans le PC.
+const bpmJob = { id: null, stop: null };
 function tbState(id) {
-  if (tbLookup.busy?.has(id)) return 'busy';
+  if (bpmJob.id === id) return 'busy';
   const c = tbCache[id];
-  return c?.bpm || c?.key ? 'ok' : c?.none ? 'none' : c?.fail ? 'fail' : '';
+  return c?.bpm || c?.key ? 'ok' : '';
 }
-const TB_LABEL = { '': 'Chercher le BPM et la clé (morceaux sortis sur Spotify)', busy: 'Recherche du BPM et de la clé…', ok: 'BPM et clé trouvés (en bleu) : toucher pour chercher à nouveau', none: 'Pas trouvé : toucher pour réessayer', fail: 'Pas de réponse : toucher pour réessayer' };
+const TB_LABEL = { '': 'Trouver le BPM et la clé (écoute de la prod)', busy: 'Écoute en cours…', ok: 'BPM et clé trouvés (en bleu) : toucher pour réécouter' };
 function tbButton(item) {
   const st = tbState(item.id);
   return h('button', { type: 'button', class: `tb-btn${st ? ` ${st}` : ''}`, 'data-tb': item.id, 'aria-label': TB_LABEL[st], title: TB_LABEL[st],
-    onclick: (e) => { e.stopPropagation(); tbAsk(item); } }, 'TB');
+    onclick: (e) => { e.stopPropagation(); openBpmSheet(item); } }, 'BPM');
 }
 function syncTbUi() {
   $$('.tb-btn[data-tb]').forEach((b) => {
@@ -286,19 +247,144 @@ function syncTbUi() {
     b.title = TB_LABEL[st];
   });
 }
-async function tbAsk(item) {
-  if (tbLookup.busy?.has(item.id)) return;
-  const t = await tbLookup(item, { manual: true });
-  if (!t) return;
-  if (t.fail) { toast(navigator.onLine === false ? 'Pas de réseau : réessaie quand tu en as' : 'Le service de BPM n’a pas répondu : réessaie dans un moment'); return; }
-  if (t.none) { toast('Pas trouvé : cette prod n’est pas sortie sur Spotify (ou sous un autre nom). Regarde la description, ou vérifie sur Tunebat depuis la fiche.', { ms: 6000 }); return; }
-  // ce que la description disait déjà reste prioritaire ; Tunebat complète, en bleu
-  let own = null;
-  try { own = analyzeVideo({ id: item.id, title: item.title, description: item.description || '' }, null); } catch { /* sans analyse */ }
-  const found = [t.bpm ? `${t.bpm} BPM` : null, t.key].filter(Boolean).join(' · ');
-  const kept = [own?.bpm && t.bpm && own.bpm !== t.bpm ? `${own.bpm} BPM` : null, own?.key && t.key && own.key !== t.key ? own.key : null].filter(Boolean).join(' · ');
-  const from = t.name ? ` (« ${t.name} »${t.by ? ` de ${t.by}` : ''}, sur Spotify)` : '';
-  toast(kept ? `Trouvé : ${found}${from}. La description dit ${kept} : je garde la description` : `Trouvé : ${found}${from}`, { ms: 6000 });
+function bpmText(t) {
+  return [t.bpm ? `${t.bpm} BPM${t.alt ? ` (ou ${t.alt})` : ''}` : null, t.key ? `${t.key}${t.keyAlt ? ` (mêmes notes que ${t.keyAlt})` : ''}` : null].filter(Boolean).join(' · ');
+}
+// Résultat d'analyse → gardé (en bleu). La description du beatmaker reste prioritaire.
+function keepAnalysis(item, res, how) {
+  if (!res || (!res.bpm && !res.key)) return null;
+  const sure = res.keyConf >= 0.3;
+  const t = { bpm: res.bpm, key: res.key, alt: res.bpmAlt, keyAlt: res.keyAlt, unsure: !sure, at: Date.now(), src: 'audio', how };
+  tbStore(item.id, t);
+  syncTbUi();
+  refreshItem(item);
+  return t;
+}
+function monoOf(buf) {
+  const n = buf.length;
+  const out = new Float32Array(n);
+  for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < n; i++) out[i] += d[i] / buf.numberOfChannels; }
+  return out;
+}
+async function analyzeFile(item, file, ui) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) { ui.say('Ce navigateur ne sait pas lire l’audio'); return null; }
+  if (file.size > 80e6) { ui.say('Fichier trop lourd (80 Mo max)'); return null; }
+  ui.say('Lecture du fichier…');
+  const ctx = new AC();
+  try {
+    const buf = await ctx.decodeAudioData(await file.arrayBuffer());
+    // 45 s au milieu du morceau (l'intro et la fin sont souvent vides)
+    const mono = monoOf(buf);
+    const len = Math.min(mono.length, 45 * buf.sampleRate);
+    const from = Math.max(0, Math.floor((mono.length - len) / 2));
+    ui.say('Analyse…');
+    await wait(30);
+    return analyzeAudio(mono.subarray(from, from + len), buf.sampleRate);
+  } catch {
+    ui.say('Fichier illisible : prends un MP3, WAV ou M4A');
+    return null;
+  } finally { try { ctx.close(); } catch { /* déjà fermé */ } }
+}
+async function listenAndAnalyze(item, ui, seconds = 15) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!navigator.mediaDevices?.getUserMedia || !AC) { ui.say('Ce navigateur ne sait pas utiliser le micro'); return null; }
+  let ctx = null; let stream = null; let cap = null; let raf = 0; let stopped = false;
+  bpmJob.stop = () => { stopped = true; };
+  const release = () => {
+    cancelAnimationFrame(raf);
+    stream?.getTracks().forEach((t) => t.stop());
+    try { cap?.node?.disconnect(); } catch { /* déjà débranché */ }
+    try { ctx?.close(); } catch { /* déjà fermé */ }
+  };
+  try {
+    try { ctx = new AC(); ctx.resume().catch(() => {}); } catch { ctx = null; }
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints(false) }); } catch (e) {
+      ui.say(e?.name === 'NotAllowedError' ? 'Micro refusé : autorise-le dans les réglages du navigateur' : 'Micro introuvable');
+      return null;
+    }
+    cap = await setupCapture(ctx, stream);
+    if (!cap) { ui.say('Ce navigateur ne sait pas capter le micro'); return null; }
+    ui.say('Chargement de la prod…');
+    if (!(await loadBeat(item)) || stopped) { if (!stopped) ui.say('La prod ne se lance pas ici'); return null; }
+    // au cœur de la prod (l'intro est souvent vide)
+    const dur = Number(item.duration) || 0;
+    seekBeat(dur > 60 ? Math.round(dur * 0.3) : Math.max(0, playerNow()));
+    ytSend('setVolume', [100]);
+    ytSend('playVideo');
+    if (!(await waitFor(() => isPlaying(), 8000)) || stopped) { if (!stopped) ui.say('La prod ne démarre pas : réessaie'); return null; }
+    await wait(500);
+    // niveau du micro (pour dire si on n'entend rien)
+    const an = ctx.createAnalyser();
+    an.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    let loud = 0;
+    const meter = () => { an.getFloatTimeDomainData(buf); let p = 0; for (const v of buf) p = Math.max(p, Math.abs(v)); loud = Math.max(loud, p); ui.level(p); raf = requestAnimationFrame(meter); };
+    meter();
+    cap.start();
+    for (let left = seconds; left > 0 && !stopped; left--) { ui.say(`J’écoute la prod… ${left} s`); await wait(1000); }
+    await cap.stop();
+    ytSend('pauseVideo');
+    if (stopped) return null;
+    if (loud < 0.02) { ui.say('Je n’entends pas la prod : monte le son et enlève les écouteurs, puis réessaie'); return null; }
+    ui.say('Analyse…');
+    await wait(30);
+    return analyzeAudio(captureToMono(cap), cap.rate);
+  } finally { release(); bpmJob.stop = null; }
+}
+function openBpmSheet(item) {
+  const out = h('div', { class: 'bpm-out', 'aria-live': 'polite' });
+  const status = h('p', { class: 'bpm-status' }, '');
+  const meter = h('div', { class: 'bpm-meter', hidden: true }, h('i'));
+  const listenBtn = h('button', { type: 'button', class: 'primary' }, icon('mic'), 'Écouter la prod');
+  const fileIn = h('input', { type: 'file', accept: 'audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac', hidden: true });
+  const fileBtn = h('button', { type: 'button', class: 'ghost' }, 'Choisir un fichier audio');
+  const ui = {
+    say: (t) => { status.textContent = t; },
+    level: (p) => { meter.hidden = false; meter.firstChild.style.width = `${Math.min(100, Math.round(p * 140))}%`; },
+  };
+  const show = (t) => {
+    const cur = tbFor(item.id);
+    out.replaceChildren(...(cur ? [
+      h('div', { class: 'bpm-res' }, h('b', { class: 'tb' }, bpmText(cur)), cur.unsure ? h('span', { class: 'bpm-warn' }, 'Clé à confirmer (son peu net)') : null),
+      h('p', { class: 'hint' }, 'Estimé à l’écoute, en bleu sur la prod. La description du beatmaker reste prioritaire si elle donne le BPM ou la clé. « Mêmes notes » : tu peux chanter dans l’une ou l’autre.'),
+    ] : []));
+    if (t === null) return;
+  };
+  const run = async (job) => {
+    if (bpmJob.id) return;
+    bpmJob.id = item.id;
+    syncTbUi();
+    listenBtn.disabled = true; fileBtn.disabled = true;
+    try {
+      const res = await job();
+      if (res === null) return;
+      if (!res || (!res.bpm && !res.key)) { ui.say('Pas assez de son exploitable : réessaie plus fort, ou avec un fichier'); return; }
+      keepAnalysis(item, res, job === listen ? 'micro' : 'fichier');
+      ui.say('Trouvé !');
+      show();
+    } finally {
+      bpmJob.id = null;
+      meter.hidden = true;
+      listenBtn.disabled = false; fileBtn.disabled = false;
+      syncTbUi();
+    }
+  };
+  const listen = () => listenAndAnalyze(item, ui);
+  listenBtn.addEventListener('click', () => run(listen));
+  fileBtn.addEventListener('click', () => fileIn.click());
+  fileIn.addEventListener('change', () => { const f = fileIn.files?.[0]; if (f) run(() => analyzeFile(item, f, ui)); fileIn.value = ''; });
+  openDrawer('BPM et clé', [
+    h('h3', { class: 'd-title' }, displayTitle(item.title)),
+    h('p', { class: 'muted', style: 'margin:0' }, 'Je fais jouer la prod 15 secondes et je l’écoute avec le micro du téléphone pour trouver son BPM et sa clé. Monte le son et enlève les écouteurs.'),
+    h('div', { class: 'd-actions' }, listenBtn, fileBtn, fileIn),
+    meter,
+    status,
+    out,
+  ]);
+  drawerOnClose = () => { bpmJob.stop?.(); };
+  show();
 }
 function refreshItem(item) {
   if (session?.items?.has(item.id)) renderResults();
@@ -325,6 +411,7 @@ function analyzed(item, plan) {
     };
   }
   if (tb) {
+    r.tbSrc = tb.src === 'audio' ? 'écouté' : 'Tunebat';
     if (!r.bpm && tb.bpm) { r.bpm = tb.bpm; r.bpmTb = true; }
     if (!r.key && tb.key) { r.key = tb.key; r.keyTb = true; }
   }
@@ -380,8 +467,8 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
     h('span', { class: 'lic-chip' }, chipLabel(L)),
     item.status === 'unread' ? h('span', { class: 'unread-chip' }, 'non vérifiée') : null,
     h('span', { class: 'play' }, icon('play'), icon('pause'), h('span', { class: 'eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'))),
-    h('span', { class: 'cover-meta' }, style, r.key ? h('small', { class: r.keyTb ? 'tb' : null, title: r.keyTb ? 'Trouvé avec Tunebat' : null }, r.key) : null),
-    r.bpm ? h('span', { class: `cover-bpm${r.bpmTb ? ' tb' : ''}`, title: r.bpmTb ? 'Trouvé avec Tunebat' : null }, r.bpm, h('small', {}, r.bpmTb ? 'BPM · TB' : 'BPM')) : h('span', { class: 'cover-bpm none' }, 'BPM ?')));
+    h('span', { class: 'cover-meta' }, style, r.key ? h('small', { class: r.keyTb ? 'tb' : null, title: r.keyTb ? `Trouvé : ${r.tbSrc}` : null }, r.key) : null),
+    r.bpm ? h('span', { class: `cover-bpm${r.bpmTb ? ' tb' : ''}`, title: r.bpmTb ? `Trouvé : ${r.tbSrc}` : null }, r.bpm, h('small', {}, r.bpmTb ? (r.tbSrc === 'écouté' ? 'BPM · ≈' : 'BPM · TB') : 'BPM')) : h('span', { class: 'cover-bpm none' }, 'BPM ?')));
   const heart = h('button', { type: 'button', class: `heart${isSaved(item.id) ? ' on' : ''}`, 'data-id': item.id, 'aria-label': 'Ajouter aux favoris', 'aria-pressed': String(isSaved(item.id)) }, icon('heart'));
   heart.addEventListener('click', (e) => { e.stopPropagation(); toggleSaved(item); });
   card.append(heart);
@@ -402,7 +489,7 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
       ratio != null ? h('span', { class: `ratio${tier}`, title: `${item.likeCount.toLocaleString('fr-FR')} likes pour ${(item.viewCount ?? parseCount(item.views)).toLocaleString('fr-FR')} vues` }, icon('heart'), `${fmtPct(ratio)} likes`) : null,
       h('span', { class: 'more' }, 'Détails →')));
   card.append(h('div', { class: 'card-links' },
-    WEB ? tbButton(item) : null,
+    WEB && vid ? tbButton(item) : null,
     WEB && vid ? pcButton(item) : null,
     h('a', { class: 'yt-link', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Ouvrir « ${item.title} » sur YouTube` }, 'YouTube', icon('ext'))));
   const open = () => openBeat(item, plan);
@@ -1534,8 +1621,8 @@ function verdictBox(L, unread) {
 function beatDetails(item, r, terms = []) {
   const L = r.license;
   const facts = [
-    r.bpm ? h('span', { class: `fact mono${r.bpmTb ? ' tb' : ''}`, title: r.bpmTb ? 'Trouvé avec Tunebat' : null }, `${r.bpm} BPM`, r.bpmTb ? h('small', {}, ' · Tunebat') : null) : null,
-    r.key ? h('span', { class: `fact mono${r.keyTb ? ' tb' : ''}`, title: r.keyTb ? 'Trouvé avec Tunebat' : null }, r.key, r.keyTb ? h('small', {}, ' · Tunebat') : null) : null,
+    r.bpm ? h('span', { class: `fact mono${r.bpmTb ? ' tb' : ''}`, title: r.bpmTb ? `Trouvé : ${r.tbSrc}` : null }, `${r.bpm} BPM`, r.bpmTb ? h('small', {}, ` · ${r.tbSrc}`) : null) : null,
+    r.key ? h('span', { class: `fact mono${r.keyTb ? ' tb' : ''}`, title: r.keyTb ? `Trouvé : ${r.tbSrc}` : null }, r.key, r.keyTb ? h('small', {}, ` · ${r.tbSrc}`) : null) : null,
     item.duration > 0 ? h('span', { class: 'fact mono' }, fmtTime(item.duration)) : null,
     L.creditRequired ? h('span', { class: 'fact' }, 'Crédit obligatoire') : null,
     ...(r.styles || []).map((s) => h('span', { class: 'fact' }, s.label)),
@@ -1550,7 +1637,6 @@ function beatDetails(item, r, terms = []) {
 function openBeat(item, plan) {
   const r = analyzed(item, plan);
   if (needsDesc(item)) pcAskDesc([item]);
-  if (!r.bpm || !r.key) tbLookup(item);
   const saveBtn = h('button', { type: 'button', class: `ghost${isSaved(item.id) ? ' on' : ''}` }, icon('heart'), isSaved(item.id) ? 'Dans tes favoris' : 'Ajouter aux favoris');
   saveBtn.addEventListener('click', () => {
     const on = toggleSaved(item);
@@ -1568,15 +1654,15 @@ function openBeat(item, plan) {
       saveBtn,
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => openStudio(item) }, icon('mic'), 'Rec dessus') : null,
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc(item) }, icon('down'), 'Sur mon PC') : null,
-      WEB ? h('button', { type: 'button', class: 'ghost tb-ghost', onclick: () => tbAsk(item) }, 'Trouver BPM et clé') : null,
+      WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost tb-ghost', onclick: () => openBpmSheet(item) }, 'Trouver BPM et clé') : null,
       item.url ? h('button', { type: 'button', class: 'ghost', onclick: () => copyText(item.url) }, 'Copier le lien') : null),
     WEB ? h('a', { class: 'link d-yt', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube', icon('ext')) : null,
     WEB ? h('a', { class: 'link d-yt', href: `https://tunebat.com/Search?q=${encodeURIComponent(`${beatName(item.title)} ${item.channel || ''}`.trim())}`, target: '_blank', rel: 'noopener' }, 'Vérifier sur Tunebat', icon('ext')) : null,
-    WEB && tbFor(item.id)?.name ? h('p', { class: 'hint' }, `BPM et clé en bleu : morceau « ${tbFor(item.id).name} »${tbFor(item.id).by ? ` de ${tbFor(item.id).by}` : ''} sur Spotify (via ReccoBeats).`) : null,
+    WEB && tbFor(item.id)?.src === 'audio' ? h('p', { class: 'hint' }, `En bleu, estimé à l’écoute : ${bpmText(tbFor(item.id))}${tbFor(item.id).unsure ? ' (clé à confirmer)' : ''}.`) : null,
     ...beatDetails(item, r, findTerms()),
     claude,
   ]);
-  $('#drawer').dataset.item = item.id; // pour l'actualiser quand Tunebat répond
+  $('#drawer').dataset.item = item.id; // pour l'actualiser quand un BPM / une clé arrive
 }
 
 // ---------------------------------------------------------------------------

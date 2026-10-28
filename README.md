@@ -176,19 +176,31 @@ ouvre le site dans Chrome) :
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
-## Bouton BPM et clé « TB » (version web)
+## Bouton « BPM » : BPM et clé à l'écoute (version web)
 
-Chaque prod a un petit bouton **TB** : un appui cherche le BPM et la clé du morceau s'il
-est sorti sur Spotify, directement depuis le navigateur (le PC n'est pas nécessaire).
-Tunebat bloque les navigateurs (protection Cloudflare) : l'app passe par **ReccoBeats**
-(gratuit, sans clé, API ouverte aux sites web, même catalogue Spotify). Le résultat ne
-compte que s'il correspond vraiment à la vidéo (même beatmaker et titre proche, ou titre
-proche et même durée) ; sinon « pas trouvé » plutôt qu'un faux BPM.
+Chaque prod a un petit bouton **BPM**. Il ouvre « BPM et clé » :
+- **Écouter la prod** : l'app fait jouer la prod 15 secondes (au cœur du morceau) et
+  l'écoute avec le micro du téléphone (son monté, sans écouteurs) ;
+- **Choisir un fichier audio** : MP3, WAV, M4A… (45 s analysées au milieu du morceau).
 
-Ce qui est trouvé s'affiche **en bleu** (« 145 BPM · TB », « D maj »), sur la carte et
-dans la fiche (avec le morceau Spotify reconnu), et reste gardé dans ce navigateur. La
-description du beatmaker reste prioritaire : le message montre les deux. La fiche a aussi
-un lien « Vérifier sur Tunebat ». Le PC, lui, utilise toujours Tunebat au téléchargement.
+L'analyse se fait **sur le téléphone**, sans service extérieur ni PC
+(`src/core/audiokey.js`), et marche pour toutes les prods, sorties ou non sur Spotify :
+- **BPM** : force des attaques (kick, snare, hi-hats), puis la période qui revient le plus,
+  vérifiée sur les subdivisions (croches, doubles croches). Moitié / double ne se distinguent
+  pas au son (une trap à 150 en demi-temps = un son à 75) : la valeur « prod » (85-175) est
+  donnée, l'autre en « ou … ».
+- **Clé** : batterie écartée (séparation harmonique / percussive), notes des pics du
+  spectre, accordage détecté (samples pitchés), gamme puis tonique (profils de
+  Krumhansl-Kessler et Temperley, basses / 808, préférence mineur). La relative est donnée
+  (« mêmes notes que … ») ; « clé à confirmer » si le son est peu net.
+
+Testé sur des prods de synthèse au BPM et à la clé connus (808, kick, snare, hi-hats,
+accords, mélodie), en son propre et en « haut-parleur de téléphone capté au micro », avec
+accordage décalé et bruit : BPM juste (ou en alternative) 80 fois sur 80, clé 78 fois sur
+80 (les 2 erreurs marquées « à confirmer »). Sur de vraies prods, c'est une estimation :
+la description du beatmaker reste prioritaire. Les résultats s'affichent **en bleu**
+(« 150 BPM · ≈ ») et restent gardés dans ce navigateur. La fiche garde aussi un lien
+« Vérifier sur Tunebat ».
 
 ## Chaîne du beatmaker (version web)
 

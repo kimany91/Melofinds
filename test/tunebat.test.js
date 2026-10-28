@@ -35,24 +35,3 @@ test('ne garde que le bon morceau', () => {
   assert.equal(tbPick('pas une liste', { title: 'x' }), null);
   assert.ok(similarity('Kxvi Beats', 'kxvi beats') === 1);
 });
-
-// ReccoBeats (réponse réelle du 28/10/2026, recherche « nemzzz »)
-import { rbKey, rbQueries, rbPick, rbFeatures } from '../src/core/tunebat.js';
-const RB = [{ id: '7bb8c52a-9175-4332-98e3-0c69cbe74636', trackTitle: 'nemzzzjazz', artists: [{ name: 'prod. shrugg' }], durationMs: 132003, href: 'https://open.spotify.com/track/40dxP5R4cLCoIb752Ik5yb' },
-  { id: 'autre', trackTitle: 'Jazz', artists: [{ name: 'Someone' }], durationMs: 200000 }];
-
-test('ReccoBeats : clé, recherches, bon morceau seulement', () => {
-  assert.equal(rbKey(7, 1), 'G maj');
-  assert.equal(rbKey(10, 0), 'A# min');
-  assert.equal(rbKey(-1, 1), null);
-  assert.deepEqual(rbFeatures({ tempo: 140.214, key: 7, mode: 1 }), { bpm: 140, key: 'G maj' });
-  assert.deepEqual(rbFeatures({ tempo: 300, key: -1, mode: 1 }), null);
-  assert.deepEqual(rbQueries({ title: 'Nemzzz Type Beat "nemzzzjazz"', channel: 'shrugg beats' }), [{ searchText: 'nemzzzjazz', artist: 'shrugg' }, { searchText: 'nemzzzjazz' }]);
-  // même beatmaker (« prod. shrugg ») et même titre
-  assert.equal(rbPick(RB, { title: 'Nemzzz Type Beat "nemzzzjazz"', channel: 'shrugg' })?.id, RB[0].id);
-  // même titre et même durée, chaîne inconnue
-  assert.equal(rbPick(RB, { title: '[FREE] "nemzzzjazz"', channel: '', duration: 133 })?.id, RB[0].id);
-  // autre beatmaker, autre durée : rien (mieux vaut « BPM ? » qu'un faux BPM)
-  assert.equal(rbPick(RB, { title: 'Nemzzz Type Beat "nemzzzjazz"', channel: 'geesyn', duration: 90 }), null);
-  assert.equal(rbPick(RB, { title: 'Type beat "jazz"', channel: 'geesyn' }), null);
-});
