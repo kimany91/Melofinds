@@ -1020,7 +1020,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 28/10/2026 à 16:38</p>
+    <p class="build-stamp">Version du 28/10/2026 à 17:39</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -4059,7 +4059,7 @@ function keyShift(key, semis, mode) {
 async function essentiaKey(mono, rate) {
   const ess = await essentiaLib();
   let x = rate === 22050 ? mono : resample(mono, rate, 22050);
-  const max = 45 * 22050;
+  const max = 60 * 22050; // 60 s : 68 % de clés justes contre 66 % avec 45 s (banc d’essai)
   if (x.length > max) { const from = Math.floor((x.length - max) / 2); x = x.subarray(from, from + max); }
   const v = ess.arrayToVector(x);
   const keys = [];
@@ -4145,9 +4145,9 @@ async function analyzeFile(item, file, ui) {
   const ctx = new AC();
   try {
     const buf = await ctx.decodeAudioData(await file.arrayBuffer());
-    // 45 s au milieu du morceau (l'intro et la fin sont souvent vides)
+    // 60 s au milieu du morceau (l’intro et la fin sont souvent vides)
     const mono = monoOf(buf);
-    const len = Math.min(mono.length, 45 * buf.sampleRate);
+    const len = Math.min(mono.length, 60 * buf.sampleRate);
     const from = Math.max(0, Math.floor((mono.length - len) / 2));
     ui.say('Analyse…');
     await wait(30);
@@ -4460,7 +4460,7 @@ async function ytAnalyze(item, ui) {
   ytListeners.set(id, ui);
   ui.say(YT_STEP.find);
   let r;
-  try { r = await mfn().ytAudio({ id, seconds: 45 }); } finally { ytListeners.delete(id); }
+  try { r = await mfn().ytAudio({ id, seconds: 60 }); } finally { ytListeners.delete(id); }
   try {
     ui.say('Analyse…');
     const w = wavMono(await (await readNative(r.path, r.size)).arrayBuffer());
