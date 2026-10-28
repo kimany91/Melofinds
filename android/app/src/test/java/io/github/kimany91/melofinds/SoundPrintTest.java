@@ -83,15 +83,15 @@ public class SoundPrintTest {
 
     @Test
     public void reconnaitLaProdSousLaVoix() {
-        float[] prod = beat(1, 9, 60, RATE);
+        float[] prod = beat(1, 9, 100, RATE);
         SoundPrint p = print(prod, 0, prod.length, RATE);
         // le morceau : la prod 12 s plus loin (et pas pile sur un pas d'analyse), plus basse,
         // voix par-dessus, saturée
         int from = 12 * RATE + 97;
-        int n = 35 * RATE;
+        int n = 70 * RATE; // l'appli compare 90 s de chaque morceau
         float[] song = new float[n];
         float[] v = voice(5, n, RATE);
-        for (int i = 0; i < n; i++) song[i] = (float) Math.tanh(0.5 * prod[from + i] + 0.6 * v[i]);
+        for (int i = 0; i < n; i++) song[i] = (float) Math.tanh(0.5 * prod[from + i] + 0.4 * v[i]);
         SoundPrint.Match m = SoundPrint.compare(p, print(song, 0, n, RATE));
         assertTrue("score " + m.score + " ratio " + m.ratio, m.same);
         // la prod commence 12 s avant le morceau (à un tour de boucle près : une mesure = 1,71 s)
@@ -115,10 +115,10 @@ public class SoundPrintTest {
 
     @Test
     public void autreProdMemeBatterie() {
-        float[] prod = beat(1, 9, 60, RATE);
+        float[] prod = beat(1, 9, 100, RATE);
         SoundPrint p = print(prod, 0, prod.length, RATE);
-        int n = 35 * RATE;
-        float[] other = beat(2, 9, 40, RATE);
+        int n = 70 * RATE;
+        float[] other = beat(2, 9, 75, RATE);
         float[] v = voice(6, n, RATE);
         float[] song = new float[n];
         for (int i = 0; i < n; i++) song[i] = (float) Math.tanh(0.5 * other[i] + v[i]);
