@@ -1,0 +1,36 @@
+# Essai réel de Tunebat Analyzer avec le même mécanisme que l'appli Android (fichier donné à
+# la page, lecture du tableau des résultats). Outil de vérification seulement.
+name: Essai Tunebat Analyzer
+
+on:
+  push:
+    paths:
+      - 'scripts/tunebat-check.mjs'
+      - '.github/workflows/tunebat-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Outils
+        run: |
+          npm install --no-save playwright@1.48.2
+          npx playwright install --with-deps chromium
+          which ffmpeg || (sudo apt-get update -q && sudo apt-get install -y -q ffmpeg)
+      - name: Fichier de test (accord de La mineur + battement à 140 BPM, 40 s)
+        run: |
+          ffmpeg -v error -y -f lavfi -i "sine=f=110:d=40" -f lavfi -i "sine=f=220:d=40" -f lavfi -i "sine=f=261.63:d=40" -f lavfi -i "sine=f=329.63:d=40" \
+            -f lavfi -i "aevalsrc='0.9*sin(2*PI*55*t)*exp(-18*mod(t\,60/140))':d=40" \
+            -filter_complex "[0][1][2][3][4]amix=inputs=5:normalize=0,volume=0.5" -ac 1 -ar 44100 "$RUNNER_TEMP/test.wav"
+          ls -l "$RUNNER_TEMP/test.wav"
+      - name: Tunebat Analyzer
+        run: node scripts/tunebat-check.mjs "$RUNNER_TEMP/test.wav"
