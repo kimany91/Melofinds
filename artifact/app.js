@@ -197,7 +197,7 @@ function verdictCopy(L, unread) {
   if (L.titleOnly) {
     t = 'Free for profit ? À vérifier';
     s = 'Seul le titre dit « free for profit » : YouTube ne m’a pas laissé lire la description. Souvent elle limite à YouTube / SoundCloud ou demande une licence pour Spotify. '
-      + (pcOn() ? 'Ton PC la lit, le verdict va se mettre à jour.' : pc.info ? 'Allume Melofinds PC (3.18 ou plus) : il la lira pour moi.' : 'Avec Melofinds PC allumé ou ta clé YouTube, je la lis en entier.');
+      + (pcOn() ? 'Ton PC la lit, le verdict va se mettre à jour.' : pc.info ? 'Allume Melofinds PC (mis à jour) : il la lira pour moi.' : 'Avec Melofinds PC allumé ou ta clé YouTube, je la lis en entier.');
     return { t, s };
   }
   if (unread) s = 'Description illisible : verdict d’après le titre seulement. Ouvre la vidéo pour vérifier.';
@@ -3488,7 +3488,7 @@ async function signed(obj) {
   const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(p)));
   return JSON.stringify({ p, s: Array.from(sig, (b) => b.toString(16).padStart(2, '0')).join('') });
 }
-const pc = { queue: local.get('pcQueue', {}) || {}, info: local.get('pcInfo', null), es: null, onPong: null, cur: null };
+const pc = { queue: local.get('pcQueue', {}) || {}, info: local.get('pcInfo', null), es: null, onPong: null, cur: null, pairing: null };
 function savePc() {
   const ids = Object.keys(pc.queue).sort((a, b) => (pc.queue[b].at || 0) - (pc.queue[a].at || 0)).slice(0, 150);
   pc.queue = Object.fromEntries(ids.map((id) => [id, pc.queue[id]]));
@@ -3529,6 +3529,7 @@ function listenPc() {
         local.set('pcInfo', pc.info);
       }
       if (m.pong && pc.onPong) pc.onPong(m);
+      if (m.pong || m.pc === 'online' || m.pc === 'alive') pcPairDone();
       // Le PC vient de se rallumer : on renvoie ce qui a pu expirer pendant qu'il était éteint.
       if (m.pc === 'online' && fresh) { setTimeout(resendPending, 15e3); setTimeout(() => pcSync(true), 20e3); }
       syncPcUi();
@@ -4281,9 +4282,15 @@ function fmtAgo(ms) {
   const s = (Date.now() - ms) / 1000;
   return s < 90 ? 'à l’instant' : s < 3600 ? `il y a ${Math.round(s / 60)} min` : s < 86400 ? `il y a ${Math.round(s / 3600)} h` : s < 86400 * 30 ? `il y a ${Math.round(s / 86400)} j` : new Date(ms).toLocaleDateString('fr-FR');
 }
+// Melofinds PC est passé de 3.20 à 1.20.1 (nouvelle numérotation) : 1.20 et plus = après 3.20
+const verParts = (v) => {
+  const x = String(v || '0').split('.').map(Number);
+  if (x[0] === 1 && (x[1] || 0) >= 20) x[0] = 3;
+  return x;
+};
 const versionLt = (a, b) => {
-  const x = String(a || '0').split('.').map(Number);
-  const y = String(b).split('.').map(Number);
+  const x = verParts(a);
+  const y = verParts(b);
   for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0);
   return false;
 };
@@ -4371,21 +4378,47 @@ function pairFromText(t) {
 }
 async function pcPairWith(p) {
   if (!WEB || !p) return;
-  if (p.code === pcCode() && p.key === pcKey()) { toast('Ce téléphone est déjà relié à ce PC'); return; }
-  local.set('pcCode', p.code);
-  local.set('pcKey', p.key);
-  pc.info = null;
-  local.set('pcInfo', null);
-  pc.es?.close();
-  pc.es = null;
-  pcLib.data = null;
-  pcLib.cmds = [];
-  savePcLib();
+  const same = p.code === pcCode() && p.key === pcKey();
+  if (!same) {
+    local.set('pcCode', p.code);
+    local.set('pcKey', p.key);
+    pc.info = null;
+    local.set('pcInfo', null);
+    pc.es?.close();
+    pc.es = null;
+    pcLib.data = null;
+    pcLib.cmds = [];
+    savePcLib();
+  }
   listenPc();
-  haptic('success');
-  toast('Téléphone relié à ton PC !');
-  try { await ntfyPublish({ ping: 1 }); } catch { /* il se manifestera au prochain envoi */ }
+  haptic();
+  // « Relié » seulement quand le PC a répondu (pcPairDone, appelé par listenPc)
+  const job = { at: Date.now() };
+  pc.pairing = job;
+  toast('QR code lu : je préviens ton PC…');
   syncPcUi();
+  const ping = async () => { try { await ntfyPublish({ ping: 1 }); return true; } catch { return false; } };
+  if (!(await ping())) {
+    if (pc.pairing === job) pc.pairing = null;
+    haptic('warn');
+    toast('Envoi impossible : vérifie ta connexion internet, puis rescanne le QR code du PC');
+    return;
+  }
+  setTimeout(() => { if (pc.pairing === job) ping(); }, 20e3);
+  setTimeout(() => {
+    if (pc.pairing !== job) return;
+    pc.pairing = null;
+    haptic('warn');
+    toast('Ton PC ne répond pas : laisse la fenêtre du QR code ouverte sur le PC (Melofinds PC à jour), puis rescanne', { label: 'Rescanner', run: scanPcQr });
+    syncPcUi();
+  }, 75e3);
+}
+// Le PC a répondu après le scan du QR code
+function pcPairDone() {
+  if (!pc.pairing) return;
+  pc.pairing = null;
+  haptic('success');
+  toast('Téléphone relié à ton PC ✓');
   if ($('#drawer').classList.contains('open') && $('#pcStatus')) openPcSetup();
 }
 // Appareil photo dans la page (navigateurs qui savent lire les QR codes)

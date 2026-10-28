@@ -141,10 +141,16 @@ ouvre le site dans Chrome) :
   (« Scanner le QR code du PC », scanner de Google, sans accès à l'appareil photo pour
   Melofinds), dans l'app web (appareil photo) ou avec l'appareil photo du téléphone (le lien
   ouvre Melofinds et relie tout seul). Le PC crée le code et la clé ; la clé est après « # »
-  dans le lien, jamais envoyée à un serveur. Le téléphone est ajouté dès qu'il se manifeste
-  (sinon retiré si on annule). Coller le code du téléphone reste possible ;
+  dans le lien, jamais envoyée à un serveur. La fenêtre du QR code écoute elle-même le
+  téléphone (flux ntfy : une seule requête, réponse dans la seconde, même si le programme en
+  ligne est occupé) et lui répond aussitôt ; le téléphone n'affiche « relié ✓ » qu'une fois
+  cette réponse reçue (sinon « Ton PC ne répond pas » au bout de 75 s). Un téléphone qui a
+  scanné n'est jamais retiré en fermant la fenêtre. Coller le code du téléphone reste possible ;
 - **Dossier & réglages** : dossier des projets, emplacement du programme, journal,
   mises à jour, désinstallation (les prods restent dans leur dossier).
+- **Numéro de version** : après 3.20, Melofinds PC est passé à **1.20.1**. Pour les
+  comparaisons, 1.20 et plus vient après 3.20 ; `version.json` donne aussi 3.20.1
+  (« version ») aux PC encore en 3.x pour qu'ils se mettent à jour tout seuls.
 
 - Nom du fichier : `Titre [Clé, BPM] [Licence].wav`, avec la licence lue par l'app :
   `[FFP]` (free for profit), `[F]` (free) ou `[FFP, UPTO 5000]` ; le titre YouTube est

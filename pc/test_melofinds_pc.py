@@ -130,6 +130,51 @@ class Installation(unittest.TestCase):
     def test_versions(self):
         self.assertGreater(mpc.version_tuple("2.0.10"), mpc.version_tuple("2.0.9"))
         self.assertEqual(mpc.version_tuple("v2.1.0"), (2, 1, 0))
+        # nouvelle numérotation : 1.20.1 vient après 3.20.0 (et vaut 3.20.1 pour les PC en 3.x)
+        self.assertGreater(mpc.version_tuple("1.20.1"), mpc.version_tuple("3.20.0"))
+        self.assertEqual(mpc.version_tuple("1.20.1"), mpc.version_tuple("3.20.1"))
+        self.assertGreater(mpc.version_tuple("1.21.0"), mpc.version_tuple("1.20.1"))
+        self.assertEqual(mpc.compat_version("1.20.1"), "3.20.1")
+
+    def test_qr_le_panneau_entend_le_telephone(self):
+        """La fenêtre du QR code reçoit le « ping » signé du téléphone par un flux ntfy
+        (un faux serveur ici) ; les envois mal signés sont ignorés."""
+        import threading
+        from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+        good = signed({"mf": 2, "ts": int(time.time() * 1000), "n": "0123456789abcdef", "ping": 1, "dev": "Android · Chrome"})
+        bad = signed({"mf": 2, "ts": int(time.time() * 1000), "n": "fedcba9876543210", "ping": 1}, "cd" * 32)
+        hits = []
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                hits.append(self.path)
+                lines = [{"event": "open"}, {"event": "message", "id": "a1", "message": bad},
+                         {"event": "keepalive"}, {"event": "message", "id": "a2", "message": good}]
+                body = "".join(json.dumps(x) + "\n" for x in lines).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = mpc.NTFY
+        mpc.NTFY = f"http://127.0.0.1:{srv.server_address[1]}"
+        try:
+            msg = mpc.wait_signed("melofinds-" + "0" * 32, KEY, threading.Event(), timeout=5)
+            stop = threading.Event()
+            stop.set()
+            self.assertIsNone(mpc.wait_signed("melofinds-" + "0" * 32, KEY, stop))  # fenêtre fermée
+        finally:
+            mpc.NTFY = old
+            srv.shutdown()
+        self.assertEqual(msg["n"], "0123456789abcdef")
+        self.assertEqual(msg["dev"], "Android · Chrome")
+        self.assertEqual(len(hits), 1)
+        self.assertIn("/json?since=", hits[0])
 
 
 class MiseAJour(unittest.TestCase):
@@ -148,6 +193,9 @@ class MiseAJour(unittest.TestCase):
 
     def test_deja_a_jour(self):
         self.assertIsNone(self.manifest(version=mpc.VERSION))
+        # version.json publié : « version » = numéro pour les PC en 3.x, « display » = le vrai
+        self.assertIsNone(self.manifest(version=mpc.compat_version(), display=mpc.VERSION))
+        self.assertEqual(self.manifest(version="3.99.0", display="1.99.0")[0], "1.99.0")
 
     def test_autre_site_refuse(self):
         with self.assertRaises(ValueError):

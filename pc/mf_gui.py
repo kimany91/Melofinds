@@ -7,6 +7,7 @@ Appareils, Réglages.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -1469,12 +1470,27 @@ def manager_window(selftest=False):
         # 1) QR code : le PC crée le code, le téléphone le scanne (rien à copier)
         qcode, qkey = C.new_pairing()
         rows = C.qr_rows(C.pairing_url(qcode, qkey))
-        qr = {"dev": None, "done": False}
+        qr = {"dev": None, "done": False, "msg": None}
+        qstop = threading.Event()
         if rows:
             cfg0 = C.load_config()
             qr["dev"] = I.add_device(cfg0, f"{qcode}.{qkey}", "Téléphone (QR code)")["id"]
             C.save_config(cfg0)
             I.go_online()
+
+            def listen_phone():
+                """Le panneau attend lui-même le téléphone (flux ntfy, réponse dans la seconde),
+                même si le programme en ligne est occupé (téléchargement, autres appareils) ;
+                il lui répond aussitôt : le téléphone se sait relié tout de suite."""
+                msg = C.wait_signed(qcode, qkey, qstop)
+                if not msg:
+                    return
+                qr["msg"] = msg
+                c = C.load_config()
+                dev = next((x for x in c["devices"] if x["code"] == qcode), None)
+                C.reply(qcode, {"pc": "online", "pong": msg.get("n"), "version": C.VERSION,
+                                "dossier": str(C.projects_root(c)), "name": (dev or {}).get("name", "")})
+            threading.Thread(target=listen_phone, daemon=True).start()
             label(f, "Scanne ce QR code avec ton téléphone : appli Melofinds → Mon PC → « Scanner le QR code du PC » "
                      "(ou l'appareil photo du téléphone : il ouvre Melofinds et le relie tout seul).", 9, MUTED, wrap=520).pack(anchor="w", pady=(4, 10))
             px = max(4, min(7, 300 // len(rows)))
@@ -1491,8 +1507,9 @@ def manager_window(selftest=False):
             label(f, "Sur le téléphone : Melofinds Web → Mon PC → Copier, puis colle le code ici.", 9, MUTED).pack(anchor="w", pady=(4, 12))
 
         def drop_qr():
-            """Le QR n'a pas servi : l'appareil préparé est retiré."""
-            if qr["dev"] and not qr["done"]:
+            """Le QR n'a pas servi : l'appareil préparé est retiré (sauf si le téléphone l'a scanné)."""
+            qstop.set()
+            if qr["dev"] and not qr["done"] and not qr["msg"]:
                 c = C.load_config()
                 c["devices"] = [x for x in c["devices"] if x["id"] != qr["dev"]]
                 C.save_config(c)
@@ -1506,18 +1523,21 @@ def manager_window(selftest=False):
             if not alive or not qr["dev"] or qr["done"]:
                 return
             info = C.load_state()["devices"].get(qcode, {})
-            if info.get("last_seen"):
+            msg = qr["msg"]
+            if info.get("last_seen") or msg:
                 qr["done"] = True
+                qstop.set()
+                ua = info.get("ua") or re.sub(r"[^\w\s·.,()+-]", "", str((msg or {}).get("dev") or ""))[:40].strip()
                 c = C.load_config()
                 for x in c["devices"]:
                     if x["id"] == qr["dev"] and x.get("name") == "Téléphone (QR code)":
-                        x["name"] = (name.get().strip() or info.get("ua") or "Téléphone")[:40]
+                        x["name"] = (name.get().strip() if name.get().strip() and not name.get().startswith("Appareil ") else ua or "Téléphone")[:40]
                 C.save_config(c)
                 dlg.destroy()
                 refresh()
                 toast("Téléphone relié !")
                 return
-            dlg.after(1500, poll)
+            dlg.after(500, poll)
         code = tk.StringVar()
         e = entry(f, code, width=70)
         e.configure(font=(MONO, 9))
@@ -1558,7 +1578,7 @@ def manager_window(selftest=False):
         dlg.update_idletasks()
         dlg.geometry(f"+{root.winfo_rootx() + 220}+{root.winfo_rooty() + 60}")
         dlg.grab_set()
-        dlg.after(1500, poll)
+        dlg.after(500, poll)
 
     def selected_device():
         sel = devs.selection()

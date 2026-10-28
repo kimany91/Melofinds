@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "3.20.1"
+VERSION = "1.20.1"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -306,7 +306,17 @@ def qr_rows(text):
 
 
 def version_tuple(v):
-    return tuple(int(x) for x in re.findall(r"\d+", str(v))[:3]) or (0,)
+    """Pour comparer les versions. Après 3.20, la numérotation est repartie à 1.20.1 :
+    1.20 et plus passe après 3.20 (même rang que 3.20, 3.21…)."""
+    t = tuple(int(x) for x in re.findall(r"\d+", str(v))[:3]) or (0,)
+    if t[0] == 1 and len(t) > 1 and t[1] >= 20:
+        t = (3,) + t[1:]
+    return t
+
+
+def compat_version(v=None):
+    """Numéro à mettre dans version.json pour les PC encore en 3.x : 1.20.1 → 3.20.1."""
+    return ".".join(str(x) for x in version_tuple(v or VERSION))
 
 
 # ---------------------------------------------------------------------------
@@ -841,6 +851,35 @@ def chunks(data, size=ATTACH_MAX):
     return [data[i:i + size] for i in range(0, len(data), size)] or [b""]
 
 
+def wait_signed(code, key, stop, since=None, timeout=70):
+    """Attend un envoi signé (le « ping » du téléphone qui vient de scanner le QR code) sur le
+    sujet <code>, par un flux ntfy : une seule requête ouverte, réponse dans la seconde, sans
+    compter dans la limite de requêtes de ntfy.sh. Renvoie le message, ou None si stop est levé."""
+    since = since if since is not None else int(time.time()) - 120
+    while not stop.is_set():
+        url = f"{NTFY}/{code}/json?since={urllib.parse.quote(str(since))}"
+        req = urllib.request.Request(url, headers={"User-Agent": f"melofinds-pc/{VERSION}"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                for line in res:
+                    if stop.is_set():
+                        return None
+                    try:
+                        ev = json.loads(line.decode("utf-8", "replace"))
+                    except ValueError:
+                        continue
+                    if not isinstance(ev, dict) or ev.get("event") != "message":
+                        continue
+                    since = ev.get("id") or since
+                    msg = verify(ev.get("message") or "", key)
+                    if msg:
+                        return msg
+            stop.wait(2)  # flux fermé par ntfy : on se reconnecte, sans marteler
+        except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError):
+            stop.wait(5)  # coupure : on réessaie
+    return None
+
+
 def poll(code, since):
     url = f"{NTFY}/{code}/json?poll=1&since={urllib.parse.quote(str(since))}"
     out = []
@@ -1212,7 +1251,7 @@ def download(video_id, root, info, out=None, progress=None):
 def check_update():
     """Renvoie (version, url de l'installateur, sha256) si une version plus récente existe."""
     data = json.loads(http_get(MANIFEST_URL, timeout=20).decode("utf-8-sig"))
-    ver = str(data.get("version", ""))
+    ver = str(data.get("display") or data.get("version", ""))  # « display » : 1.20.1 ; « version » : 3.20.1 pour les PC en 3.x
     url = str(data.get("setup_url") or data.get("url") or "")
     sha = str(data.get("setup_sha256") or data.get("sha256") or "").lower()
     if not url.startswith(f"{RELEASES}/download/") or not re.fullmatch(r"[a-f0-9]{64}", sha):

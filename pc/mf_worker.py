@@ -544,7 +544,9 @@ def worker(once=False):
                 seen = set(st["seen"])
                 done = set(st["done"])
                 fl_last = None
-                for d in devices:
+                # les appareils jamais entendus d'abord (téléphone qui vient de scanner le QR code) :
+                # si ntfy.sh limite les requêtes, ce n'est pas lui qui attend
+                for d in sorted(devices, key=lambda x: x["code"] in st["since"]):
                     code, key = d["code"], d["cle"]
                     since = st["since"].get(code) or "12h"
                     try:

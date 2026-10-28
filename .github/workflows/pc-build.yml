@@ -248,7 +248,9 @@ jobs:
           $tag = "pc-v$ver"
           $sha = (Get-FileHash dist\MelofindsSetup.exe -Algorithm SHA256).Hash.ToLower()
           $url = "https://github.com/${{ github.repository }}/releases/download/$tag/MelofindsSetup.exe"
-          @{ version = $ver; sha256 = $sha; url = $url; setup_sha256 = $sha; setup_url = $url } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM version.json
+          # « version » : numéro compris par les PC encore en 3.x (1.20.1 → 3.20.1) ; « display » : le vrai
+          $compat = python -c "import sys; sys.path.insert(0, 'pc'); import mf_core as C; print(C.compat_version())"
+          @{ version = $compat; display = $ver; sha256 = $sha; url = $url; setup_sha256 = $sha; setup_url = $url } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM version.json
           Get-Content version.json
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
