@@ -179,9 +179,17 @@ ouvre le site dans Chrome) :
 ## Bouton « BPM » : BPM et clé à l'écoute (version web)
 
 Chaque prod a un petit bouton **BPM**. Il ouvre « BPM et clé » :
-- **Écouter la prod** : l'app fait jouer la prod 15 secondes (au cœur du morceau) et
-  l'écoute avec le micro du téléphone (son monté, sans écouteurs) ;
-- **Choisir un fichier audio** : MP3, WAV, M4A… (45 s analysées au milieu du morceau).
+- **Sans son** — **Analyser la copie du PC** : pour une prod envoyée sur le PC, la copie
+  d'écoute gardée sur le téléphone est analysée sans rien jouer, même PC éteint. Chaque
+  copie qui arrive du PC est d'ailleurs analysée toute seule (une à la fois) ;
+- **Sans son** — **Choisir un fichier audio** : MP3, WAV, M4A… (souvent en téléchargement
+  gratuit dans la description ; 45 s analysées au milieu du morceau) ;
+- **Avec le son** — **Écouter la prod** : l'app fait jouer la prod 15 secondes (au cœur du
+  morceau) et l'écoute au micro (son monté, sans écouteurs). Téléphone muet : l'app le dit
+  et propose les deux façons sans son.
+
+Le son du lecteur YouTube, lui, n'est pas lisible par un site (YouTube l'interdit) : sans
+son ni fichier ni copie, il faut passer par le micro.
 
 L'analyse se fait **sur le téléphone**, sans service extérieur ni PC
 (`src/core/audiokey.js`), et marche pour toutes les prods, sorties ou non sur Spotify :
