@@ -176,6 +176,16 @@ ouvre le site dans Chrome) :
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
+## Bouton Tunebat (version web)
+
+Chaque prod a un petit bouton **TB** : un appui cherche le BPM et la clé sur Tunebat,
+directement depuis le navigateur (le PC n'est pas nécessaire). Ce qui est trouvé
+s'affiche **en bleu** (« 145 BPM · TB », « D maj »), sur la carte et dans la fiche, et
+reste gardé dans ce navigateur. Si la description donne déjà le BPM ou la clé, elle
+reste prioritaire : le message montre ce que Tunebat a trouvé et ce qui est gardé. Le
+bouton devient bleu quand Tunebat a trouvé, grisé si rien n'est trouvé (toucher pour
+réessayer). La fiche cherche aussi toute seule quand le BPM ou la clé manquent.
+
 ## Chaîne du beatmaker (version web)
 
 Chaque prod affiche le **logo de la chaîne** qui l'a postée. Un appui dessus lance le

@@ -224,27 +224,74 @@ function tbStore(id, t) {
   if (ids.length > 800) for (const k of ids.slice(0, ids.length - 800)) delete tbCache[k];
   local.set('tbCache', tbCache);
 }
-async function tbLookup(item) {
-  if (!WEB || !item?.id || tbCache[item.id] || tbLookup.busy?.has(item.id)) return;
+// Recherche Tunebat faite par le navigateur lui-même (le PC n'est pas nécessaire).
+// manual : bouton Tunebat touché → on cherche même si une recherche a déjà échoué.
+async function tbLookup(item, { manual = false } = {}) {
+  if (!WEB || !item?.id) return null;
+  const c = tbCache[item.id];
+  if (!manual && c && (c.bpm || c.key || Date.now() - (c.at || 0) < 864e5)) return c;
+  if (tbLookup.busy?.has(item.id)) return null;
   (tbLookup.busy ||= new Set()).add(item.id);
+  syncTbUi();
   try {
     for (const q of tbQueries({ title: item.title, channel: item.channel })) {
       const res = await fetch(TB_SEARCH + encodeURIComponent(q), { headers: { accept: 'application/json' } });
       if (!res.ok) throw new Error(`tunebat ${res.status}`);
       const pick = tbPick((await res.json())?.data?.items, { title: item.title, channel: item.channel, duration: item.duration });
       if (pick) {
-        tbStore(item.id, { bpm: pick.bpm, key: pick.key, at: Date.now() });
+        const t = { bpm: pick.bpm, key: pick.key, at: Date.now() };
+        tbStore(item.id, t);
         refreshItem(item);
-        return;
+        return t;
       }
     }
-    tbStore(item.id, { none: true, at: Date.now() });
+    const t = { none: true, at: Date.now() };
+    tbStore(item.id, t);
+    return t;
   } catch {
-    tbStore(item.id, { fail: true, at: Date.now() }); // Tunebat injoignable d'ici : le PC essaiera au téléchargement
-  } finally { tbLookup.busy.delete(item.id); }
+    const t = { fail: true, at: Date.now() };
+    if (!tbFor(item.id)) tbStore(item.id, t);
+    return t;
+  } finally {
+    tbLookup.busy.delete(item.id);
+    syncTbUi();
+  }
+}
+function tbState(id) {
+  if (tbLookup.busy?.has(id)) return 'busy';
+  const c = tbCache[id];
+  return c?.bpm || c?.key ? 'ok' : c?.none ? 'none' : c?.fail ? 'fail' : '';
+}
+const TB_LABEL = { '': 'Chercher le BPM et la clé sur Tunebat', busy: 'Recherche sur Tunebat…', ok: 'Trouvé sur Tunebat (en bleu) : toucher pour chercher à nouveau', none: 'Pas trouvé sur Tunebat : toucher pour réessayer', fail: 'Tunebat n’a pas répondu : toucher pour réessayer' };
+function tbButton(item) {
+  const st = tbState(item.id);
+  return h('button', { type: 'button', class: `tb-btn${st ? ` ${st}` : ''}`, 'data-tb': item.id, 'aria-label': TB_LABEL[st], title: TB_LABEL[st],
+    onclick: (e) => { e.stopPropagation(); tbAsk(item); } }, 'TB');
+}
+function syncTbUi() {
+  $$('.tb-btn[data-tb]').forEach((b) => {
+    const st = tbState(b.dataset.tb);
+    b.className = `tb-btn${st ? ` ${st}` : ''}`;
+    b.setAttribute('aria-label', TB_LABEL[st]);
+    b.title = TB_LABEL[st];
+  });
+}
+async function tbAsk(item) {
+  if (tbLookup.busy?.has(item.id)) return;
+  const t = await tbLookup(item, { manual: true });
+  if (!t) return;
+  if (t.fail) { toast(navigator.onLine === false ? 'Pas de réseau : réessaie quand tu en as' : 'Tunebat n’a pas répondu à ce navigateur : réessaie dans un moment'); return; }
+  if (t.none) { toast('Pas trouvé sur Tunebat (aucun son sorti avec cette prod)'); return; }
+  // ce que la description disait déjà reste prioritaire ; Tunebat complète, en bleu
+  let own = null;
+  try { own = analyzeVideo({ id: item.id, title: item.title, description: item.description || '' }, null); } catch { /* sans analyse */ }
+  const found = [t.bpm ? `${t.bpm} BPM` : null, t.key].filter(Boolean).join(' · ');
+  const kept = [own?.bpm && t.bpm && own.bpm !== t.bpm ? `${own.bpm} BPM` : null, own?.key && t.key && own.key !== t.key ? own.key : null].filter(Boolean).join(' · ');
+  toast(kept ? `Tunebat : ${found}. La description dit ${kept} : je garde la description` : `Tunebat : ${found}`);
 }
 function refreshItem(item) {
   if (session?.items?.has(item.id)) renderResults();
+  if ($('#view-saved')?.classList.contains('active') && isSaved(item.id)) renderSavedProds();
   if ($('#drawer').classList.contains('open') && $('#drawer').dataset.item === item.id) openBeat(item, session?.plan || null);
 }
 
@@ -344,6 +391,7 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
       ratio != null ? h('span', { class: `ratio${tier}`, title: `${item.likeCount.toLocaleString('fr-FR')} likes pour ${(item.viewCount ?? parseCount(item.views)).toLocaleString('fr-FR')} vues` }, icon('heart'), `${fmtPct(ratio)} likes`) : null,
       h('span', { class: 'more' }, 'Détails →')));
   card.append(h('div', { class: 'card-links' },
+    WEB ? tbButton(item) : null,
     WEB && vid ? pcButton(item) : null,
     h('a', { class: 'yt-link', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Ouvrir « ${item.title} » sur YouTube` }, 'YouTube', icon('ext'))));
   const open = () => openBeat(item, plan);
@@ -1509,6 +1557,7 @@ function openBeat(item, plan) {
       saveBtn,
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => openStudio(item) }, icon('mic'), 'Rec dessus') : null,
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc(item) }, icon('down'), 'Sur mon PC') : null,
+      WEB ? h('button', { type: 'button', class: 'ghost tb-ghost', onclick: () => tbAsk(item) }, 'Tunebat : BPM et clé') : null,
       item.url ? h('button', { type: 'button', class: 'ghost', onclick: () => copyText(item.url) }, 'Copier le lien') : null),
     WEB ? h('a', { class: 'link d-yt', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube', icon('ext')) : null,
     ...beatDetails(item, r, findTerms()),
