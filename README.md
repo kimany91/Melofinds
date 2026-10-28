@@ -185,21 +185,20 @@ ouvre le site dans Chrome) :
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
-## Bouton « BPM » : Tunebat
+## Bouton « BPM » : Tunebat Analyzer
 
 Quand la description ne donne pas le BPM ou la clé, chaque prod a un petit bouton **BPM** :
-- **Appli Android** : un appui cherche la prod sur **Tunebat** depuis le téléphone (même
-  recherche que Melofinds PC, même choix strict du bon morceau : `src/core/tunebat.js`). Si
-  Tunebat demande de vérifier qu'on n'est pas un robot, sa page s'ouvre dans une fenêtre :
-  tu fais la vérification toi-même (rien n'est contourné), la réponse est lue toute seule et
-  la fenêtre se ferme. Ouvrir la fiche d'une prod lance aussi la recherche (sans fenêtre).
-- **Site web** : Tunebat ne répond pas directement à un site ; « Ouvrir Tunebat » ouvre sa
-  recherche, et Melofinds PC cherche sur Tunebat quand la prod arrive.
-- Pas sur Tunebat (prod pas sortie sur Spotify) : l'app le dit ; « Je connais le BPM / la
-  clé » permet de les noter (gardés, envoyés au PC sans « (Finded) »).
-
-Les valeurs de Tunebat s'affichent **en bleu** (« BPM · TB ») ; la description du
-beatmaker reste prioritaire.
+- **Appli Android** : un appui télécharge la prod (son YouTube, NewPipe Extractor, dans le
+  cache de l'appli), la convertit en WAV et la donne à l'outil **Tunebat Analyzer**
+  (tunebat.com/Analyzer) dans une fenêtre visible, comme si tu la déposais : Tunebat
+  l'analyse dans le navigateur (le fichier n'est envoyé à aucun serveur). La clé, le BPM et
+  le Camelot sont lus dans son tableau, puis **le fichier est effacé** et la fenêtre se ferme.
+  Si Tunebat demande une vérification, c'est toi qui la fais. Code : `TunebatActivity.java`,
+  `YtStream.java` (téléchargement), `AudioPcm.java` (WAV).
+- **Site web** : un site ne peut pas télécharger la prod ; « Ouvrir Tunebat Analyzer » avec un
+  fichier de la prod, puis « Je connais le BPM / la clé » pour les noter.
+- Les valeurs s'affichent **en bleu** (« BPM · TB ») et partent au PC (« (Finded) » dans le
+  nom) ; la description du beatmaker reste prioritaire.
 
 ## Mini-jeu pendant la recherche
 
@@ -216,8 +215,8 @@ La même app que la version web, plus ce que seul Android permet. Lien :
 bas de la page de recherche). Elle affiche l'app web de GitHub Pages : les nouveautés
 arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion ».
 
-- **Tunebat** : bouton BPM et fiche, recherche depuis le téléphone (voir plus haut) ;
-  fenêtre Tunebat visible si une vérification est demandée (`TunebatActivity.java`).
+- **Tunebat Analyzer** : bouton BPM (voir plus haut) : la prod est téléchargée, analysée par
+  Tunebat dans une fenêtre visible, puis effacée.
 - **Descriptions complètes** (licence, BPM, clé) : quand YouTube ne donne que le début,
   l'appli lit la page de la vidéo depuis le téléphone, sinon via NewPipe Extractor
   (`YtDescription.java`) ; puis le
@@ -228,7 +227,8 @@ arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion �
 - **Retour haptique** léger sur chaque action (selon le réglage « vibrations » du
   téléphone), plus marqué quand le BPM est trouvé. La version web Android vibre aussi.
 - **Sécurité** : permissions Internet et micro (« Rec dessus ») seulement : aucun accès aux
-  fichiers ni aux médias du téléphone ; la fenêtre Tunebat ne va que sur Tunebat.
+  fichiers ni aux médias du téléphone ; le son de la prod ne va que dans le cache de l'appli
+  et il est effacé après Tunebat ; la fenêtre Tunebat ne va que sur Tunebat.
 - Code : `android/` (Capacitor 8, module natif `MelofindsNativePlugin.java`),
   `capacitor.config.json`, `apk/www` (écran hors connexion), construction
   `.github/workflows/apk-build.yml` (version GitHub « apk », jamais « dernière »).

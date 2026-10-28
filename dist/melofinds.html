@@ -1005,7 +1005,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 28/10/2026 à 18:28</p>
+    <p class="build-stamp">Version du 28/10/2026 à 18:44</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -3663,11 +3663,11 @@ function tbState(id) {
   const c = tbCache[id];
   return c?.bpm || c?.key ? 'ok' : '';
 }
-const TB_LABEL = { '': 'Trouver le BPM et la clé sur Tunebat', busy: 'Recherche sur Tunebat…', ok: 'BPM et clé trouvés (en bleu) : toucher pour les détails' };
+const TB_LABEL = { '': 'BPM et clé avec Tunebat Analyzer', busy: 'Tunebat analyse la prod…', ok: 'BPM et clé trouvés (en bleu) : toucher pour les détails' };
 function tbButton(item) {
   const st = tbState(item.id);
   return h('button', { type: 'button', class: `tb-btn${st ? ` ${st}` : ''}`, 'data-tb': item.id, 'aria-label': TB_LABEL[st], title: TB_LABEL[st],
-    onclick: (e) => { e.stopPropagation(); if (nativeYt.tb && !tbState(item.id)) quickBpm(item); else openBpmSheet(item); } }, 'BPM');
+    onclick: (e) => { e.stopPropagation(); if (nativeYt.tba && !tbState(item.id)) quickBpm(item); else openBpmSheet(item); } }, 'BPM');
 }
 function syncTbUi() {
   $$('.tb-btn[data-tb]').forEach((b) => {
@@ -3709,7 +3709,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 // Ce que sait faire l'APK installée (les anciennes versions n'ont pas tout)
-const nativeYt = { desc: false, scan: false, tb: false, checked: false };
+const nativeYt = { desc: false, scan: false, tba: false, checked: false };
 if (isNative()) {
   document.documentElement.classList.add('apk');
   (async () => {
@@ -3717,38 +3717,42 @@ if (isNative()) {
       const f = (await mfn().info())?.features || [];
       nativeYt.desc = f.includes('ytDesc');
       nativeYt.scan = f.includes('scanQr');
-      nativeYt.tb = f.includes('tunebat');
+      nativeYt.tba = f.includes('tbAnalyzer');
     } catch { /* ancienne version de l'APK */ }
     nativeYt.checked = true;
   })();
 }
 
-// --- Tunebat (APK) : recherche depuis le téléphone, exactement comme Melofinds PC. Si Tunebat
-// demande une vérification, une fenêtre Tunebat s'ouvre et c'est l'utilisateur qui la fait
-// (rien n'est contourné) ; la réponse est lue toute seule et la fenêtre se ferme.
-function tbItems(body) {
-  try { const d = JSON.parse(body || ''); const it = d?.data?.items; return Array.isArray(it) ? it : null; } catch { return null; }
-}
-async function tunebatFind(item, { browser = false } = {}) {
-  const n = mfn();
-  if (!n || !nativeYt.tb) return { status: 'off' };
-  const ctx = { title: item.title, channel: item.channel, duration: item.duration };
-  const qs = tbQueries(ctx);
-  if (!qs.length) return { status: 'none' };
-  for (const q of qs) {
-    let items = null;
-    try { items = tbItems((await n.tunebatSearch({ term: q }))?.body); } catch { items = null; }
-    if (!items && browser) {
-      try { items = tbItems((await n.tunebatBrowser({ term: q }))?.body); } catch (e) { if (e?.code === 'cancel') return { status: 'cancel' }; }
-    }
-    if (!items) return { status: 'blocked' };
-    const hit = tbPick(items, ctx);
-    if (hit) return { status: 'ok', hit };
+// --- Tunebat Analyzer (APK) : la prod est téléchargée dans le cache de l'appli, donnée à
+// l'outil tunebat.com/Analyzer (fenêtre visible : Tunebat analyse dans le navigateur, le
+// fichier n'est envoyé nulle part), la clé et le BPM sont lus dans son tableau, puis le
+// fichier est effacé. Si Tunebat demande une vérification, c'est l'utilisateur qui la fait.
+const TB_ANALYZER = 'https://tunebat.com/Analyzer';
+function tbParse(o) {
+  const row = String(o?.row || '');
+  const key = tbKey(o?.key) || tbKey((row.match(/\b[A-G][#♯b♭]?\s*(?:major|minor|maj|min)\b/i) || [])[0]);
+  const num = (v) => { const n = Math.round(Number(String(v || '').replace(',', '.').match(/\d{2,3}(?:\.\d+)?/)?.[0])); return n >= 50 && n <= 220 ? n : null; };
+  let bpm = num(o?.bpm);
+  if (!bpm) {
+    // repli : un nombre de la ligne qui n'est ni une durée (3:05) ni dans le nom du fichier
+    const rest = row.replace(/Melofinds-[\w-]{11}(\.wav)?/gi, ' ').replace(/\b\d{1,2}:\d{2}\b/g, ' ');
+    bpm = (rest.match(/\b\d{2,3}(?:\.\d+)?\b/g) || []).map(num).find(Boolean) || null;
   }
-  return { status: 'none' };
+  return key || bpm ? { key, bpm, camelot: String(o?.camelot || '').slice(0, 8) } : null;
+}
+async function tunebatAnalyze(item) {
+  const n = mfn();
+  const id = ytIdOf(item);
+  if (!n || !nativeYt.tba || !id) return { status: 'off' };
+  try {
+    const hit = tbParse(await n.tunebatAnalyze({ id }));
+    return hit ? { status: 'ok', hit } : { status: 'none' };
+  } catch (e) {
+    return { status: e?.code === 'cancel' ? 'cancel' : 'fail', err: e?.message || '' };
+  }
 }
 function keepTunebat(item, hit) {
-  const t = { bpm: hit.bpm, key: hit.key, src: 'tunebat', at: Date.now(), name: hit.name || '', artists: (hit.artists || []).slice(0, 3) };
+  const t = { bpm: hit.bpm, key: hit.key, camelot: hit.camelot || '', src: 'tunebat', how: 'analyzer', at: Date.now() };
   tbStore(item.id, t);
   syncTbUi();
   refreshItem(item);
@@ -3756,59 +3760,37 @@ function keepTunebat(item, hit) {
   pcSyncTags(ytIdOf(item) || item.id);
   return t;
 }
-const TB_MISS = {
-  none: 'Cette prod n’est pas sur Tunebat (pas sortie sur Spotify, ou sous un autre nom).',
-  blocked: 'Tunebat n’a pas répondu : réessaie dans un moment.',
-};
-// Fiche ouverte sans BPM / clé : Tunebat tout seul, sans ouvrir de fenêtre (une fois par prod)
-const tbTried = new Set();
-let tbQueue = Promise.resolve();
-function tbAuto(item) {
-  const id = ytIdOf(item);
-  if (!id || !nativeYt.tb || tbFor(id) || tbTried.has(id)) return;
-  tbTried.add(id);
-  tbQueue = tbQueue.then(async () => {
-    if (tbFor(id)) return;
-    const r = await tunebatFind(item);
-    if (r.status === 'ok') keepTunebat(item, r.hit);
-  }).catch(() => {});
-}
-// Bouton BPM dans l'APK : Tunebat d'un coup (fenêtre Tunebat si une vérification est demandée)
+// Bouton BPM dans l'APK : tout se fait d'un coup
 async function quickBpm(item) {
-  if (bpmJob.id === item.id) return;
-  const id = ytIdOf(item);
-  if (id) tbTried.add(id);
+  if (bpmJob.id) return;
   haptic();
   bpmJob.id = item.id;
   syncTbUi();
   let r;
-  try { r = await tunebatFind(item, { browser: true }); } finally { bpmJob.id = null; syncTbUi(); }
+  try { r = await tunebatAnalyze(item); } finally { bpmJob.id = null; syncTbUi(); }
   if (r.status === 'ok') { toast(`Tunebat : ${bpmText(keepTunebat(item, r.hit))}`); return; }
   if (r.status === 'cancel') return;
   haptic('warn');
-  openBpmSheet(item, TB_MISS[r.status] || '');
-}
-function tbSearchUrl(item) {
-  return `https://tunebat.com/Search?q=${encodeURIComponent(`${beatName(item.title)} ${item.channel || ''}`.trim())}`;
+  openBpmSheet(item, r.status === 'none' ? 'Tunebat n’a pas donné de résultat lisible.' : `Tunebat Analyzer : ${r.err || 'ça n’a pas marché'}`);
 }
 function openBpmSheet(item, note = '') {
   const out = h('div', { class: 'bpm-out', 'aria-live': 'polite' });
   const status = h('p', { class: 'bpm-status' }, note);
   const say = (t) => { status.textContent = t; };
-  const tbBtn = h('button', { type: 'button', class: 'primary' }, 'Chercher sur Tunebat');
+  const tbBtn = h('button', { type: 'button', class: 'primary' }, 'Analyser avec Tunebat');
   tbBtn.addEventListener('click', async () => {
     if (bpmJob.id) return;
     haptic();
     tbBtn.disabled = true;
-    say('Je cherche sur Tunebat…');
+    say('Tunebat Analyzer s’ouvre : je lui donne la prod…');
     bpmJob.id = item.id;
     syncTbUi();
     let r;
-    try { r = await tunebatFind(item, { browser: true }); } finally { bpmJob.id = null; syncTbUi(); tbBtn.disabled = false; }
+    try { r = await tunebatAnalyze(item); } finally { bpmJob.id = null; syncTbUi(); tbBtn.disabled = false; }
     if (r.status === 'ok') { keepTunebat(item, r.hit); say(''); show(); return; }
     if (r.status === 'cancel') { say(''); return; }
     haptic('warn');
-    say(TB_MISS[r.status] || '');
+    say(r.status === 'none' ? 'Tunebat n’a pas donné de résultat lisible.' : `Tunebat Analyzer : ${r.err || 'ça n’a pas marché'}`);
   });
   // Correction à la main (clé et / ou BPM) : gardée et prioritaire
   const fixForm = (cur) => {
@@ -3841,23 +3823,23 @@ function openBpmSheet(item, note = '') {
     out.replaceChildren(...[
       cur ? h('div', { class: 'bpm-res' }, h('b', { class: mine ? null : 'tb' }, bpmText(cur))) : null,
       cur ? h('p', { class: 'hint' }, mine ? 'Donné par toi : c’est ce qui s’affiche sur la prod.'
-        : `Trouvé sur Tunebat${cur.name ? ` : « ${cur.name} »${cur.artists?.length ? ` de ${cur.artists.join(', ')}` : ''}` : ''}, en bleu sur la prod. Si la description du beatmaker donne le BPM ou la clé, c’est elle qui compte.`) : null,
+        : `Trouvé par Tunebat${cur.how === 'analyzer' ? ' Analyzer (la prod analysée)' : cur.name ? ` : « ${cur.name} »` : ''}${cur.camelot ? ` · Camelot ${cur.camelot}` : ''}, en bleu sur la prod. Si la description du beatmaker donne le BPM ou la clé, c’est elle qui compte.`) : null,
       fixForm(cur),
     ].filter(Boolean));
   };
   openDrawer('BPM et clé', [
     h('h3', { class: 'd-title' }, displayTitle(item.title)),
-    nativeYt.tb ? h('div', { class: 'bpm-step' },
-      h('b', {}, 'Tunebat'),
-      h('span', {}, 'Je cherche la prod sur Tunebat depuis ton téléphone. Si Tunebat demande une vérification, sa page s’ouvre : fais-la, je lis le résultat tout seul.'),
+    nativeYt.tba ? h('div', { class: 'bpm-step' },
+      h('b', {}, 'Tunebat Analyzer'),
+      h('span', {}, 'Je télécharge la prod, je la donne à l’outil Analyzer de Tunebat (il l’analyse sur ton téléphone), je récupère la clé et le BPM, puis j’efface le fichier. Si Tunebat demande une vérification, fais-la.'),
       h('div', { class: 'd-actions' }, tbBtn))
       : h('div', { class: 'bpm-step' },
-        h('b', {}, 'Tunebat'),
+        h('b', {}, 'Tunebat Analyzer'),
         h('span', {}, isNative()
-          ? 'Mets l’appli à jour pour que je cherche sur Tunebat toute seule. En attendant : ouvre Tunebat et note le BPM et la clé ci-dessous.'
-          : 'Sur le site web, Tunebat ne me répond pas directement : ouvre-le, puis note le BPM et la clé ci-dessous. L’appli Android, elle, cherche toute seule ; et Melofinds PC les cherche quand la prod arrive.'),
-        h('div', { class: 'd-actions' }, h('a', { class: 'primary', href: tbSearchUrl(item), target: '_blank', rel: 'noopener noreferrer' }, 'Ouvrir Tunebat', icon('ext')),
-          isNative() && nativeYt.checked && !nativeYt.tb ? h('a', { class: 'ghost', href: APK_URL, rel: 'noopener' }, 'Mettre à jour l’appli') : null)),
+          ? 'Mets l’appli à jour : elle télécharge la prod et la donne à Tunebat Analyzer toute seule.'
+          : 'Un site ne peut pas télécharger la prod : l’appli Android le fait toute seule. Ici, ouvre Tunebat Analyzer avec un fichier de la prod, puis note le BPM et la clé ci-dessous.'),
+        h('div', { class: 'd-actions' }, h('a', { class: 'primary', href: TB_ANALYZER, target: '_blank', rel: 'noopener noreferrer' }, 'Ouvrir Tunebat Analyzer', icon('ext')),
+          isNative() && nativeYt.checked && !nativeYt.tba ? h('a', { class: 'ghost', href: APK_URL, rel: 'noopener' }, 'Mettre à jour l’appli') : null)),
     status,
     out,
   ]);
@@ -5120,7 +5102,6 @@ function beatDetails(item, r, terms = []) {
 function openBeat(item, plan) {
   const r = analyzed(item, plan);
   if (needsDesc(item)) pcAskDesc([item]);
-  if (!(r.bpm && r.key)) tbAuto(item); // APK : BPM / clé cherchés sur Tunebat tout seuls
 
   const saveBtn = h('button', { type: 'button', class: `ghost${isSaved(item.id) ? ' on' : ''}` }, icon('heart'), isSaved(item.id) ? 'Dans tes favoris' : 'Ajouter aux favoris');
   saveBtn.addEventListener('click', () => {
@@ -6950,16 +6931,6 @@ async function sendToPc(item) {
   if (!pc.info) { openPcSetup(item); return; }
   let r = null;
   try { r = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
-  // BPM / clé manquants : l'APK les cherche d'abord sur Tunebat pour que le PC les mette dans
-  // le nom, marqués « (Finded) ». Sinon ils partiront dès qu'ils sont trouvés.
-  if (r && (!r.bpm || !r.key) && nativeYt.tb && !tbFor(id) && !pc.queue[id]) {
-    toast('Je cherche le BPM et la clé sur Tunebat avant d’envoyer…');
-    try {
-      const t = await Promise.race([tunebatFind(item), wait(15000).then(() => null)]);
-      if (t?.status === 'ok') keepTunebat(item, t.hit);
-    } catch { /* envoyée sans */ }
-    try { r = analyzed(item, session?.plan || null); } catch { /* sans analyse */ }
-  }
   // Le PC nomme le fichier « Titre [Clé, BPM].wav » (sans « free ») ; il relit aussi la description.
   // Licence → étiquette du fichier sur le PC : [FFP], [F] ou [FFP, UPTO 5000]
   const msg = { v: id, t: String(item.title || '').slice(0, 200), bpm: r?.bpm || null, key: r?.key || null, tbBpm: r?.bpmTb || undefined, tbKey: r?.keyTb || undefined,

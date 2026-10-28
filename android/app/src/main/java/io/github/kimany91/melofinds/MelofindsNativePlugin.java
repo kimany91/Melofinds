@@ -18,16 +18,16 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanner;
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
 
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Pont entre l'app web Melofinds et Android : retour haptique, liens, Tunebat depuis le
- * téléphone (fenêtre visible si Tunebat demande une vérification), descriptions complètes
- * des vidéos, scanner du QR code de Melofinds PC. Aucun accès aux fichiers du téléphone.
+ * Pont entre l'app web Melofinds et Android : retour haptique, liens, clé et BPM par l'outil
+ * Analyzer de Tunebat (la prod est téléchargée dans le cache de l'app puis effacée),
+ * descriptions complètes des vidéos, scanner du QR code de Melofinds PC. Aucun accès aux
+ * fichiers du téléphone.
  */
 @CapacitorPlugin(name = "MelofindsNative")
 public class MelofindsNativePlugin extends Plugin {
@@ -74,71 +74,27 @@ public class MelofindsNativePlugin extends Plugin {
         JSArray features = new JSArray();
         features.put("ytDesc");
         features.put("scanQr");
-        features.put("tunebat");
+        features.put("tbAnalyzer");
         r.put("features", features);
         call.resolve(r);
     }
 
-    // ------------------------------------------------------------------ Tunebat
+    // ------------------------------------------------------------------ Tunebat Analyzer
 
     /**
-     * Recherche Tunebat depuis le téléphone, exactement comme Melofinds PC (même adresse,
-     * mêmes en-têtes) : { status, body }. Si Tunebat demande une vérification, l'app ouvre
-     * tunebatBrowser (fenêtre visible, la vérification est faite par l'utilisateur).
+     * Clé et BPM par l'outil Analyzer de Tunebat : la prod est téléchargée, donnée à la page
+     * tunebat.com/Analyzer (fenêtre visible), puis effacée. { key, bpm, camelot, row }.
      */
     @PluginMethod
-    public void tunebatSearch(PluginCall call) {
-        String term = call.getString("term", "").trim();
-        if (term.isEmpty() || term.length() > 120) { call.reject("Recherche vide"); return; }
-        new Thread(() -> {
-            java.net.HttpURLConnection c = null;
-            try {
-                c = (java.net.HttpURLConnection) new java.net.URL(TunebatActivity.API + java.net.URLEncoder.encode(term, "UTF-8")).openConnection();
-                c.setConnectTimeout(10000);
-                c.setReadTimeout(15000);
-                // même navigateur et mêmes cookies que la fenêtre Tunebat : une vérification faite
-                // une fois par l'utilisateur dans la fenêtre sert aussi aux recherches suivantes
-                c.setRequestProperty("User-Agent", android.webkit.WebSettings.getDefaultUserAgent(getContext()));
-                String ck = android.webkit.CookieManager.getInstance().getCookie("https://api.tunebat.com");
-                if (ck != null && !ck.isEmpty()) c.setRequestProperty("Cookie", ck);
-                c.setRequestProperty("Accept", "application/json");
-                c.setRequestProperty("Origin", "https://tunebat.com");
-                c.setRequestProperty("Referer", "https://tunebat.com/");
-                int code = c.getResponseCode();
-                InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
-                String body = "";
-                if (in != null) {
-                    try (InputStream s = in) {
-                        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-                        byte[] buf = new byte[16384];
-                        int n;
-                        while ((n = s.read(buf)) > 0 && out.size() < 2_000_000) out.write(buf, 0, n);
-                        body = out.toString("UTF-8");
-                    }
-                }
-                JSObject r = new JSObject();
-                r.put("status", code);
-                r.put("body", body.trim().startsWith("{") ? body : "");
-                call.resolve(r);
-            } catch (Exception e) {
-                call.reject("Tunebat injoignable", "fail");
-            } finally {
-                if (c != null) c.disconnect();
-            }
-        }).start();
-    }
-
-    /** Tunebat dans une fenêtre visible (TunebatActivity) : { status, body } quand c'est lu. */
-    @PluginMethod
-    public void tunebatBrowser(PluginCall call) {
-        String term = call.getString("term", "").trim();
-        if (term.isEmpty() || term.length() > 120) { call.reject("Recherche vide"); return; }
+    public void tunebatAnalyze(PluginCall call) {
+        String id = call.getString("id", "");
+        if (!YtStream.VIDEO_ID.matcher(id).matches()) { call.reject("Vidéo invalide"); return; }
         Activity a = getActivity();
         if (a == null) { call.reject("Appli pas prête"); return; }
         if (TunebatActivity.pending != null) TunebatActivity.pending.reject("Remplacée", "cancel");
         TunebatActivity.pending = call;
         Intent i = new Intent(a, TunebatActivity.class);
-        i.putExtra("term", term);
+        i.putExtra("id", id);
         a.startActivity(i);
     }
 
