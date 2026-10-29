@@ -347,6 +347,9 @@ public class MelofindsNativePlugin extends Plugin {
             JSObject r = new JSObject();
             r.put("linked", d != null);
             r.put("name", d != null ? d.getName() : "");
+            // pas relié, mais le dossier existe (appli réinstallée) : tes prods sont toujours là
+            File music = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC);
+            r.put("exists", d == null && new File(music, PhoneLibrary.FOLDER).exists());
             r.put("player", PhonePlayerService.snapshot());
             call.resolve(r);
         });

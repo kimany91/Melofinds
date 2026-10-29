@@ -592,6 +592,7 @@ async function phoneSetup() {
     const r = await mfn().phoneInfo();
     phone.linked = !!r?.linked;
     phone.name = String(r?.name || '');
+    phone.exists = !!r?.exists;
     if (r?.player) phone.state = { ...r.player, at: Date.now() };
     if (phone.linked) await phoneRefresh(true);
   } catch { /* plus tard */ }
@@ -982,6 +983,15 @@ function renderPhoneView() {
   }
   if (!nativeYt.phone) {
     list.replaceChildren(h('div', { class: 'phone-empty' }, h('p', { class: 'muted' }, 'Mets l’appli à jour pour télécharger les prods sur ton téléphone.'), h('a', { class: 'primary', href: APK_URL, rel: 'noopener' }, 'Mettre à jour l’appli')));
+    return;
+  }
+  if (!phone.linked && phone.exists) {
+    list.replaceChildren(h('div', { class: 'phone-empty' },
+      h('div', { class: 'pe-ico' }, icon('phone')),
+      h('b', {}, 'Tes prods sont toujours là'),
+      h('p', { class: 'muted' }, 'Le dossier « Melofinds Instru » est sur ton téléphone avec tes prods, leurs miniatures, étiquettes et favoris. Après une réinstallation, Android demande juste de le redonner : touche « Reconnecter », puis « Utiliser ce dossier » et « Autoriser ».'),
+      h('button', { type: 'button', class: 'primary', onclick: phonePick }, 'Reconnecter le dossier')));
+    renderPhonePlayer();
     return;
   }
   if (!phone.linked) {
