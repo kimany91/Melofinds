@@ -575,7 +575,16 @@ async function phoneSetup() {
   if (phone.setup) return;
   phone.setup = true;
   $('#navPhone').hidden = false;
-  try { await mfn().addListener('phonePlayer', (st) => { phone.state = { ...st, at: Date.now() }; renderPhonePlayer(); }); } catch { /* ancienne appli */ }
+  try {
+    await mfn().addListener('phonePlayer', (st) => {
+      const hold = phone.seekHold;
+      if (hold && Date.now() < hold.until && st.name === phone.state?.name && Math.abs((st.position || 0) - hold.ms) > 2000) {
+        st = { ...st, position: hold.ms + (st.playing ? Date.now() - hold.at : 0) };  // le lecteur n'a pas encore avancé
+      } else phone.seekHold = null;
+      phone.state = { ...st, at: Date.now() };
+      renderPhonePlayer();
+    });
+  } catch { /* ancienne appli */ }
   try { await mfn().addListener('phoneChanged', () => phoneRefresh(true)); } catch { /* ancienne appli */ }
   try {
     const r = await mfn().phoneInfo();
@@ -631,7 +640,8 @@ async function phoneDownload(item) {
   haptic();
   toast('Téléchargement sur ton téléphone…');
   try {
-    const res = await mfn().phoneDownload({ id, name, meta: { title: String(item.title || '').slice(0, 200), key: r.key || null, bpm: r.bpm || null, lic: L.category, channel: String(item.channel || '').slice(0, 80) } });
+    const tags = prodTags({ title: item.title, description: item.description || '', bpm: r.bpm });
+    const res = await mfn().phoneDownload({ id, name, meta: { title: String(item.title || '').slice(0, 200), key: r.key || null, bpm: r.bpm || null, lic: L.category, channel: String(item.channel || '').slice(0, 80), tags } });
     haptic('success');
     toast(`Sur ton téléphone : ${res?.name || name}`, { label: 'Écouter', run: () => { showView('phone'); phonePlayName(res?.name); } });
   } catch (e) {
@@ -646,8 +656,52 @@ const phoneShown = () => {
   const q = strip(phone.q).toLowerCase().trim();
   return [...phone.files].sort((a, b) => (b.at || 0) - (a.at || 0))
     .filter((f) => phone.filter !== 'fav' || f.meta?.fav)
-    .filter((f) => !q || strip(f.name).toLowerCase().includes(q));
+    .filter((f) => !q || q.split(/\s+/).every((w) => strip(`${f.name} ${phoneTags(f).join(' ')} ${f.meta?.channel || ''}`).toLowerCase().includes(w)));
 };
+// Étiquettes : gardées dans le dossier au téléchargement ; les anciennes prods les reçoivent une fois
+function phoneTags(f) {
+  const m = f?.meta || {};
+  if (Array.isArray(m.tags) && m.tags.length) return m.tags.map(String);
+  return prodTags({ title: m.title || phoneParts(f?.name).title, bpm: m.bpm });
+}
+const phoneInfoSent = new Set();
+function phoneSaveInfo(f) {
+  const m = f?.meta || {};
+  if (!f || phoneInfoSent.has(f.name) || !mfn()?.phoneInfoSet) return;
+  const needTags = !(Array.isArray(m.tags) && m.tags.length);
+  const col = !m.color && phone.colors[m.id];
+  if (!needTags && !col) return;
+  phoneInfoSent.add(f.name);
+  const tags = phoneTags(f);
+  mfn().phoneInfoSet({ name: f.name, tags, ...(col ? { color: col } : {}) }).then(() => {
+    f.meta = { ...m, tags, ...(col ? { color: col } : {}) };
+  }).catch(() => {});
+}
+// Ouvrir la prod dans la recherche principale (licence, BPM, détails…)
+function phoneOpenInSearch(f) {
+  const m = f?.meta || {};
+  if (!/^[\w-]{11}$/.test(m.id || '')) { toast('Lien YouTube inconnu pour cette prod'); return; }
+  if (searching) { toast('Attends la fin de la recherche en cours'); return; }
+  haptic();
+  const title = m.title || phoneParts(f.name).title;
+  const known = session?.items?.get(m.id) || state.beats.find((b) => b.id === m.id);
+  const item = known || { id: m.id, url: `https://www.youtube.com/watch?v=${m.id}`, title, channel: m.channel || '', description: pcDescCache.get(m.id) || '', status: pcDescCache.has(m.id) ? 'done' : 'unread', partial: !pcDescCache.has(m.id), foundBy: ['telephone'] };
+  if (!known) {
+    session = { prompt: title, plan: buildPlan(title, { licenses: searchPrefs.licenses, device, depth: 'rapide' }), done: [], items: new Map([[m.id, item]]), at: new Date().toISOString() };
+    beforeChannel = null;
+    rendered = new Set();
+    $('#grid').replaceChildren();
+    promptEl.value = title;
+    renderChannelBar();
+    $('#hero').classList.add('compact');
+    $('#results').hidden = false;
+    renderResults();
+    setStatus('Ta prod du téléphone : je lis sa description…', 1, true);
+  }
+  showView('search');
+  openBeat(item, session?.plan || null);
+  if (needsDesc(item)) pcAskDesc([item]).then(() => { if (!needsDesc(item)) setStatus('Description lue : licence vérifiée', 1, true); });
+}
 // « Titre [C# min, 140 BPM] [FFP].m4a » → titre + pastilles (clé, BPM, licence, trouvé par Tunebat)
 function phoneParts(name) {
   let t = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '');
@@ -694,9 +748,9 @@ function thumbColor(src) {
     img.src = src;
   });
 }
-const phoneTint = (id) => {
-  const c = phone.colors[id];
-  return c ? `--ph:${c.h} ${c.s}%` : '';
+const phoneTint = (f) => {
+  const c = f?.meta?.color || phone.colors[f?.meta?.id];
+  return c ? `--ph:${Number(c.h) || 0} ${Number(c.s) || 60}%` : '--ph:230 12%';
 };
 const phoneThumb = (id) => phone.thumbs.get(id) || (navigator.onLine && /^[\w-]{11}$/.test(id || '') ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : '');
 async function phoneLoadThumbs() {
@@ -708,9 +762,11 @@ async function phoneLoadThumbs() {
   for (const [id, src] of Object.entries(t)) {
     if (typeof src !== 'string' || !src.startsWith('data:image/')) continue;
     phone.thumbs.set(id, src);
-    if (!phone.colors[id]) { const c = await thumbColor(src); if (c) { phone.colors[id] = c; colored = true; } }
+    const owner = phone.files.find((f) => f.meta?.id === id);
+    if (!owner?.meta?.color && !phone.colors[id]) { const c = await thumbColor(src); if (c) { phone.colors[id] = c; colored = true; } }
   }
   if (colored) { const keep = Object.fromEntries(Object.entries(phone.colors).slice(-400)); phone.colors = keep; local.set('phColors', keep); }
+  phone.files.forEach(phoneSaveInfo);
   renderPhoneView();
 }
 async function phonePlayName(name) {
@@ -742,6 +798,21 @@ async function phoneToggleFav(name) {
 const phoneHeart = (f, cls = '') => h('button', { type: 'button', class: `ph-heart${f?.meta?.fav ? ' on' : ''}${cls ? ` ${cls}` : ''}`, 'aria-pressed': String(!!f?.meta?.fav), 'aria-label': f?.meta?.fav ? 'Retirer des favoris' : 'Ajouter aux favoris',
   onclick: (e) => { e.stopPropagation(); if (f) phoneToggleFav(f.name); } }, icon('heart'));
 const phoneChips = (chips) => (chips.length ? h('span', { class: 'ph-chips' }, ...chips.map((c) => h('i', { class: c.c }, c.t))) : null);
+// Étiquettes cliquables : un appui cherche les prods du téléphone qui l'ont
+function phoneTagRow(f, max = 12) {
+  const tags = phoneTags(f).slice(0, max);
+  if (!tags.length) return null;
+  return h('span', { class: 'ph-tags' }, ...tags.map((t) => h('button', { type: 'button', class: 'ph-tag', onclick: (e) => {
+    e.stopPropagation();
+    haptic();
+    phone.q = t;
+    phone.filter = 'all';
+    const inp = $('#phoneSearch');
+    if (inp) inp.value = t;
+    renderPhoneView();
+    $('#phoneSearchBar')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } }, t)));
+}
 let phoneSeeking = false;
 let phoneTick = 0;
 // position qui avance toute seule entre deux nouvelles du lecteur
@@ -761,11 +832,11 @@ function renderPhonePlayer() {
   const f = phone.files.find((x) => x.name === st.name);
   const id = st.id || f?.meta?.id || '';
   const parts = phoneParts(st.name);
-  const sig = `${st.name}|${phoneThumb(id).slice(0, 80)}${phoneThumb(id).length}|${phoneTint(id)}|${!!f?.meta?.fav}`;
+  const sig = `${st.name}|${phoneThumb(id).slice(0, 80)}${phoneThumb(id).length}|${phoneTint(f)}|${!!f?.meta?.fav}|${phoneTags(f).join(',')}`;
   if (box.dataset.sig !== sig) {
     box.dataset.sig = sig;
     box.dataset.name = st.name;
-    box.setAttribute('style', phoneTint(id));
+    box.setAttribute('style', phoneTint(f));
     const thumb = phoneThumb(id);
     const range = h('input', { type: 'range', min: '0', max: '1000', step: '1', value: '0', 'aria-label': 'Position dans la prod' });
     // pendant qu'on fait glisser : l'affichage suit le doigt ; au lâcher : la lecture va là
@@ -774,16 +845,22 @@ function renderPhonePlayer() {
     range.addEventListener('change', () => {
       const dur = phone.state?.duration || 0;
       const ms = (Number(range.value) / 1000) * dur;
-      if (dur > 0) { phone.state = { ...phone.state, position: ms, at: Date.now() }; phoneCtl('seek', ms); }
-      setTimeout(() => { phoneSeeking = false; }, 400);
+      phoneSeeking = false;
+      if (dur > 0) {
+        // affiché tout de suite ; les nouvelles du lecteur d'avant l'avance sont ignorées
+        phone.seekHold = { ms, at: Date.now(), until: Date.now() + 2500 };
+        phone.state = { ...phone.state, position: ms, at: Date.now() };
+        phoneCtl('seek', ms);
+      }
+      renderPhonePlayer();
     });
     box.replaceChildren(
       thumb ? h('div', { class: 'pp-bg', style: `background-image:url("${thumb}")` }) : null,
       h('div', { class: 'pp-in' },
         h('div', { class: 'pp-top' },
           thumb ? h('img', { class: 'pp-art', src: thumb, alt: '' }) : h('div', { class: 'pp-art none' }, icon('phone')),
-          h('div', { class: 'pp-meta' }, h('small', {}, 'En lecture'), h('b', {}, parts.title), phoneChips(parts.chips), f?.meta?.channel ? h('span', { class: 'pp-ch' }, f.meta.channel) : null),
-          phoneHeart(f, 'pp-fav')),
+          h('div', { class: 'pp-meta' }, h('small', {}, 'En lecture'), h('b', {}, parts.title), phoneChips(parts.chips), phoneTagRow(f), f?.meta?.channel ? h('span', { class: 'pp-ch' }, f.meta.channel) : null),
+          h('div', { class: 'pp-side' }, phoneHeart(f, 'pp-fav'), f?.meta?.id ? h('button', { type: 'button', class: 'ph-find', 'aria-label': 'Ouvrir dans la recherche', title: 'Ouvrir dans la recherche', onclick: () => phoneOpenInSearch(f) }, icon('search')) : null)),
         h('div', { class: 'seek' }, h('span', { class: 'pp-pos' }), range, h('span', { class: 'pp-dur' })),
         h('div', { class: 'ctl' },
           h('button', { type: 'button', class: 'pp-mode', 'aria-label': 'Mode de lecture', onclick: phoneNextMode }, icon('order'), h('span', {}, '')),
@@ -825,7 +902,7 @@ function renderPhoneView() {
     });
   }
   const bar = $('#phoneSearchBar');
-  if (bar) bar.hidden = !phone.linked || phone.files.length < 6;
+  if (bar) bar.hidden = !phone.linked || !phone.files.length;
   if (!nativeYt.phone) {
     list.replaceChildren(h('div', { class: 'phone-empty' }, h('p', { class: 'muted' }, 'Mets l’appli à jour pour télécharger les prods sur ton téléphone.'), h('a', { class: 'primary', href: APK_URL, rel: 'noopener' }, 'Mettre à jour l’appli')));
     return;
@@ -851,12 +928,14 @@ function renderPhoneView() {
       const parts = phoneParts(f.name);
       const thumb = phoneThumb(m.id);
       const cur = phone.state?.name === f.name;
-      return h('div', { class: `ph-row${cur ? ' on' : ''}${cur && phone.state?.playing ? ' playing' : ''}`, 'data-name': f.name, style: phoneTint(m.id), role: 'button', tabindex: '0',
+      return h('div', { class: `ph-row${cur ? ' on' : ''}${cur && phone.state?.playing ? ' playing' : ''}`, 'data-name': f.name, style: phoneTint(f), role: 'button', tabindex: '0',
         onclick: () => (cur ? phoneCtl('toggle') : phonePlayName(f.name)) },
         h('span', { class: 'ph-art' }, thumb ? h('img', { src: thumb, alt: '', loading: 'lazy', onerror: (e) => e.currentTarget.remove() }) : null,
           h('span', { class: 'ph-ov' }, icon('play'), h('span', { class: 'eq' }, h('i'), h('i'), h('i')))),
-        h('span', { class: 'ph-t' }, h('b', {}, parts.title), phoneChips(parts.chips), h('small', {}, [m.channel || null, f.size ? `${(f.size / 1048576).toFixed(1)} Mo` : null, f.at ? fmtAgo(f.at) : null].filter(Boolean).join(' · '))),
-        phoneHeart(f),
+        h('span', { class: 'ph-t' }, h('b', {}, parts.title), phoneChips(parts.chips), phoneTagRow(f, 4), h('small', {}, [m.channel || null, f.size ? `${(f.size / 1048576).toFixed(1)} Mo` : null, f.at ? fmtAgo(f.at) : null].filter(Boolean).join(' · '))),
+        h('span', { class: 'ph-acts' },
+          phoneHeart(f),
+          m.id ? h('button', { type: 'button', class: 'ph-find', 'aria-label': `Ouvrir ${parts.title} dans la recherche`, title: 'Ouvrir dans la recherche', onclick: (e) => { e.stopPropagation(); phoneOpenInSearch(f); } }, icon('search')) : null),
         h('button', { type: 'button', class: 'ph-del', 'aria-label': `Supprimer ${parts.title}`, title: 'Supprimer du téléphone', onclick: async (e) => {
           e.stopPropagation();
           if (!confirm(`Supprimer « ${parts.title} » de ton téléphone ?`)) return;

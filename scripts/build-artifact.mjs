@@ -25,6 +25,7 @@ const MODULES = [
   'src/core/tunebat.js',
   'src/core/usedby.js',
   'src/core/prodname.js',
+  'src/core/prodtags.js',
   'src/youtube/demo.js',
 ];
 

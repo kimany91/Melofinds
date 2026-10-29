@@ -249,6 +249,13 @@ arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion �
   « Choisir le dossier » le retrouve avec les prods (index `.melofinds.json` dans le dossier).
   Lecture hors connexion par le lecteur d'Android (`PhonePlayerService.java`) : continue écran
   verrouillé, commandes sur l'écran verrouillé et le casque, pause si le casque est débranché.
+  Chaque prod a sa miniature (gardée dans `.thumbs/`), une couleur tirée de la miniature au
+  téléchargement (gardée, elle ne change plus), ses pastilles clé / BPM / licence et ses
+  étiquettes (« Luther type beat », « Drill », « Énergique »… : `src/core/prodtags.js`) ; un
+  appui sur une étiquette cherche les prods du téléphone qui l'ont. Favoris (gardés dans le
+  dossier), modes de lecture (à la suite, aléatoire, en boucle), loupe : ouvre la prod dans la
+  recherche principale. Le son AAC de YouTube est réécrit en MP4 normal au téléchargement
+  (sinon le lecteur d'Android ne sait pas avancer dans la prod).
   Sans connexion au démarrage, l'écran « Pas de connexion » (`apk/www`) liste les prods du
   dossier et les joue. Code : `PhoneLibrary.java`, `PhonePlayerService.java`.
 - **Descriptions complètes** (licence, BPM, clé) : quand YouTube ne donne que le début,

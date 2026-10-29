@@ -119,6 +119,27 @@ final class PhoneLibrary {
         }
     }
 
+    /** Étiquettes (« Luther type beat », « Énergique »…) et couleur, si elle n'existe pas encore. */
+    static void setInfo(Context c, DocumentFile dir, String name, JSONArray tags, JSONObject color) throws Exception {
+        if (find(dir, name) == null) throw new IOException("prod introuvable");
+        JSONArray clean = new JSONArray();
+        for (int i = 0; tags != null && i < tags.length() && clean.length() < 12; i++) {
+            String t = tags.optString(i, "").replaceAll("\\p{Cntrl}", "").trim();
+            if (!t.isEmpty() && t.length() <= 40) clean.put(t);
+        }
+        JSONObject col = null;
+        if (color != null && color.has("h")) {
+            col = new JSONObject();
+            col.put("h", Math.max(0, Math.min(360, color.optInt("h"))));
+            col.put("s", Math.max(0, Math.min(100, color.optInt("s", 60))));
+        }
+        final JSONObject fc = col;
+        editMeta(c, dir, name, m -> {
+            if (clean.length() > 0) m.put("tags", clean);
+            if (fc != null && !m.has("color")) m.put("color", fc);
+        });
+    }
+
     // ------------------------------------------------------------------ liste
 
     static JSONArray list(Context c, DocumentFile dir) throws Exception {
@@ -158,6 +179,47 @@ final class PhoneLibrary {
         if (t == null) return null;
         DocumentFile f = t.findFile(id + ".jpg");
         return f != null && f.isFile() && f.length() > 0 ? f : null;
+    }
+
+    /**
+     * Couleur de la prod, tirée de sa miniature (teinte dominante et vive) : { h, s }, ou null.
+     * Calculée une fois au téléchargement puis gardée : elle ne change plus.
+     */
+    static JSONObject colorOf(byte[] img) {
+        try {
+            android.graphics.Bitmap b = android.graphics.BitmapFactory.decodeByteArray(img, 0, img.length);
+            if (b == null) return null;
+            android.graphics.Bitmap s = android.graphics.Bitmap.createScaledBitmap(b, 32, 18, true);
+            double x = 0, y = 0, w = 0, ls = 0;
+            float[] hsv = new float[3];
+            for (int j = 0; j < 18; j++) {
+                for (int i = 0; i < 32; i++) {
+                    int px = s.getPixel(i, j);
+                    android.graphics.Color.RGBToHSV((px >> 16) & 255, (px >> 8) & 255, px & 255, hsv);
+                    double sat = hsv[1];
+                    double val = hsv[2];
+                    if (sat * val < 0.04) continue;  // gris, noir, blanc : ne compte pas
+                    double wt = sat * sat * (0.3 + val);
+                    x += Math.cos(Math.toRadians(hsv[0])) * wt;
+                    y += Math.sin(Math.toRadians(hsv[0])) * wt;
+                    w += wt;
+                    ls += sat * wt;
+                }
+            }
+            if (w < 0.5) return null;
+            JSONObject o = new JSONObject();
+            o.put("h", (int) Math.round((Math.toDegrees(Math.atan2(y, x)) + 360) % 360));
+            o.put("s", (int) Math.round(Math.max(45, Math.min(85, ls / w * 100 + 15))));
+            return o;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    static JSONObject thumbColor(Context c, DocumentFile dir, String id) {
+        DocumentFile f = thumbFile(dir, id);
+        if (f == null) return null;
+        try { return colorOf(readAll(c, f.getUri(), 400_000)); } catch (Exception e) { return null; }
     }
 
     /** Miniature YouTube de la vidéo (320×180), gardée dans le dossier : elle s'affiche hors connexion. */
@@ -295,6 +357,12 @@ final class PhoneLibrary {
             if (m == null || find(dir, name) == null) continue;
             String id = m.optString("id", "");
             if (VIDEO_ID.matcher(id).matches() && thumbFile(dir, id) == null && saveThumb(c, dir, id)) changed = true;
+            if (!m.has("color") && thumbFile(dir, id) != null) {
+                JSONObject col = thumbColor(c, dir, id);
+                if (col != null) {
+                    try { editMeta(c, dir, name, x -> { if (!x.has("color")) x.put("color", col); }); changed = true; } catch (Exception ignored) { }
+                }
+            }
             if (m.optInt("seek", 0) != 1 && name.toLowerCase(Locale.ROOT).endsWith(".m4a") && !name.equals(playing)) {
                 try { if (fixSeek(c, dir, name)) changed = true; } catch (Exception ignored) { }
             }
@@ -357,7 +425,10 @@ final class PhoneLibrary {
                     m.put("at", System.currentTimeMillis());
                     if (sk) m.put("seek", 1);
                 });
-                saveThumb(c, dir, videoId);
+                if (saveThumb(c, dir, videoId)) {
+                    JSONObject col = thumbColor(c, dir, videoId);
+                    if (col != null) editMeta(c, dir, got, x -> { if (!x.has("color")) x.put("color", col); });
+                }
                 return got;
             } catch (Exception e) {
                 last = e;

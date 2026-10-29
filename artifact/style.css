@@ -916,15 +916,16 @@ body.mobile .chan-txt b { font-size: 17px; }
 .pp-meta b { font-size: 16.5px; line-height: 1.25; font-weight: 700; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .pp-ch { font-size: 12.5px; color: rgba(255,255,255,.62); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pp .ph-chips i { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.14); }
-.pp .seek { display: grid; grid-template-columns: 38px 1fr 38px; align-items: center; gap: 8px; font: 12px var(--f-mono, ui-monospace, monospace); color: rgba(255,255,255,.7); }
+.pp .seek { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; font: 12px var(--f-mono, ui-monospace, monospace); font-variant-numeric: tabular-nums; color: rgba(255,255,255,.7); }
+.pp .seek span { min-width: 4ch; white-space: nowrap; }
 .pp .seek span:last-child { text-align: right; }
-.pp input[type="range"] { --p: 0%; -webkit-appearance: none; appearance: none; width: 100%; height: 22px; margin: 0; background: transparent; cursor: pointer; touch-action: none; }
+.pp input[type="range"] { --p: 0%; -webkit-appearance: none; appearance: none; width: 100%; min-width: 0; height: 28px; margin: 0; background: transparent; cursor: pointer; touch-action: none; }
 .pp input[type="range"]::-webkit-slider-runnable-track { height: 5px; border-radius: 99px; background: linear-gradient(90deg, hsl(var(--ph) 70%) var(--p), rgba(255,255,255,.2) var(--p)); }
 .pp input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -5.5px; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
 .pp input[type="range"]::-moz-range-track { height: 5px; border-radius: 99px; background: rgba(255,255,255,.2); }
 .pp input[type="range"]::-moz-range-progress { height: 5px; border-radius: 99px; background: hsl(var(--ph) 70%); }
 .pp input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; }
-.pp .ctl { display: grid; grid-template-columns: 1fr auto auto auto 1fr; align-items: center; gap: 14px; }
+.pp .ctl { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto minmax(0, 1fr); align-items: center; gap: clamp(6px, 3vw, 14px); min-width: 0; }
 .pp .ctl button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 50%; border: 0; background: rgba(255,255,255,.1); color: #fff; transition: transform .15s, background .2s; }
 .pp .ctl button:active { transform: scale(.9); }
 .pp .ctl svg { width: 20px; height: 20px; }
@@ -935,7 +936,23 @@ body.mobile .chan-txt b { font-size: 17px; }
 .pp .ctl .pp-mode.on { background: hsl(var(--ph) 70% / .3); color: #fff; box-shadow: inset 0 0 0 1px hsl(var(--ph) 75% / .7); }
 .pp .ctl button:last-child { justify-self: end; width: 34px; height: 34px; background: transparent; color: rgba(255,255,255,.55); }
 .pp .ctl button:last-child svg { width: 15px; height: 15px; }
-.pp-fav { align-self: start; }
+.pp-side { display: grid; gap: 4px; align-self: start; justify-items: center; }
+@media (max-width: 420px) {
+  .pp .ctl .pp-mode { width: 40px; padding: 0; justify-content: center; }
+  .pp .ctl .pp-mode span { display: none; }
+  .pp-art { width: 84px; height: 84px; }
+  .pp-top { gap: 10px; }
+}
+.pp-in, .pp-top, .pp-meta { min-width: 0; }
+.ph-find { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: 50%; border: 0; background: transparent; color: var(--faint); }
+.ph-find svg { width: 18px; height: 18px; }
+.ph-find:active { transform: scale(.88); }
+.pp .ph-find { color: rgba(255,255,255,.7); width: 40px; height: 40px; }
+.ph-acts { display: grid; gap: 0; justify-items: center; }
+.ph-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.ph-tag { padding: 2px 8px; border-radius: 99px; border: 0; font: 600 11px var(--f-body, system-ui, sans-serif); color: hsl(var(--ph) 70%); background: color-mix(in srgb, hsl(var(--ph) 60%) 16%, transparent); }
+.ph-tag:active { transform: scale(.94); }
+.pp .ph-tag { color: #fff; background: hsl(var(--ph) 60% / .28); }
 
 /* Liste */
 .ph-tools { display: grid; gap: 10px; margin: 0 0 12px; }

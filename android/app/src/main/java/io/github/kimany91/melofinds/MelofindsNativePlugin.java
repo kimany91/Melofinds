@@ -473,6 +473,24 @@ public class MelofindsNativePlugin extends Plugin {
         });
     }
 
+    /** Étiquettes et couleur d'une prod (gardées dans le dossier) : { name, tags, color } */
+    @PluginMethod
+    public void phoneInfoSet(PluginCall call) {
+        String name = call.getString("name", "");
+        JSArray tags = call.getArray("tags", new JSArray());
+        JSObject color = call.getObject("color", null);
+        PHONE.submit(() -> {
+            try {
+                DocumentFile d = PhoneLibrary.folder(getContext(), false);
+                if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
+                PhoneLibrary.setInfo(getContext(), d, name, tags, color);
+                call.resolve();
+            } catch (Throwable e) {
+                fail(call, e);
+            }
+        });
+    }
+
     /** Mode de lecture : { mode: suite | aleatoire | boucle } */
     @PluginMethod
     public void phoneMode(PluginCall call) {
