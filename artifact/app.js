@@ -842,6 +842,57 @@ function phoneScrollTop() {
   setTimeout(go, 350);
   setTimeout(go, 900);
 }
+// Bouton PC : ton PC télécharge la prod (dossier temporaire, effacée ensuite) et la joue.
+// Le téléphone se met en pause ; la petite barre « Sur ton PC » sert à mettre en pause ou arrêter.
+const phonePc = { v: '', t: '', s: '', at: 0, err: '' };
+const PHPC_TEXT = { sent: 'Envoyée à ton PC…', loading: 'Ton PC télécharge la prod…', playing: 'En lecture sur ton PC', paused: 'En pause sur ton PC' };
+async function phonePcListen(f) {
+  const v = f?.meta?.id;
+  if (!v) return;
+  haptic();
+  if (!pc.info) { toast('Relie d’abord ton PC (onglet PC)'); return; }
+  if (!pcOn()) { toast('Ton PC est éteint ou hors ligne'); return; }
+  if (phonePc.v === v && (phonePc.s === 'playing' || phonePc.s === 'paused')) { phonePcCtl('toggle'); return; }
+  const t = phoneParts(f.name).title;
+  if (phone.state?.playing) phoneCtl('pause');
+  Object.assign(phonePc, { v, t, s: 'sent', at: Date.now(), err: '' });
+  renderPhonePcBar();
+  try { await ntfyPublish({ cmd: 'listen', v, t: String(f.meta?.title || t).slice(0, 160) }); } catch { phonePc.s = ''; renderPhonePcBar(); toast('Pas de réseau'); }
+}
+function phonePcCtl(a) {
+  haptic();
+  if (a === 'stop') { phonePc.s = ''; renderPhonePcBar(); }
+  ntfyPublish({ cmd: 'listen', a }).catch(() => toast('Pas de réseau'));
+}
+// Réponse du PC : { v, s: loading | playing | paused | stopped | ended | error, t, err }
+function onPcListen(d, m) {
+  const l = m.listen;
+  const at = (d.time || 0) * 1000;
+  if (!l || typeof l !== 'object' || at < phonePc.at - 5000 || Date.now() - at > 10 * 60e3) return;
+  const v = String(l.v || '');
+  if (v && v !== phonePc.v) return;  // réponse pour une prod d'avant
+  const s = String(l.s || '');
+  if (s === 'error') toast(`Lecture sur le PC impossible : ${String(l.err || '').slice(0, 90)}`);
+  phonePc.s = ['loading', 'playing', 'paused'].includes(s) ? s : '';
+  phonePc.at = Math.max(phonePc.at, at);
+  renderPhonePcBar();
+}
+function renderPhonePcBar() {
+  const bar = $('#phonePcBar');
+  if (!bar) return;
+  // demande restée sans réponse (PC lent ou éteint entre-temps)
+  if (phonePc.s === 'sent' && Date.now() - phonePc.at > 60e3) phonePc.s = '';
+  const on = !!phonePc.s;
+  bar.hidden = !on;
+  $$('.ph-pc').forEach((b) => b.classList.toggle('on', on && b.dataset.v === phonePc.v));
+  if (!on) { bar.replaceChildren(); return; }
+  const busy = phonePc.s === 'sent' || phonePc.s === 'loading';
+  bar.replaceChildren(...[
+    h('span', { class: `phpc-ico${busy ? ' busy' : ''}` }, icon('pc')),
+    h('span', { class: 'phpc-t' }, h('small', {}, PHPC_TEXT[phonePc.s] || ''), h('b', {}, phonePc.t)),
+    busy ? null : h('button', { type: 'button', class: 'phpc-btn', 'aria-label': phonePc.s === 'playing' ? 'Pause sur le PC' : 'Reprendre sur le PC', onclick: () => phonePcCtl('toggle') }, icon(phonePc.s === 'playing' ? 'pause' : 'play')),
+    h('button', { type: 'button', class: 'phpc-btn', 'aria-label': 'Arrêter sur le PC', onclick: () => phonePcCtl('stop') }, icon('stop'))].filter(Boolean));
+}
 const phoneCtl = (cmd, ms = 0) => mfn()?.phoneControl({ cmd, ms: Math.round(ms) }).catch(() => {});
 const fmtMs = (ms) => { const s = Math.max(0, Math.round((ms || 0) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const PH_MODES = { suite: ['À la suite', 'order'], aleatoire: ['Aléatoire', 'shuffle'], boucle: ['En boucle', 'repeat1'] };
@@ -1015,7 +1066,7 @@ function renderPhoneView() {
       const parts = phoneParts(f.name);
       const thumb = phoneThumb(m.id);
       const cur = phone.state?.name === f.name && !!phone.state?.active;
-      return h('div', { class: `ph-row${cur ? ' on' : ''}${cur && phone.state?.playing ? ' playing' : ''}`, 'data-name': f.name, style: phoneTint(f), role: 'button', tabindex: '0',
+      return h('div', { class: `ph-row${cur ? ' on' : ''}${cur && phone.state?.playing ? ' playing' : ''}${m.id && pc.info ? ' has-pc' : ''}`, 'data-name': f.name, style: phoneTint(f), role: 'button', tabindex: '0',
         onclick: () => {
           const live = phone.state?.active && phone.state?.name === f.name;
           if (live) { phoneCtl('toggle'); phoneScrollTop(); } else phonePlayName(f.name);
@@ -1025,6 +1076,7 @@ function renderPhoneView() {
         h('span', { class: 'ph-t' }, h('b', {}, parts.title), phoneChips(parts.chips), phoneTagRow(f, 4, false), h('small', {}, [m.channel || null, f.size ? `${(f.size / 1048576).toFixed(1)} Mo` : null, f.at ? fmtAgo(f.at) : null].filter(Boolean).join(' · '))),
         h('span', { class: 'ph-acts' },
           phoneHeart(f),
+          m.id && pc.info ? h('button', { type: 'button', class: `ph-pc${phonePc.s && phonePc.v === m.id ? ' on' : ''}`, 'data-v': m.id, 'aria-label': `Écouter ${parts.title} sur mon PC`, title: 'Écouter sur mon PC', onclick: (e) => { e.stopPropagation(); phonePcListen(f); } }, icon('pc')) : null,
           m.id ? h('button', { type: 'button', class: 'ph-find', 'aria-label': `Ouvrir ${parts.title} dans la recherche`, title: 'Ouvrir dans la recherche', onclick: (e) => { e.stopPropagation(); phoneOpenInSearch(f); } }, icon('search')) : null,
           h('button', { type: 'button', class: 'ph-del', 'aria-label': `Supprimer ${parts.title}`, title: 'Supprimer du téléphone', onclick: async (e) => {
             e.stopPropagation();
@@ -1036,6 +1088,7 @@ function renderPhoneView() {
     if (!shown.length) list.append(h('p', { class: 'muted ph-none' }, phone.filter === 'fav' ? 'Aucun favori : touche le cœur d’une prod.' : 'Aucune prod ne correspond.'));
   }
   renderPhonePlayer();
+  renderPhonePcBar();
 }
 $('#phoneSearch')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } });
 $('#phoneSearchClear')?.addEventListener('click', () => { phone.q = ''; const i = $('#phoneSearch'); if (i) { i.value = ''; i.focus(); } haptic(); renderPhoneView(); });
@@ -4496,6 +4549,11 @@ function onPcViewMessage(d, m, fresh) {
   if (m.lib) { pcSeen(d); onPcLib(d, m); return true; }
   if (m.aud) { pcSeen(d); onPcAudio(d, m, fresh); return true; }
   if (m.desc) { pcSeen(d); onPcDesc(d); return true; }
+  if (m.listen) { pcSeen(d); onPcListen(d, m); return true; }
+  if (m.cmd === 'listen') {  // PC d'avant 1.20.3 : il ne sait pas encore jouer une prod
+    if (fresh && phonePc.s) { phonePc.s = ''; renderPhonePcBar(); toast('Mets à jour Melofinds PC pour écouter sur ton PC'); }
+    return true;
+  }
   if (m.cmd === 'desc') return true;  // PC d'avant 3.18 : il ne sait pas lire les descriptions
   if (m.q && typeof m.q === 'object') {
     pcSeen(d);

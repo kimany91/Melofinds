@@ -15,7 +15,9 @@ import urllib.error
 from pathlib import Path
 
 import hashlib
+import queue
 import tempfile
+import threading
 
 import mf_core as C
 import mf_flmake as FM
@@ -76,6 +78,195 @@ def _stop_reason():
         return ""
 
 
+class Mci:
+    """Lecteur intégré à Windows (MCI) : .wav, pause, reprise. Rien à installer."""
+
+    def __init__(self, alias="mflisten"):
+        self.alias, self.path = alias, None
+        self.ok = C.WINDOWS
+        if self.ok:
+            import ctypes
+            self._send = ctypes.windll.winmm.mciSendStringW
+            self._buf = ctypes.create_unicode_buffer(256)
+
+    def _cmd(self, text):
+        if not self.ok:
+            return None
+        return self._buf.value if self._send(text, self._buf, 255, 0) == 0 else None
+
+    def play(self, path):
+        self.stop()
+        p = str(path).replace('"', "")
+        if self._cmd(f'open "{p}" type mpegvideo alias {self.alias}') is None and self._cmd(f'open "{p}" alias {self.alias}') is None:
+            return False
+        self._cmd(f"play {self.alias}")
+        self.path = str(path)
+        return True
+
+    def mode(self):
+        return (self._cmd(f"status {self.alias} mode") or "stopped") if self.path else None
+
+    def toggle(self):
+        m = self.mode()
+        if m == "playing":
+            self._cmd(f"pause {self.alias}")
+            return "paused"
+        if m in ("paused", "stopped"):
+            self._cmd(f"play {self.alias}")
+            return "playing"
+        return None
+
+    def stop(self):
+        if self.path:
+            self._cmd(f"close {self.alias}")
+        self.path = None
+
+
+class Listen:
+    """Bouton PC de l'onglet Téléphone : la prod est téléchargée en .wav dans un dossier
+    temporaire (jamais dans ton dossier de prods) et jouée sur le PC. Seule la dernière
+    demande compte ; les sons d'écoute sont effacés (4 gardés au plus, tous à l'arrêt)."""
+    PER_HOUR = 60
+    KEEP = 4
+    MAX_AGE_MS = 180_000  # demande faite pendant que le PC était éteint : pas de son surprise plus tard
+
+    def __init__(self, folder=None, player=None, fetch=None, reply=None):
+        self.dir = Path(folder or Path(tempfile.gettempdir()) / "melofinds-ecoute-pc")
+        self.player = player or Mci()
+        self.fetch = fetch or C.download_listen
+        self.reply = reply or C.reply
+        self.gen = 0
+        self.recent = []
+        self.cur = None          # (code, vid, titre) du son chargé
+        self.q = queue.Queue()   # tout ce qui touche au lecteur passe par un seul fil
+        self.clear()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def _files(self):
+        try:
+            return [p for p in self.dir.iterdir() if p.is_file() and re.fullmatch(r"[A-Za-z0-9_-]{11}\.wav", p.name)]
+        except OSError:
+            return []
+
+    def clear(self, keep=0, spare=None):
+        files = sorted(self._files(), key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in files[keep:]:
+            if spare and p.name == spare:
+                continue
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
+    def _say(self, code, vid, state, title="", err=""):
+        body = {"v": vid, "s": state}
+        if title:
+            body["t"] = title[:160]
+        if err:
+            body["err"] = str(err)[:200]
+        try:
+            self.reply(code, {"listen": body})
+        except Exception:
+            pass
+
+    def request(self, code, msg):
+        a = str(msg.get("a") or "")
+        if a in ("toggle", "stop"):
+            if a == "stop":
+                self.gen += 1  # un téléchargement en cours ne jouera pas
+            self.q.put((a, code))
+            return
+        vid = str(msg.get("v") or "")
+        if not C.VIDEO_ID.match(vid):
+            return
+        ts = msg.get("ts")
+        if isinstance(ts, (int, float)) and time.time() * 1000 - ts > self.MAX_AGE_MS:
+            return
+        title = C.clean_title(msg.get("t") or vid)[:160]
+        if not self.player.ok:
+            self._say(code, vid, "error", title, "lecture sur le PC : Windows seulement")
+            return
+        now = time.time()
+        self.recent = [t for t in self.recent if t > now - 3600]
+        if len(self.recent) >= self.PER_HOUR:
+            self._say(code, vid, "error", title, "limite de 60 écoutes par heure")
+            return
+        self.recent.append(now)
+        self.gen += 1
+        gen = self.gen
+        self.q.put(("halt", code))
+        have = self.dir / f"{vid}.wav"
+        if C.is_wav(have):
+            self.q.put(("play", gen, code, vid, title, have))
+            return
+        self._say(code, vid, "loading", title)
+        log(f"Écoute sur le PC : {title}")
+        threading.Thread(target=self._get, args=(gen, code, vid, title), daemon=True).start()
+
+    def _get(self, gen, code, vid, title):
+        try:
+            path, err = self.fetch(vid, self.dir)
+        except Exception as e:
+            path, err = None, f"erreur inattendue : {e}"
+        if gen != self.gen:
+            return  # une autre prod a été demandée entre-temps
+        if not path:
+            self._say(code, vid, "error", title, err or "téléchargement impossible")
+            return
+        self.q.put(("play", gen, code, vid, title, path))
+
+    def _loop(self):
+        while True:
+            try:
+                act = self.q.get(timeout=1)
+            except queue.Empty:
+                act = None
+            try:
+                if act is None:
+                    if self.cur and self.player.mode() == "stopped":  # arrivée à la fin
+                        code, vid, title = self.cur
+                        self.player.stop()
+                        self.cur = None
+                        self._say(code, vid, "ended", title)
+                    continue
+                kind = act[0]
+                if kind == "quit":
+                    self.player.stop()
+                    self.cur = None
+                    self.clear()
+                    return
+                if kind == "halt":  # une nouvelle prod arrive : celle d'avant s'arrête tout de suite
+                    self.player.stop()
+                    self.cur = None
+                elif kind == "play":
+                    _, gen, code, vid, title, path = act
+                    if gen != self.gen:
+                        continue
+                    if self.player.play(path):
+                        self.cur = (code, vid, title)
+                        self._say(code, vid, "playing", title)
+                        self.clear(self.KEEP, spare=Path(path).name)
+                    else:
+                        self._say(code, vid, "error", title, "le PC n'arrive pas à lire ce son")
+                elif kind == "toggle" and self.cur:
+                    st = self.player.toggle()
+                    if st:
+                        self._say(act[1], self.cur[1], st, self.cur[2])
+                elif kind == "stop":
+                    was = self.cur
+                    self.player.stop()
+                    self.cur = None
+                    self._say(act[1], was[1] if was else "", "stopped", was[2] if was else "")
+            except Exception:
+                log("Écoute sur le PC :\n" + traceback.format_exc())
+
+    def close(self):
+        self.gen += 1
+        self.q.put(("quit",))
+        self.thread.join(timeout=5)
+
+
 class Remote:
     """Écoute et gestion depuis l'app web : liste des projets, copies d'écoute, renommer,
     icône / couleur, favori. Tout reste dans le dossier des projets ; les limites de
@@ -96,6 +287,7 @@ class Remote:
         self.sent_at = {}        # appareil → dernier envoi de la liste
         self.sig = {}            # appareil → empreinte de la dernière liste envoyée
         self.checked = 0.0
+        self.listen = None       # écoute sur le PC (créée à la première demande)
         # (heure, octets) envoyés en pièces jointes ces 3 dernières heures : gardé dans l'état,
         # pour ne pas l'oublier à un redémarrage ou une mise à jour (ntfy.sh, lui, s'en souvient)
         self.audio = [tuple(x) for x in (st.get("uploads") or []) if isinstance(x, (list, tuple)) and len(x) == 2]
@@ -212,6 +404,11 @@ class Remote:
         self.active[code] = time.time()
         if cmd == "desc":  # descriptions que YouTube cache à l'app (rien du PC n'est partagé)
             self.send_descriptions(code, msg.get("v"))
+            return
+        if cmd == "listen":  # bouton PC de l'onglet Téléphone : jouer la prod sur le PC
+            if self.listen is None:
+                self.listen = Listen()
+            self.listen.request(code, msg)
             return
         if not self.enabled(cfg):
             C.reply(code, {"cmd": cmd, "ok": False, "err": "écoute et gestion à distance désactivées dans Melofinds PC"})
@@ -627,6 +824,8 @@ def worker(once=False):
             except Exception:
                 pass
         stop_watch()
+        if remote.listen is not None:
+            remote.listen.close()  # le son s'arrête et les fichiers d'écoute sont effacés
         for f in (P.heartbeat, P.pid, P.progress, P.kick) if reason == "update" else (P.heartbeat, P.pid, P.stop, P.progress, P.kick):
             try:
                 f.unlink(missing_ok=True)

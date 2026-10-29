@@ -957,7 +957,25 @@ body.mobile .chan-txt b { font-size: 17px; }
 .ph-find:active { transform: scale(.88); }
 .pp .ph-find { color: rgba(255,255,255,.7); width: 40px; height: 40px; }
 .ph-acts { position: absolute; top: 4px; right: 4px; display: flex; gap: 0; }
-.ph-acts .ph-heart, .ph-acts .ph-find, .ph-acts .ph-del { width: 32px; height: 32px; }
+.ph-acts .ph-heart, .ph-acts .ph-find, .ph-acts .ph-del, .ph-acts .ph-pc { width: 32px; height: 32px; }
+.ph-pc { display: grid; place-items: center; padding: 0; border-radius: 50%; border: 0; background: transparent; color: var(--faint); }
+.ph-pc svg { width: 17px; height: 17px; }
+.ph-pc:active { transform: scale(.88); }
+.ph-pc.on { color: hsl(var(--ph) 72%); background: color-mix(in srgb, hsl(var(--ph) 60%) 18%, transparent); }
+.ph-row.has-pc .ph-t b { padding-right: 130px; }
+/* « Sur ton PC » : la prod que joue le PC */
+.phpc { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px; margin: 0 0 12px; padding: 8px 8px 8px 12px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 12%, var(--panel-2)); }
+.phpc[hidden] { display: none; }
+.phpc-ico { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--text); }
+.phpc-ico svg { width: 18px; height: 18px; }
+.phpc-ico.busy { animation: phpc-pulse 1.2s ease-in-out infinite; }
+@keyframes phpc-pulse { 50% { opacity: .45; } }
+.phpc-t { display: grid; min-width: 0; }
+.phpc-t small { color: var(--muted); font-size: 11.5px; }
+.phpc-t b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phpc-btn { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border-radius: 50%; border: 0; background: var(--panel-3); color: var(--text); }
+.phpc-btn svg { width: 17px; height: 17px; }
+.phpc-btn:active { transform: scale(.9); }
 .ph-acts .ph-heart svg { width: 17px; height: 17px; }
 .ph-acts .ph-find svg { width: 16px; height: 16px; }
 .ph-row .ph-t b { padding-right: 98px; }
@@ -1055,6 +1073,7 @@ body.mobile .chan-txt b { font-size: 17px; }
   <symbol id="i-loop" viewBox="0 0 24 24"><path d="M4 11V9a3 3 0 0 1 3-3h11M15 3l3 3-3 3M20 13v2a3 3 0 0 1-3 3H6M9 21l-3-3 3-3" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-qr" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M14 14h2.5v2.5H14zM17.5 17.5H20V20h-2.5zM14 18h2v2h-2zM18 14h2v2h-2z" fill="currentColor"/></symbol>
   <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10.5 18.5h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-pc" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="12.5" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8.5 20.5h7M12 16.5v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-prev" viewBox="0 0 24 24"><path d="M7 5v14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M18 5.5v13L9 12l9-6.5Z" fill="currentColor"/></symbol>
   <symbol id="i-next" viewBox="0 0 24 24"><path d="M17 5v14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M6 5.5v13L15 12 6 5.5Z" fill="currentColor"/></symbol>
   <symbol id="i-order" viewBox="0 0 24 24"><path d="M4 7h11M4 12h11M4 17h7" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M17 14.5v6l4-3-4-3Z" fill="currentColor"/></symbol>
@@ -1149,7 +1168,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 29/10/2026 à 17:18</p>
+    <p class="build-stamp">Version du 29/10/2026 à 18:25</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -1208,6 +1227,7 @@ body.mobile .chan-txt b { font-size: 17px; }
     </div>
     <p class="muted phone-intro">Musique / Melofinds Instru · hors connexion · écran verrouillé</p>
     <div id="phonePlayer" class="pp" hidden></div>
+    <div id="phonePcBar" class="phpc" role="status" aria-live="polite" hidden></div>
     <div class="ph-tools">
       <div class="seg" id="phoneSeg" role="tablist" aria-label="Prods affichées" hidden>
         <button type="button" class="seg-btn active" data-f="all">Tout</button>
@@ -4753,6 +4773,57 @@ function phoneScrollTop() {
   setTimeout(go, 350);
   setTimeout(go, 900);
 }
+// Bouton PC : ton PC télécharge la prod (dossier temporaire, effacée ensuite) et la joue.
+// Le téléphone se met en pause ; la petite barre « Sur ton PC » sert à mettre en pause ou arrêter.
+const phonePc = { v: '', t: '', s: '', at: 0, err: '' };
+const PHPC_TEXT = { sent: 'Envoyée à ton PC…', loading: 'Ton PC télécharge la prod…', playing: 'En lecture sur ton PC', paused: 'En pause sur ton PC' };
+async function phonePcListen(f) {
+  const v = f?.meta?.id;
+  if (!v) return;
+  haptic();
+  if (!pc.info) { toast('Relie d’abord ton PC (onglet PC)'); return; }
+  if (!pcOn()) { toast('Ton PC est éteint ou hors ligne'); return; }
+  if (phonePc.v === v && (phonePc.s === 'playing' || phonePc.s === 'paused')) { phonePcCtl('toggle'); return; }
+  const t = phoneParts(f.name).title;
+  if (phone.state?.playing) phoneCtl('pause');
+  Object.assign(phonePc, { v, t, s: 'sent', at: Date.now(), err: '' });
+  renderPhonePcBar();
+  try { await ntfyPublish({ cmd: 'listen', v, t: String(f.meta?.title || t).slice(0, 160) }); } catch { phonePc.s = ''; renderPhonePcBar(); toast('Pas de réseau'); }
+}
+function phonePcCtl(a) {
+  haptic();
+  if (a === 'stop') { phonePc.s = ''; renderPhonePcBar(); }
+  ntfyPublish({ cmd: 'listen', a }).catch(() => toast('Pas de réseau'));
+}
+// Réponse du PC : { v, s: loading | playing | paused | stopped | ended | error, t, err }
+function onPcListen(d, m) {
+  const l = m.listen;
+  const at = (d.time || 0) * 1000;
+  if (!l || typeof l !== 'object' || at < phonePc.at - 5000 || Date.now() - at > 10 * 60e3) return;
+  const v = String(l.v || '');
+  if (v && v !== phonePc.v) return;  // réponse pour une prod d'avant
+  const s = String(l.s || '');
+  if (s === 'error') toast(`Lecture sur le PC impossible : ${String(l.err || '').slice(0, 90)}`);
+  phonePc.s = ['loading', 'playing', 'paused'].includes(s) ? s : '';
+  phonePc.at = Math.max(phonePc.at, at);
+  renderPhonePcBar();
+}
+function renderPhonePcBar() {
+  const bar = $('#phonePcBar');
+  if (!bar) return;
+  // demande restée sans réponse (PC lent ou éteint entre-temps)
+  if (phonePc.s === 'sent' && Date.now() - phonePc.at > 60e3) phonePc.s = '';
+  const on = !!phonePc.s;
+  bar.hidden = !on;
+  $$('.ph-pc').forEach((b) => b.classList.toggle('on', on && b.dataset.v === phonePc.v));
+  if (!on) { bar.replaceChildren(); return; }
+  const busy = phonePc.s === 'sent' || phonePc.s === 'loading';
+  bar.replaceChildren(...[
+    h('span', { class: `phpc-ico${busy ? ' busy' : ''}` }, icon('pc')),
+    h('span', { class: 'phpc-t' }, h('small', {}, PHPC_TEXT[phonePc.s] || ''), h('b', {}, phonePc.t)),
+    busy ? null : h('button', { type: 'button', class: 'phpc-btn', 'aria-label': phonePc.s === 'playing' ? 'Pause sur le PC' : 'Reprendre sur le PC', onclick: () => phonePcCtl('toggle') }, icon(phonePc.s === 'playing' ? 'pause' : 'play')),
+    h('button', { type: 'button', class: 'phpc-btn', 'aria-label': 'Arrêter sur le PC', onclick: () => phonePcCtl('stop') }, icon('stop'))].filter(Boolean));
+}
 const phoneCtl = (cmd, ms = 0) => mfn()?.phoneControl({ cmd, ms: Math.round(ms) }).catch(() => {});
 const fmtMs = (ms) => { const s = Math.max(0, Math.round((ms || 0) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const PH_MODES = { suite: ['À la suite', 'order'], aleatoire: ['Aléatoire', 'shuffle'], boucle: ['En boucle', 'repeat1'] };
@@ -4926,7 +4997,7 @@ function renderPhoneView() {
       const parts = phoneParts(f.name);
       const thumb = phoneThumb(m.id);
       const cur = phone.state?.name === f.name && !!phone.state?.active;
-      return h('div', { class: `ph-row${cur ? ' on' : ''}${cur && phone.state?.playing ? ' playing' : ''}`, 'data-name': f.name, style: phoneTint(f), role: 'button', tabindex: '0',
+      return h('div', { class: `ph-row${cur ? ' on' : ''}${cur && phone.state?.playing ? ' playing' : ''}${m.id && pc.info ? ' has-pc' : ''}`, 'data-name': f.name, style: phoneTint(f), role: 'button', tabindex: '0',
         onclick: () => {
           const live = phone.state?.active && phone.state?.name === f.name;
           if (live) { phoneCtl('toggle'); phoneScrollTop(); } else phonePlayName(f.name);
@@ -4936,6 +5007,7 @@ function renderPhoneView() {
         h('span', { class: 'ph-t' }, h('b', {}, parts.title), phoneChips(parts.chips), phoneTagRow(f, 4, false), h('small', {}, [m.channel || null, f.size ? `${(f.size / 1048576).toFixed(1)} Mo` : null, f.at ? fmtAgo(f.at) : null].filter(Boolean).join(' · '))),
         h('span', { class: 'ph-acts' },
           phoneHeart(f),
+          m.id && pc.info ? h('button', { type: 'button', class: `ph-pc${phonePc.s && phonePc.v === m.id ? ' on' : ''}`, 'data-v': m.id, 'aria-label': `Écouter ${parts.title} sur mon PC`, title: 'Écouter sur mon PC', onclick: (e) => { e.stopPropagation(); phonePcListen(f); } }, icon('pc')) : null,
           m.id ? h('button', { type: 'button', class: 'ph-find', 'aria-label': `Ouvrir ${parts.title} dans la recherche`, title: 'Ouvrir dans la recherche', onclick: (e) => { e.stopPropagation(); phoneOpenInSearch(f); } }, icon('search')) : null,
           h('button', { type: 'button', class: 'ph-del', 'aria-label': `Supprimer ${parts.title}`, title: 'Supprimer du téléphone', onclick: async (e) => {
             e.stopPropagation();
@@ -4947,6 +5019,7 @@ function renderPhoneView() {
     if (!shown.length) list.append(h('p', { class: 'muted ph-none' }, phone.filter === 'fav' ? 'Aucun favori : touche le cœur d’une prod.' : 'Aucune prod ne correspond.'));
   }
   renderPhonePlayer();
+  renderPhonePcBar();
 }
 $('#phoneSearch')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } });
 $('#phoneSearchClear')?.addEventListener('click', () => { phone.q = ''; const i = $('#phoneSearch'); if (i) { i.value = ''; i.focus(); } haptic(); renderPhoneView(); });
@@ -8407,6 +8480,11 @@ function onPcViewMessage(d, m, fresh) {
   if (m.lib) { pcSeen(d); onPcLib(d, m); return true; }
   if (m.aud) { pcSeen(d); onPcAudio(d, m, fresh); return true; }
   if (m.desc) { pcSeen(d); onPcDesc(d); return true; }
+  if (m.listen) { pcSeen(d); onPcListen(d, m); return true; }
+  if (m.cmd === 'listen') {  // PC d'avant 1.20.3 : il ne sait pas encore jouer une prod
+    if (fresh && phonePc.s) { phonePc.s = ''; renderPhonePcBar(); toast('Mets à jour Melofinds PC pour écouter sur ton PC'); }
+    return true;
+  }
   if (m.cmd === 'desc') return true;  // PC d'avant 3.18 : il ne sait pas lire les descriptions
   if (m.q && typeof m.q === 'object') {
     pcSeen(d);

@@ -1422,3 +1422,115 @@ class DescriptionsPourLApp(unittest.TestCase):
         fn, meta, body = files[0]
         self.assertEqual((fn, meta), ("descriptions.json", {"desc": 1, "n": 1}))
         self.assertEqual(body, {"d": {"jNQXAC9IVRw": "FREE FOR PROFIT"}, "miss": ["dQw4w9WgXcQ"]})
+
+
+class FakePlayer:
+    ok = True
+
+    def __init__(self):
+        self.path, self.state, self.played = None, None, []
+
+    def play(self, path):
+        self.path, self.state = str(path), "playing"
+        self.played.append(Path(path).name)
+        return True
+
+    def mode(self):
+        return self.state if self.path else None
+
+    def toggle(self):
+        self.state = "paused" if self.state == "playing" else "playing"
+        return self.state
+
+    def stop(self):
+        self.path, self.state = None, None
+
+
+class EcouteSurLePC(unittest.TestCase):
+    """Bouton PC de l'onglet Téléphone : prod téléchargée en .wav temporaire et jouée sur le PC."""
+    CODE = "melofinds-" + "c" * 32
+    WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 24
+
+    def setUp(self):
+        import mf_worker
+        self.W = mf_worker
+        self.dir = Path(tempfile.mkdtemp(prefix="mf-ecoute-"))
+        self.replies = []
+        self.gate = threading.Event()
+        self.gate.set()
+
+        def fetch(vid, folder):
+            self.gate.wait(5)
+            p = Path(folder) / f"{vid}.wav"
+            p.write_bytes(self.WAV)
+            return p, ""
+        self.player = FakePlayer()
+        self.l = mf_worker.Listen(self.dir, self.player, fetch, lambda code, body: self.replies.append(body["listen"]))
+
+    def tearDown(self):
+        self.l.close()
+
+    def wait_for(self, state, n=1):
+        end = time.time() + 5
+        while time.time() < end:
+            if sum(1 for r in self.replies if r["s"] == state) >= n:
+                return
+            time.sleep(0.02)
+        self.fail(f"pas de « {state} » : {self.replies}")
+
+    def ask(self, vid, **kw):
+        self.l.request(self.CODE, {"cmd": "listen", "v": vid, "t": "[FREE] Luther Type Beat", "ts": time.time() * 1000, **kw})
+
+    def test_telecharge_puis_joue(self):
+        self.ask("jNQXAC9IVRw")
+        self.wait_for("playing")
+        self.assertEqual(self.replies[0], {"v": "jNQXAC9IVRw", "s": "loading", "t": "Luther Type Beat"})
+        self.assertEqual(self.player.played, ["jNQXAC9IVRw.wav"])
+        self.l.request(self.CODE, {"cmd": "listen", "a": "toggle"})
+        self.wait_for("paused")
+        self.l.request(self.CODE, {"cmd": "listen", "a": "stop"})
+        self.wait_for("stopped")
+        self.assertIsNone(self.player.path)
+
+    def test_seule_la_derniere_demande_compte(self):
+        self.gate.clear()
+        self.ask("jNQXAC9IVRw")
+        self.ask("dQw4w9WgXcQ")
+        self.gate.set()
+        self.wait_for("playing")
+        time.sleep(0.3)
+        self.assertEqual(self.player.played, ["dQw4w9WgXcQ.wav"])
+
+    def test_deja_telechargee_joue_tout_de_suite(self):
+        (self.dir / "jNQXAC9IVRw.wav").write_bytes(self.WAV)
+        self.gate.clear()  # pas de téléchargement : il resterait bloqué
+        self.ask("jNQXAC9IVRw")
+        self.wait_for("playing")
+        self.assertNotIn("loading", [r["s"] for r in self.replies])
+
+    def test_fin_du_son(self):
+        self.ask("jNQXAC9IVRw")
+        self.wait_for("playing")
+        self.player.state = "stopped"
+        self.wait_for("ended")
+
+    def test_demande_trop_ancienne_ou_invalide_ignoree(self):
+        self.ask("jNQXAC9IVRw", ts=time.time() * 1000 - 10 * 60_000)  # faite pendant que le PC était éteint
+        self.ask("../../evil")
+        time.sleep(0.3)
+        self.assertEqual(self.replies, [])
+
+    def test_fichiers_effaces(self):
+        for v in ["aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc", "ddddddddddd", "eeeeeeeeeee"]:
+            (self.dir / f"{v}.wav").write_bytes(self.WAV)
+            time.sleep(0.01)
+        (self.dir / "autre.txt").write_text("pas à moi")
+        l2 = self.W.Listen(self.dir, FakePlayer(), None, lambda *a: None)  # au démarrage : tout est effacé
+        l2.close()
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["autre.txt"])
+
+    def test_commande_listen_meme_si_gestion_coupee(self):
+        r = self.W.Remote(mpc.load_state())
+        r.listen = self.l
+        r.command(self.CODE, {"cmd": "listen", "v": "jNQXAC9IVRw", "ts": time.time() * 1000}, {**mpc.load_config(), "remote": False})
+        self.wait_for("playing")

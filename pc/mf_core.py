@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.20.2"
+VERSION = "1.20.3"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -1267,6 +1267,42 @@ def download(video_id, root, info, out=None, progress=None):
         out.update(path=str(final), key=key, bpm=bpm, title=clean_title(meta.get("title") or info.get("t") or video_id), yt=video_id,
                    tb={k: v for k, v in (("key", key if tb_k else None), ("bpm", bpm if tb_b else None)) if v})
     return True, final.name
+
+
+def download_listen(video_id, folder):
+    """Écouter sur le PC (bouton PC de l'onglet Téléphone) : la prod en .wav dans le dossier
+    d'écoute temporaire, jamais dans ton dossier de prods. Renvoie (chemin, "") ou (None, erreur)."""
+    if not VIDEO_ID.match(str(video_id or "")):
+        return None, "vidéo invalide"
+    ytdlp = tool_path("yt-dlp.exe")
+    ffmpeg = tool_path("ffmpeg.exe")
+    if not ytdlp or not ffmpeg:
+        return None, "yt-dlp ou ffmpeg manquant (relance l'installation)"
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    final = folder / f"{video_id}.wav"
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    with tempfile.TemporaryDirectory(prefix="melofinds-") as tmp:
+        args = [ytdlp, "--no-playlist", "--no-warnings", "--no-mtime",
+                "--match-filter", f"!is_live & duration <= {MAX_DURATION}",
+                "-f", "bestaudio/best", "-x", "--audio-format", "wav",
+                "--ffmpeg-location", str(Path(ffmpeg).parent),
+                "--max-filesize", "200M", "-P", f"home:{tmp}", "-P", f"temp:{tmp}",
+                "-o", "audio.%(ext)s", url]
+        try:
+            r = run_tool(args, 600)
+        except (OSError, subprocess.SubprocessError) as e:
+            return None, f"yt-dlp : {e}"[:200]
+        if r.returncode != 0:
+            return None, last_line(r.stderr)[:200]
+        wavs = [p for p in Path(tmp).iterdir() if p.suffix.lower() == ".wav" and is_wav(p)]
+        if not wavs:
+            return None, "vidéo trop longue (15 min max), en direct, ou conversion impossible"
+        shutil.move(str(wavs[0]), str(final))
+    if not is_wav(final):
+        final.unlink(missing_ok=True)
+        return None, "fichier non WAV supprimé"
+    return final, ""
 
 
 # ---------------------------------------------------------------------------

@@ -951,7 +951,25 @@ body.mobile .chan-txt b { font-size: 17px; }
 .ph-find:active { transform: scale(.88); }
 .pp .ph-find { color: rgba(255,255,255,.7); width: 40px; height: 40px; }
 .ph-acts { position: absolute; top: 4px; right: 4px; display: flex; gap: 0; }
-.ph-acts .ph-heart, .ph-acts .ph-find, .ph-acts .ph-del { width: 32px; height: 32px; }
+.ph-acts .ph-heart, .ph-acts .ph-find, .ph-acts .ph-del, .ph-acts .ph-pc { width: 32px; height: 32px; }
+.ph-pc { display: grid; place-items: center; padding: 0; border-radius: 50%; border: 0; background: transparent; color: var(--faint); }
+.ph-pc svg { width: 17px; height: 17px; }
+.ph-pc:active { transform: scale(.88); }
+.ph-pc.on { color: hsl(var(--ph) 72%); background: color-mix(in srgb, hsl(var(--ph) 60%) 18%, transparent); }
+.ph-row.has-pc .ph-t b { padding-right: 130px; }
+/* « Sur ton PC » : la prod que joue le PC */
+.phpc { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px; margin: 0 0 12px; padding: 8px 8px 8px 12px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 12%, var(--panel-2)); }
+.phpc[hidden] { display: none; }
+.phpc-ico { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--text); }
+.phpc-ico svg { width: 18px; height: 18px; }
+.phpc-ico.busy { animation: phpc-pulse 1.2s ease-in-out infinite; }
+@keyframes phpc-pulse { 50% { opacity: .45; } }
+.phpc-t { display: grid; min-width: 0; }
+.phpc-t small { color: var(--muted); font-size: 11.5px; }
+.phpc-t b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phpc-btn { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border-radius: 50%; border: 0; background: var(--panel-3); color: var(--text); }
+.phpc-btn svg { width: 17px; height: 17px; }
+.phpc-btn:active { transform: scale(.9); }
 .ph-acts .ph-heart svg { width: 17px; height: 17px; }
 .ph-acts .ph-find svg { width: 16px; height: 16px; }
 .ph-row .ph-t b { padding-right: 98px; }
