@@ -22,7 +22,6 @@ import android.os.Environment;
 import android.provider.DocumentsContract;
 
 import androidx.activity.result.ActivityResult;
-import androidx.documentfile.provider.DocumentFile;
 
 import com.getcapacitor.annotation.ActivityCallback;
 
@@ -343,10 +342,10 @@ public class MelofindsNativePlugin extends Plugin {
     @PluginMethod
     public void phoneInfo(PluginCall call) {
         PHONE.submit(() -> {
-            DocumentFile d = PhoneLibrary.folder(getContext(), false);
+            PhoneLibrary.Doc d = PhoneLibrary.folder(getContext(), false);
             JSObject r = new JSObject();
             r.put("linked", d != null);
-            r.put("name", d != null ? d.getName() : "");
+            r.put("name", d != null ? d.name : "");
             // pas relié, mais le dossier existe (appli réinstallée) : tes prods sont toujours là
             File music = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC);
             r.put("exists", d == null && new File(music, PhoneLibrary.FOLDER).exists());
@@ -401,11 +400,11 @@ public class MelofindsNativePlugin extends Plugin {
         PhoneLibrary.saveTree(getContext(), tree);
         PHONE.submit(() -> {
             try {
-                DocumentFile d = PhoneLibrary.folder(getContext(), true);
+                PhoneLibrary.Doc d = PhoneLibrary.folder(getContext(), true);
                 if (d == null) { call.reject("Impossible de créer « " + PhoneLibrary.FOLDER + " » ici : choisis le dossier Musique"); return; }
                 JSObject r = new JSObject();
                 r.put("linked", true);
-                r.put("name", d.getName());
+                r.put("name", d.name);
                 r.put("files", PhoneLibrary.list(getContext(), d));
                 call.resolve(r);
             } catch (Throwable e) {
@@ -419,7 +418,7 @@ public class MelofindsNativePlugin extends Plugin {
     public void phoneList(PluginCall call) {
         PHONE.submit(() -> {
             try {
-                DocumentFile d = PhoneLibrary.folder(getContext(), false);
+                PhoneLibrary.Doc d = PhoneLibrary.folder(getContext(), false);
                 if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
                 JSObject r = new JSObject();
                 r.put("files", PhoneLibrary.list(getContext(), d));
@@ -434,7 +433,7 @@ public class MelofindsNativePlugin extends Plugin {
     private static volatile boolean backfilling = false;
 
     /** Miniatures manquantes et anciens .m4a à réparer (avance rapide), une fois à la fois. */
-    private void backfill(DocumentFile d) {
+    private void backfill(PhoneLibrary.Doc d) {
         if (backfilling) return;
         backfilling = true;
         new Thread(() -> {
@@ -453,7 +452,7 @@ public class MelofindsNativePlugin extends Plugin {
     public void phoneThumbs(PluginCall call) {
         JSArray ids = call.getArray("ids", new JSArray());
         PHONE.submit(() -> {
-            DocumentFile d = PhoneLibrary.folder(getContext(), false);
+            PhoneLibrary.Doc d = PhoneLibrary.folder(getContext(), false);
             JSObject r = new JSObject();
             r.put("t", d == null ? new JSObject() : PhoneLibrary.thumbs(getContext(), d, ids));
             call.resolve(r);
@@ -467,9 +466,9 @@ public class MelofindsNativePlugin extends Plugin {
         boolean fav = Boolean.TRUE.equals(call.getBoolean("fav", false));
         PHONE.submit(() -> {
             try {
-                DocumentFile d = PhoneLibrary.folder(getContext(), false);
+                PhoneLibrary.Doc d = PhoneLibrary.folder(getContext(), false);
                 if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
-                if (PhoneLibrary.find(d, name) == null) { call.reject("Prod introuvable"); return; }
+                if (PhoneLibrary.find(getContext(), d, name) == null) { call.reject("Prod introuvable"); return; }
                 PhoneLibrary.editMeta(getContext(), d, name, m -> m.put("fav", fav));
                 call.resolve();
             } catch (Throwable e) {
@@ -486,7 +485,7 @@ public class MelofindsNativePlugin extends Plugin {
         JSObject color = call.getObject("color", null);
         PHONE.submit(() -> {
             try {
-                DocumentFile d = PhoneLibrary.folder(getContext(), false);
+                PhoneLibrary.Doc d = PhoneLibrary.folder(getContext(), false);
                 if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
                 PhoneLibrary.setInfo(getContext(), d, name, tags, color);
                 call.resolve();
@@ -516,7 +515,7 @@ public class MelofindsNativePlugin extends Plugin {
         if (!YtStream.VIDEO_ID.matcher(id).matches()) { call.reject("Vidéo invalide"); return; }
         PHONE.submit(() -> {
             try {
-                DocumentFile d = PhoneLibrary.folder(getContext(), true);
+                PhoneLibrary.Doc d = PhoneLibrary.folder(getContext(), true);
                 if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
                 JSONObject m = new JSONObject(meta.toString());
                 String got = PhoneLibrary.download(getContext(), d, id, name, m);
@@ -534,7 +533,7 @@ public class MelofindsNativePlugin extends Plugin {
         String name = call.getString("name", "");
         PHONE.submit(() -> {
             try {
-                DocumentFile d = PhoneLibrary.folder(getContext(), false);
+                PhoneLibrary.Doc d = PhoneLibrary.folder(getContext(), false);
                 if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
                 JSObject r = new JSObject();
                 r.put("ok", PhoneLibrary.delete(getContext(), d, name));
@@ -545,31 +544,40 @@ public class MelofindsNativePlugin extends Plugin {
         });
     }
 
+    /** Chaque toucher sur une prod : seul le dernier compte (les précédents en attente sont oubliés). */
+    private static final java.util.concurrent.atomic.AtomicInteger PLAY_GEN = new java.util.concurrent.atomic.AtomicInteger();
+
     /** Lecture hors connexion (continue écran verrouillé) : { names: [...], index } */
     @PluginMethod
     public void phonePlay(PluginCall call) {
         JSArray names = call.getArray("names", new JSArray());
         int index = call.getInt("index", 0);
+        final int gen = PLAY_GEN.incrementAndGet();
         PLAY.submit(() -> {
             try {
-                DocumentFile d = PhoneLibrary.folder(getContext(), false);
+                if (gen != PLAY_GEN.get()) { call.resolve(); return; }  // un autre toucher est venu après
+                PhoneLibrary.Doc d = PhoneLibrary.folder(getContext(), false);
                 if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
-                java.util.Map<String, DocumentFile> byName = new java.util.HashMap<>();
-                for (DocumentFile f : d.listFiles()) if (f.getName() != null && f.isFile()) byName.put(f.getName(), f);
+                // tout le dossier et toutes les miniatures en deux requêtes (pas une par prod)
+                java.util.Map<String, PhoneLibrary.Doc> byName = PhoneLibrary.children(getContext(), d, false);
+                String wanted = index >= 0 && index < names.length() ? names.optString(index, "") : "";
+                if (!PhoneLibrary.isAudio(byName.get(wanted))) byName = PhoneLibrary.children(getContext(), d, true);
+                java.util.Map<String, PhoneLibrary.Doc> thumbs = PhoneLibrary.thumbMap(getContext(), d);
                 JSONObject idx = PhoneLibrary.readIndex(getContext(), d);
                 List<PhonePlayerService.Track> q = new ArrayList<>();
                 int start = 0;
                 for (int i = 0; i < names.length() && q.size() < 1000; i++) {
                     String n = names.optString(i, "");
-                    DocumentFile f = byName.get(n);
-                    if (f == null || !PhoneLibrary.AUDIO.matcher(n).matches()) continue;
+                    PhoneLibrary.Doc f = byName.get(n);
+                    if (!PhoneLibrary.isAudio(f)) continue;
                     if (i == index) start = q.size();
                     JSONObject meta = idx.optJSONObject(n);
                     String vid = meta != null ? meta.optString("id", "") : "";
-                    DocumentFile th = PhoneLibrary.thumbFile(d, vid);
-                    q.add(new PhonePlayerService.Track(f.getUri(), n, n.replaceAll("\\.[A-Za-z0-9]+$", ""), vid, th != null ? th.getUri() : null));
+                    PhoneLibrary.Doc th = PhoneLibrary.thumbFile(thumbs, vid);
+                    q.add(new PhonePlayerService.Track(f.uri, n, n.replaceAll("\\.[A-Za-z0-9]+$", ""), vid, th != null ? th.uri : null));
                 }
                 if (q.isEmpty()) { call.reject("Prod introuvable dans le dossier"); return; }
+                if (gen != PLAY_GEN.get()) { call.resolve(); return; }
                 synchronized (PhonePlayerService.queue) {
                     PhonePlayerService.queue.clear();
                     PhonePlayerService.queue.addAll(q);

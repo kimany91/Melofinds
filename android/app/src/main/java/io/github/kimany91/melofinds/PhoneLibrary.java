@@ -4,14 +4,15 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.UriPermission;
+import android.database.Cursor;
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
 import android.net.Uri;
+import android.os.SystemClock;
+import android.provider.DocumentsContract;
 import android.util.Base64;
-
-import androidx.documentfile.provider.DocumentFile;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -27,9 +28,13 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
@@ -56,7 +61,120 @@ final class PhoneLibrary {
 
     // ------------------------------------------------------------------ dossier
 
+    /**
+     * Un fichier ou dossier du dossier choisi. Tout est lu d'un coup (une seule requête par
+     * dossier, gardée quelques secondes en mémoire) : l'ancienne méthode faisait une requête par
+     * fichier et par nom, ce qui prenait des minutes avec beaucoup de prods.
+     */
+    static final class Doc {
+        final Uri tree;
+        final String id;
+        final Uri uri;
+        final String name;
+        final String mime;
+        final long size;
+        final long modified;
+        Doc(Uri tree, String id, String name, String mime, long size, long modified) {
+            this.tree = tree;
+            this.id = id;
+            this.uri = DocumentsContract.buildDocumentUriUsingTree(tree, id);
+            this.name = name == null ? "" : name;
+            this.mime = mime == null ? "" : mime;
+            this.size = size;
+            this.modified = modified;
+        }
+        boolean isDir() { return DocumentsContract.Document.MIME_TYPE_DIR.equals(mime); }
+        boolean isFile() { return !isDir(); }
+    }
+
+    private static final String[] PROJ = {
+        DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+        DocumentsContract.Document.COLUMN_MIME_TYPE,
+        DocumentsContract.Document.COLUMN_SIZE,
+        DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+    };
+    /** Contenu d'un dossier gardé en mémoire (vidé à chaque ajout / suppression). */
+    private static final long TTL = 20_000;
+    private static final class Listing {
+        final long at = SystemClock.elapsedRealtime();
+        final Map<String, Doc> byName;
+        Listing(Map<String, Doc> m) { byName = m; }
+    }
+    private static final Map<String, Listing> LISTINGS = new ConcurrentHashMap<>();
+    private static volatile Doc folderCache;
+
+    private static Doc docOf(Cursor cur, Uri tree) {
+        String id = cur.getString(0);
+        if (id == null) return null;
+        return new Doc(tree, id, cur.getString(1), cur.getString(2), cur.isNull(3) ? 0 : cur.getLong(3), cur.isNull(4) ? 0 : cur.getLong(4));
+    }
+
+    private static Doc query(Context c, Uri tree, String id) {
+        try (Cursor cur = c.getContentResolver().query(DocumentsContract.buildDocumentUriUsingTree(tree, id), PROJ, null, null, null)) {
+            return cur != null && cur.moveToFirst() ? docOf(cur, tree) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Le contenu du dossier, par nom (une seule requête). fresh : relu même s'il est en mémoire. */
+    static Map<String, Doc> children(Context c, Doc dir, boolean fresh) {
+        if (dir == null) return Collections.emptyMap();
+        String key = dir.uri.toString();
+        Listing l = LISTINGS.get(key);
+        if (!fresh && l != null && SystemClock.elapsedRealtime() - l.at < TTL) return l.byName;
+        Map<String, Doc> m = new HashMap<>();
+        Uri ch = DocumentsContract.buildChildDocumentsUriUsingTree(dir.tree, dir.id);
+        try (Cursor cur = c.getContentResolver().query(ch, PROJ, null, null, null)) {
+            if (cur == null) throw new IOException("dossier illisible");
+            while (cur.moveToNext()) {
+                Doc d = docOf(cur, dir.tree);
+                if (d != null && !d.name.isEmpty()) m.put(d.name, d);
+            }
+        } catch (Exception e) {
+            // dossier supprimé ou accès perdu : on le recherchera la prochaine fois
+            LISTINGS.remove(key);
+            Doc f = folderCache;
+            if (f != null && f.uri.equals(dir.uri)) folderCache = null;
+            return Collections.emptyMap();
+        }
+        Map<String, Doc> u = Collections.unmodifiableMap(m);
+        LISTINGS.put(key, new Listing(u));
+        return u;
+    }
+
+    private static void invalidate(Doc dir) {
+        if (dir != null) LISTINGS.remove(dir.uri.toString());
+    }
+
+    private static Doc create(Context c, Doc parent, String mime, String name) throws IOException {
+        Uri u;
+        try {
+            u = DocumentsContract.createDocument(c.getContentResolver(), parent.uri, mime, name);
+        } catch (Exception e) {
+            throw new IOException("fichier impossible à créer dans « " + FOLDER + " »");
+        } finally {
+            invalidate(parent);
+        }
+        if (u == null) return null;
+        Doc d = query(c, parent.tree, DocumentsContract.getDocumentId(u));
+        return d != null ? d : new Doc(parent.tree, DocumentsContract.getDocumentId(u), name, mime, 0, 0);
+    }
+
+    private static boolean remove(Context c, Doc parent, Doc d) {
+        try {
+            return DocumentsContract.deleteDocument(c.getContentResolver(), d.uri);
+        } catch (Exception e) {
+            return false;
+        } finally {
+            invalidate(parent);
+        }
+    }
+
     static void saveTree(Context c, Uri tree) {
+        folderCache = null;
+        LISTINGS.clear();
         c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_TREE, tree.toString()).apply();
     }
 
@@ -72,34 +190,43 @@ final class PhoneLibrary {
     }
 
     /** Le dossier « Melofinds Instru » (le dossier choisi, ou son sous-dossier), ou null. */
-    static DocumentFile folder(Context c, boolean create) {
+    static Doc folder(Context c, boolean create) {
         Uri tree = savedTree(c);
-        if (tree == null) return null;
-        DocumentFile root = DocumentFile.fromTreeUri(c, tree);
-        if (root == null || !root.isDirectory()) return null;
-        if (FOLDER.equalsIgnoreCase(String.valueOf(root.getName()))) return root;
-        DocumentFile f = root.findFile(FOLDER);
-        if (f != null && f.isDirectory()) return f;
-        return create ? root.createDirectory(FOLDER) : null;
+        if (tree == null) { folderCache = null; return null; }
+        Doc f = folderCache;
+        if (f != null && f.tree.equals(tree)) return f;
+        Doc root = query(c, tree, DocumentsContract.getTreeDocumentId(tree));
+        if (root == null || !root.isDir()) return null;
+        if (FOLDER.equalsIgnoreCase(root.name)) f = root;
+        else {
+            Doc sub = children(c, root, true).get(FOLDER);
+            try {
+                f = sub != null && sub.isDir() ? sub : create ? create(c, root, DocumentsContract.Document.MIME_TYPE_DIR, FOLDER) : null;
+            } catch (IOException e) {
+                f = null;
+            }
+        }
+        if (f != null) folderCache = f;
+        return f;
     }
 
     // ------------------------------------------------------------------ index
 
-    static JSONObject readIndex(Context c, DocumentFile dir) {
-        DocumentFile f = dir.findFile(INDEX);
+    static JSONObject readIndex(Context c, Doc dir) {
+        Doc f = children(c, dir, false).get(INDEX);
         if (f == null || !f.isFile()) return new JSONObject();
         try {
-            return new JSONObject(new String(readAll(c, f.getUri(), 4_000_000), StandardCharsets.UTF_8));
+            return new JSONObject(new String(readAll(c, f.uri, 4_000_000), StandardCharsets.UTF_8));
         } catch (Exception e) {
             return new JSONObject();
         }
     }
 
-    private static void writeIndex(Context c, DocumentFile dir, JSONObject idx) throws IOException {
-        DocumentFile f = dir.findFile(INDEX);
-        if (f == null) f = dir.createFile("application/octet-stream", INDEX);
+    private static void writeIndex(Context c, Doc dir, JSONObject idx) throws IOException {
+        Doc f = children(c, dir, false).get(INDEX);
+        if (f == null) f = create(c, dir, "application/octet-stream", INDEX);
         if (f == null) throw new IOException("index impossible à créer");
-        try (OutputStream os = c.getContentResolver().openOutputStream(f.getUri(), "wt")) {
+        try (OutputStream os = c.getContentResolver().openOutputStream(f.uri, "wt")) {
             if (os == null) throw new IOException("index impossible à écrire");
             os.write(idx.toString().getBytes(StandardCharsets.UTF_8));
         }
@@ -108,7 +235,7 @@ final class PhoneLibrary {
     /** Modifie l'entrée d'un fichier dans l'index (relu juste avant : rien n'est perdu). */
     interface Edit { void apply(JSONObject meta) throws Exception; }
 
-    static void editMeta(Context c, DocumentFile dir, String name, Edit e) throws Exception {
+    static void editMeta(Context c, Doc dir, String name, Edit e) throws Exception {
         synchronized (INDEX_LOCK) {
             JSONObject idx = readIndex(c, dir);
             JSONObject m = idx.optJSONObject(name);
@@ -120,8 +247,8 @@ final class PhoneLibrary {
     }
 
     /** Étiquettes (« Luther type beat », « Énergique »…) et couleur, si elle n'existe pas encore. */
-    static void setInfo(Context c, DocumentFile dir, String name, JSONArray tags, JSONObject color) throws Exception {
-        if (find(dir, name) == null) throw new IOException("prod introuvable");
+    static void setInfo(Context c, Doc dir, String name, JSONArray tags, JSONObject color) throws Exception {
+        if (find(c, dir, name) == null) throw new IOException("prod introuvable");
         JSONArray clean = new JSONArray();
         for (int i = 0; tags != null && i < tags.length() && clean.length() < 12; i++) {
             String t = tags.optString(i, "").replaceAll("\\p{Cntrl}", "").trim();
@@ -142,43 +269,59 @@ final class PhoneLibrary {
 
     // ------------------------------------------------------------------ liste
 
-    static JSONArray list(Context c, DocumentFile dir) throws Exception {
+    static boolean isAudio(Doc f) {
+        return f != null && f.isFile() && f.size > 0 && AUDIO.matcher(f.name).matches();
+    }
+
+    /** La liste (relue sur le téléphone : un son ajouté ou supprimé à la main est vu). */
+    static JSONArray list(Context c, Doc dir) throws Exception {
+        Map<String, Doc> files = children(c, dir, true);
+        if (files.isEmpty()) folderCache = null;  // dossier vidé ou supprimé : recherché à nouveau la prochaine fois
         JSONObject idx = readIndex(c, dir);
         JSONArray out = new JSONArray();
-        for (DocumentFile f : dir.listFiles()) {
-            String name = f.getName();
-            if (name == null || !f.isFile() || !AUDIO.matcher(name).matches() || f.length() <= 0) continue;
+        for (Doc f : files.values()) {
+            if (!isAudio(f)) continue;
             JSONObject o = new JSONObject();
-            o.put("name", name);
-            o.put("size", f.length());
-            o.put("at", f.lastModified());
-            JSONObject meta = idx.optJSONObject(name);
+            o.put("name", f.name);
+            o.put("size", f.size);
+            o.put("at", f.modified);
+            JSONObject meta = idx.optJSONObject(f.name);
             if (meta != null) o.put("meta", meta);
             out.put(o);
         }
         return out;
     }
 
-    static DocumentFile find(DocumentFile dir, String name) {
+    /** Un son du dossier par son nom (relu une fois s'il n'est pas dans la liste en mémoire). */
+    static Doc find(Context c, Doc dir, String name) {
         if (name == null || !AUDIO.matcher(name).matches() || name.contains("/")) return null;
-        DocumentFile f = dir.findFile(name);
+        Doc f = children(c, dir, false).get(name);
+        if (f == null) f = children(c, dir, true).get(name);
         return f != null && f.isFile() ? f : null;
     }
 
     // ------------------------------------------------------------------ miniatures
 
-    private static DocumentFile thumbDir(DocumentFile dir, boolean create) {
-        DocumentFile t = dir.findFile(THUMBS);
-        if (t != null && t.isDirectory()) return t;
-        return create ? dir.createDirectory(THUMBS) : null;
+    private static Doc thumbDir(Context c, Doc dir, boolean create) throws IOException {
+        Doc t = children(c, dir, false).get(THUMBS);
+        if (t != null && t.isDir()) return t;
+        return create ? create(c, dir, DocumentsContract.Document.MIME_TYPE_DIR, THUMBS) : null;
     }
 
-    static DocumentFile thumbFile(DocumentFile dir, String id) {
+    /** Les miniatures du dossier (« id.jpg »), lues d'un coup. */
+    static Map<String, Doc> thumbMap(Context c, Doc dir) {
+        try {
+            Doc t = thumbDir(c, dir, false);
+            return t == null ? Collections.emptyMap() : children(c, t, false);
+        } catch (IOException e) {
+            return Collections.emptyMap();
+        }
+    }
+
+    static Doc thumbFile(Map<String, Doc> thumbs, String id) {
         if (id == null || !VIDEO_ID.matcher(id).matches()) return null;
-        DocumentFile t = thumbDir(dir, false);
-        if (t == null) return null;
-        DocumentFile f = t.findFile(id + ".jpg");
-        return f != null && f.isFile() && f.length() > 0 ? f : null;
+        Doc f = thumbs.get(id + ".jpg");
+        return f != null && f.isFile() && f.size > 0 ? f : null;
     }
 
     /**
@@ -216,15 +359,16 @@ final class PhoneLibrary {
         }
     }
 
-    static JSONObject thumbColor(Context c, DocumentFile dir, String id) {
-        DocumentFile f = thumbFile(dir, id);
+    static JSONObject thumbColor(Context c, Doc dir, String id) {
+        Doc f = thumbFile(thumbMap(c, dir), id);
         if (f == null) return null;
-        try { return colorOf(readAll(c, f.getUri(), 400_000)); } catch (Exception e) { return null; }
+        try { return colorOf(readAll(c, f.uri, 400_000)); } catch (Exception e) { return null; }
     }
 
     /** Miniature YouTube de la vidéo (320×180), gardée dans le dossier : elle s'affiche hors connexion. */
-    static boolean saveThumb(Context c, DocumentFile dir, String id) {
-        if (id == null || !VIDEO_ID.matcher(id).matches() || thumbFile(dir, id) != null) return thumbFile(dir, id) != null;
+    static boolean saveThumb(Context c, Doc dir, String id) {
+        if (id == null || !VIDEO_ID.matcher(id).matches()) return false;
+        if (thumbFile(thumbMap(c, dir), id) != null) return true;
         HttpURLConnection h = null;
         try {
             h = (HttpURLConnection) new URL("https://i.ytimg.com/vi/" + id + "/mqdefault.jpg").openConnection();
@@ -234,14 +378,15 @@ final class PhoneLibrary {
             byte[] img;
             try (InputStream in = h.getInputStream()) { img = readStream(in, 400_000); }
             if (img.length < 500) return false;
-            DocumentFile t = thumbDir(dir, true);
+            Doc t = thumbDir(c, dir, true);
             if (t == null) return false;
-            DocumentFile f = t.createFile("application/octet-stream", id + ".jpg");
+            Doc f = create(c, t, "application/octet-stream", id + ".jpg");
             if (f == null) return false;
-            try (OutputStream os = c.getContentResolver().openOutputStream(f.getUri(), "w")) {
+            try (OutputStream os = c.getContentResolver().openOutputStream(f.uri, "w")) {
                 if (os == null) return false;
                 os.write(img);
             }
+            invalidate(t);
             return true;
         } catch (Exception e) {
             return false;
@@ -251,19 +396,15 @@ final class PhoneLibrary {
     }
 
     /** Miniatures en « data: » (l'appli les affiche et en tire la couleur), hors connexion. */
-    static JSONObject thumbs(Context c, DocumentFile dir, JSONArray ids) {
+    static JSONObject thumbs(Context c, Doc dir, JSONArray ids) {
         JSONObject out = new JSONObject();
-        DocumentFile t = thumbDir(dir, false);
-        if (t == null) return out;
-        java.util.Map<String, DocumentFile> files = new java.util.HashMap<>();
-        for (DocumentFile f : t.listFiles()) if (f.getName() != null) files.put(f.getName(), f);
+        Map<String, Doc> files = thumbMap(c, dir);
         for (int i = 0; i < ids.length() && i < 300; i++) {
             String id = ids.optString(i, "");
-            if (!VIDEO_ID.matcher(id).matches()) continue;
-            DocumentFile f = files.get(id + ".jpg");
+            Doc f = thumbFile(files, id);
             if (f == null) continue;
             try {
-                out.put(id, "data:image/jpeg;base64," + Base64.encodeToString(readAll(c, f.getUri(), 400_000), Base64.NO_WRAP));
+                out.put(id, "data:image/jpeg;base64," + Base64.encodeToString(readAll(c, f.uri, 400_000), Base64.NO_WRAP));
             } catch (Exception ignored) { }
         }
         return out;
@@ -317,23 +458,24 @@ final class PhoneLibrary {
     }
 
     /** Répare un .m4a déjà téléchargé (avant la réécriture) : il devient lisible avec avance rapide. */
-    static boolean fixSeek(Context c, DocumentFile dir, String name) throws Exception {
-        DocumentFile f = find(dir, name);
+    static boolean fixSeek(Context c, Doc dir, String name) throws Exception {
+        Doc f = find(c, dir, name);
         if (f == null || !name.toLowerCase(Locale.ROOT).endsWith(".m4a")) return false;
         File cache = new File(c.getCacheDir(), "phone");
         cache.mkdirs();
         File a = new File(cache, "fix-" + System.nanoTime() + ".m4a");
         File b = new File(cache, "fix-" + System.nanoTime() + "-ok.m4a");
         try {
-            try (InputStream in = c.getContentResolver().openInputStream(f.getUri()); OutputStream os = new FileOutputStream(a)) {
+            try (InputStream in = c.getContentResolver().openInputStream(f.uri); OutputStream os = new FileOutputStream(a)) {
                 if (in == null) return false;
                 copy(in, os);
             }
             if (!remux(a, b)) return false;
-            try (InputStream in = new FileInputStream(b); OutputStream os = c.getContentResolver().openOutputStream(f.getUri(), "wt")) {
+            try (InputStream in = new FileInputStream(b); OutputStream os = c.getContentResolver().openOutputStream(f.uri, "wt")) {
                 if (os == null) return false;
                 copy(in, os);
             }
+            invalidate(dir);
             editMeta(c, dir, name, m -> m.put("seek", 1));
             return true;
         } finally {
@@ -346,24 +488,27 @@ final class PhoneLibrary {
      * Après la liste, en arrière-plan : miniatures manquantes (si internet) et anciens .m4a à
      * réparer (pas celui qui joue). Renvoie true si quelque chose a changé.
      */
-    static boolean backfill(Context c, DocumentFile dir, String playing) {
+    static boolean backfill(Context c, Doc dir, String playing) {
         boolean changed = false;
         JSONObject idx = readIndex(c, dir);
+        Map<String, Doc> files = children(c, dir, false);
         Iterator<String> it = idx.keys();
         java.util.List<String> names = new java.util.ArrayList<>();
         while (it.hasNext()) names.add(it.next());
         for (String name : names) {
             JSONObject m = idx.optJSONObject(name);
-            if (m == null || find(dir, name) == null) continue;
+            if (m == null || !isAudio(files.get(name))) continue;
             String id = m.optString("id", "");
-            if (VIDEO_ID.matcher(id).matches() && thumbFile(dir, id) == null && saveThumb(c, dir, id)) changed = true;
-            if (!m.has("color") && thumbFile(dir, id) != null) {
+            if (VIDEO_ID.matcher(id).matches() && thumbFile(thumbMap(c, dir), id) == null && saveThumb(c, dir, id)) changed = true;
+            if (!m.has("color") && thumbFile(thumbMap(c, dir), id) != null) {
                 JSONObject col = thumbColor(c, dir, id);
                 if (col != null) {
                     try { editMeta(c, dir, name, x -> { if (!x.has("color")) x.put("color", col); }); changed = true; } catch (Exception ignored) { }
                 }
             }
-            if (m.optInt("seek", 0) != 1 && name.toLowerCase(Locale.ROOT).endsWith(".m4a") && !name.equals(playing)) {
+            // pas celle qui joue (ni celle qu'on vient de lancer)
+            if (m.optInt("seek", 0) != 1 && name.toLowerCase(Locale.ROOT).endsWith(".m4a") && !name.equals(playing)
+                && !name.equals(PhonePlayerService.snapshot().optString("name", ""))) {
                 try { if (fixSeek(c, dir, name)) changed = true; } catch (Exception ignored) { }
             }
         }
@@ -384,13 +529,13 @@ final class PhoneLibrary {
      * Télécharge la prod (son YouTube d'origine : AAC, sinon Opus) dans le dossier, sous le nom
      * donné, avec sa miniature. Si elle y est déjà (même vidéo), rien n'est retéléchargé.
      */
-    static String download(Context c, DocumentFile dir, String videoId, String wanted, JSONObject meta) throws Exception {
+    static String download(Context c, Doc dir, String videoId, String wanted, JSONObject meta) throws Exception {
         JSONObject idx = readIndex(c, dir);
         Iterator<String> it = idx.keys();
         while (it.hasNext()) {
             String k = it.next();
             JSONObject m = idx.optJSONObject(k);
-            if (m != null && videoId.equals(m.optString("id")) && find(dir, k) != null) return k;
+            if (m != null && videoId.equals(m.optString("id")) && find(c, dir, k) != null) return k;
         }
         List<YtStream.Pick> picks = YtStream.streams(videoId);
         File cache = new File(c.getCacheDir(), "phone");
@@ -406,16 +551,18 @@ final class PhoneLibrary {
                 File src = seekable ? fixed : raw;
                 String base = safeBase(wanted);
                 String name = base + "." + p.format.toLowerCase(Locale.ROOT);
-                for (int n = 2; dir.findFile(name) != null && n < 100; n++) name = base + " (" + n + ")." + p.format;
+                Map<String, Doc> have = children(c, dir, true);
+                for (int n = 2; have.containsKey(name) && n < 100; n++) name = base + " (" + n + ")." + p.format;
                 // octet-stream : Android garde le nom tel quel (pas d'extension ajoutée)
-                DocumentFile out = dir.createFile("application/octet-stream", name);
+                Doc out = create(c, dir, "application/octet-stream", name);
                 if (out == null) throw new IOException("fichier impossible à créer dans « " + FOLDER + " »");
                 ContentResolver cr = c.getContentResolver();
-                try (InputStream in = new FileInputStream(src); OutputStream os = cr.openOutputStream(out.getUri(), "w")) {
+                try (InputStream in = new FileInputStream(src); OutputStream os = cr.openOutputStream(out.uri, "w")) {
                     if (os == null) throw new IOException("écriture refusée");
                     copy(in, os);
                 }
-                String got = out.getName() != null ? out.getName() : name;
+                invalidate(dir);
+                String got = out.name.isEmpty() ? name : out.name;
                 final JSONObject src0 = meta != null ? meta : new JSONObject();
                 final boolean sk = seekable || !"m4a".equals(p.format);
                 editMeta(c, dir, got, m -> {
@@ -440,10 +587,10 @@ final class PhoneLibrary {
         throw last != null ? last : new IOException("aucun son");
     }
 
-    static boolean delete(Context c, DocumentFile dir, String name) throws Exception {
-        DocumentFile f = find(dir, name);
+    static boolean delete(Context c, Doc dir, String name) throws Exception {
+        Doc f = find(c, dir, name);
         if (f == null) return false;
-        boolean ok = f.delete();
+        boolean ok = remove(c, dir, f);
         synchronized (INDEX_LOCK) {
             JSONObject idx = readIndex(c, dir);
             JSONObject m = idx.optJSONObject(name);
@@ -455,8 +602,8 @@ final class PhoneLibrary {
                 boolean used = false;
                 Iterator<String> it = idx.keys();
                 while (it.hasNext()) { JSONObject o = idx.optJSONObject(it.next()); if (o != null && id.equals(o.optString("id"))) used = true; }
-                DocumentFile t = used ? null : thumbFile(dir, id);
-                if (t != null) t.delete();
+                Doc t = used ? null : thumbFile(thumbMap(c, dir), id);
+                if (t != null) remove(c, thumbDir(c, dir, false), t);
             }
         }
         return ok;
