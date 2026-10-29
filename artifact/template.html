@@ -185,7 +185,12 @@
         <button type="button" class="seg-btn" data-f="fav">Favoris</button>
       </div>
       <div class="ph-search" id="phoneSearchBar" hidden>
-        <input type="search" id="phoneSearch" class="pc-input" placeholder="Chercher une prod" aria-label="Chercher une prod téléchargée">
+        <input type="text" id="phoneSearch" class="pc-input" placeholder="Chercher : boombap, Luther, sombre…" aria-label="Chercher une prod téléchargée" enterkeyhint="search" autocomplete="off">
+        <button type="button" class="ph-clear" id="phoneSearchClear" aria-label="Effacer la recherche" hidden><svg><use href="#i-x"/></svg></button>
+      </div>
+      <div class="ph-playbar" id="phonePlayBar" hidden>
+        <button type="button" class="ph-playall"><svg><use href="#i-play"/></svg><span>Lire tout</span></button>
+        <button type="button" class="ph-shuffle" aria-label="Lire en aléatoire"><svg><use href="#i-shuffle"/></svg>Aléatoire</button>
       </div>
     </div>
     <div id="phoneList" class="ph-list"></div>
