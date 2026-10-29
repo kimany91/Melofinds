@@ -274,8 +274,10 @@ arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion �
 - Code : `android/` (Capacitor 8, module natif `MelofindsNativePlugin.java`),
   `capacitor.config.json`, `apk/www` (écran hors connexion), construction
   `.github/workflows/apk-build.yml` (version GitHub « apk », jamais « dernière »).
-  Signature : clé jamais dans le dépôt ; avec les secrets `APK_KEYSTORE_B64` et
-  `APK_KEYSTORE_PASSWORD`, les mises à jour de l'APK s'installent sans désinstaller.
+  Signature : clé jamais dans le dépôt, dans les secrets `APK_KEYSTORE_B64` et
+  `APK_KEYSTORE_PASSWORD` : chaque APK s'installe en **mise à jour** (même clé à chaque
+  fois, vérifiée par son empreinte ; sans les secrets, la construction s'arrête au lieu de
+  prendre une clé au hasard).
 
 ## Playlist collée dans la recherche
 

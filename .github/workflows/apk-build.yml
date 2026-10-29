@@ -61,10 +61,9 @@ jobs:
             PASS="$KS_PASS"
             echo "Clé : secret GitHub (mises à jour sans désinstaller)."
           else
-            PASS="$(openssl rand -hex 24)"
-            keytool -genkeypair -keystore "$d/release.jks" -storepass "$PASS" -keypass "$PASS" \
-              -alias melofinds -keyalg RSA -keysize 3072 -validity 36500 -dname "CN=Melofinds, O=kimany91" >/dev/null
-            echo "::warning::Pas de secret APK_KEYSTORE_B64 : clé neuve pour cette construction (installer cet APK demandera de désinstaller l'ancien)."
+            # jamais de clé au hasard : l'APK ne s'installerait plus en mise à jour
+            echo "::error::Secrets APK_KEYSTORE_B64 / APK_KEYSTORE_PASSWORD absents : ajoute-les (Settings → Secrets and variables → Actions) pour que l'APK s'installe en mise à jour."
+            exit 1
           fi
           echo "::add-mask::$PASS"
           echo "APK_KEYSTORE=$d/release.jks" >> "$GITHUB_ENV"
@@ -93,7 +92,9 @@ jobs:
       - name: Vérifier l'APK (signature, nom, permissions)
         run: |
           BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-          "$BT/apksigner" verify --print-certs Melofinds.apk | head -5
+          "$BT/apksigner" verify --print-certs Melofinds.apk | tee certs.txt | head -5
+          # toujours la clé de l'appli (sinon Android refuse la mise à jour)
+          grep -q "26034819823c4ab21667206870998c088e6f1d0edf0df04da0774e17bc6977fb" certs.txt
           "$BT/aapt" dump badging Melofinds.apk | grep -E "^package:|^application-label:|uses-permission" | tee badging.txt
           grep -q "package: name='io.github.kimany91.melofinds'" badging.txt
           # Internet, micro (« Rec dessus »), lecture écran verrouillé : aucun accès aux fichiers ni aux médias
