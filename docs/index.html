@@ -1161,7 +1161,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 29/10/2026 à 16:56</p>
+    <p class="build-stamp">Version du 29/10/2026 à 17:01</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -4738,9 +4738,23 @@ async function phonePlayName(name, shuffle = false) {
     i = Math.floor(Math.random() * list.length);
     if ((phone.state?.mode || 'suite') !== 'aleatoire') { try { const st = await mfn().phoneMode({ mode: 'aleatoire' }); phone.state = { ...(phone.state || {}), ...st }; } catch { /* ancien */ } }
   }
+  phoneScrollTop();
   try { await mfn().phonePlay({ names: list.map((f) => f.name), index: i }); haptic(); } catch (e) { toast(`Lecture impossible : ${e?.message || ''}`); return; }
-  // retour en haut, sur l'écran de lecture
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  phoneScrollTop();
+}
+// Retour en haut, sur l'écran de lecture : tout de suite (pas d'animation, qu'Android annule
+// quand le lecteur apparaît et pousse la page), puis encore une fois le lecteur affiché.
+function phoneScrollTop() {
+  const go = () => {
+    const el = document.scrollingElement || document.documentElement;
+    el.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.scrollTo(0, 0);
+  };
+  go();
+  requestAnimationFrame(go);
+  setTimeout(go, 350);
+  setTimeout(go, 900);
 }
 const phoneCtl = (cmd, ms = 0) => mfn()?.phoneControl({ cmd, ms: Math.round(ms) }).catch(() => {});
 const fmtMs = (ms) => { const s = Math.max(0, Math.round((ms || 0) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -4906,7 +4920,7 @@ function renderPhoneView() {
       const thumb = phoneThumb(m.id);
       const cur = phone.state?.name === f.name;
       return h('div', { class: `ph-row${cur ? ' on' : ''}${cur && phone.state?.playing ? ' playing' : ''}`, 'data-name': f.name, style: phoneTint(f), role: 'button', tabindex: '0',
-        onclick: () => (cur ? phoneCtl('toggle') : phonePlayName(f.name)) },
+        onclick: () => { if (cur) { phoneCtl('toggle'); phoneScrollTop(); } else phonePlayName(f.name); } },
         h('span', { class: 'ph-art' }, thumb ? h('img', { src: thumb, alt: '', loading: 'lazy', onerror: (e) => e.currentTarget.remove() }) : null,
           h('span', { class: 'ph-ov' }, icon('play'), h('span', { class: 'eq' }, h('i'), h('i'), h('i')))),
         h('span', { class: 'ph-t' }, h('b', {}, parts.title), phoneChips(parts.chips), phoneTagRow(f, 4), h('small', {}, [m.channel || null, f.size ? `${(f.size / 1048576).toFixed(1)} Mo` : null, f.at ? fmtAgo(f.at) : null].filter(Boolean).join(' · '))),
