@@ -32,4 +32,23 @@ public class UsedByLiveTest {
         assumeTrue("1".equals(System.getenv("MF_LIVE")));
         show("sc", "prod by Pyrex");
     }
+
+    @Test
+    public void playlist() throws Exception {
+        assumeTrue("1".equals(System.getenv("MF_LIVE")));
+        YtDescription.init();
+        org.schabi.newpipe.extractor.search.SearchExtractor ex = org.schabi.newpipe.extractor.ServiceList.YouTube
+            .getSearchExtractor("ninho type beat playlist", java.util.Collections.singletonList("playlists"), "");
+        ex.fetchPage();
+        String id = null;
+        for (org.schabi.newpipe.extractor.InfoItem it : ex.getInitialPage().getItems()) {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("[?&]list=([A-Za-z0-9_-]+)").matcher(String.valueOf(it.getUrl()));
+            if (m.find() && YtPlaylist.LIST_ID.matcher(m.group(1)).matches()) { id = m.group(1); break; }
+        }
+        System.out.println("== playlist trouvée : " + id);
+        if (id == null) return;
+        YtPlaylist.Result r = YtPlaylist.fetch(id);
+        System.out.println("== « " + r.name + " » de " + r.uploader + " : " + r.items.size() + " vidéos (annoncées : " + r.count + ", suite coupée : " + r.more + ")");
+        for (int i = 0; i < Math.min(3, r.items.size()); i++) System.out.println("   " + r.items.get(i).id + " | " + r.items.get(i).title + " | " + r.items.get(i).uploader);
+    }
 }

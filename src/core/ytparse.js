@@ -119,3 +119,47 @@ export function displayTitle(title) {
     .trim();
   return t.length >= 3 ? t : orig.trim();
 }
+
+/**
+ * Identifiant de playlist YouTube dans un lien collé (« youtube.com/playlist?list=… »,
+ * « watch?v=…&list=… », music.youtube.com, youtu.be…), ou l'identifiant seul. Les playlists
+ * non répertoriées marchent pareil : il suffit du lien. Les « mix » automatiques (RD…) ne
+ * sont pas des playlists : ignorés.
+ */
+export function playlistIdOf(text) {
+  const s = String(text || '').trim();
+  let id = '';
+  const m = s.match(/(?:youtube\.com|youtu\.be|youtube-nocookie\.com)\/[^\s]*?[?&]list=([A-Za-z0-9_-]{10,64})/i);
+  if (m) id = m[1];
+  else if (/^(?:PL|OL|UU|FL|LL)[A-Za-z0-9_-]{10,62}$/.test(s)) id = s;
+  if (!id || /^(?:RD|UL|LM$|WL$)/.test(id)) return null;
+  return id;
+}
+
+/**
+ * Vidéos d'une page de playlist YouTube lue par Parallel Search (markdown) : chaque lien
+ * « [titre](…watch?v=ID…) », dans l'ordre, sans les liens de service (« Tout lire », durées…).
+ */
+export function parsePlaylistPage(text) {
+  const t = String(text || '');
+  const out = [];
+  const seen = new Set();
+  const re = /\]\((?:https?:\/\/(?:www\.|m\.)?youtube\.com)?\/?watch\?v=([\w-]{11})[^\s)]*\)/g;
+  let m;
+  while ((m = re.exec(t))) {
+    // remonte au « [ » qui ouvre ce lien (les titres ont souvent des crochets : « [FREE] … »)
+    let depth = 0;
+    let i = m.index;
+    for (; i >= 0 && m.index - i < 300; i--) {
+      if (t[i] === ']') depth++;
+      else if (t[i] === '[' && --depth === 0) break;
+    }
+    if (i < 0 || depth !== 0) continue;
+    const title = t.slice(i + 1, m.index).replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+    const id = m[1];
+    if (seen.has(id) || !title || /^(?:\d{1,2}:)?\d{1,2}:\d{2}$/.test(title) || /^(?:play all|tout lire|lecture|now playing|en cours|shuffle|aléatoire|\d+)$/i.test(title)) continue;
+    seen.add(id);
+    out.push({ id, title });
+  }
+  return out;
+}

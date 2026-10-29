@@ -77,6 +77,7 @@ public class MelofindsNativePlugin extends Plugin {
         features.put("scanQr");
         features.put("tbAnalyzer");
         features.put("usedBy");
+        features.put("ytPlaylist");
         r.put("features", features);
         call.resolve(r);
     }
@@ -268,5 +269,43 @@ public class MelofindsNativePlugin extends Plugin {
             }
             call.resolve(r);
         });
+    }
+
+    // ------------------------------------------------------------------ playlist collée
+
+    /**
+     * Vidéos d'une playlist (même non répertoriée) : { id } →
+     * { name, uploader, count, more, items: [{ id, title, duration, views, uploader, uploaderUrl }] }.
+     */
+    @PluginMethod
+    public void ytPlaylist(PluginCall call) {
+        String id = call.getString("id", "");
+        if (!YtPlaylist.LIST_ID.matcher(id).matches()) { call.reject("Playlist invalide"); return; }
+        new Thread(() -> {
+            try {
+                YtPlaylist.Result res = YtPlaylist.fetch(id);
+                JSObject r = new JSObject();
+                r.put("name", res.name);
+                r.put("uploader", res.uploader);
+                r.put("count", res.count);
+                r.put("more", res.more);
+                JSArray items = new JSArray();
+                for (YtPlaylist.Video v : res.items) {
+                    JSObject o = new JSObject();
+                    o.put("id", v.id);
+                    o.put("title", v.title);
+                    o.put("duration", v.duration);
+                    o.put("views", v.views);
+                    o.put("uploader", v.uploader);
+                    o.put("uploaderUrl", v.uploaderUrl);
+                    items.put(o);
+                }
+                r.put("items", items);
+                call.resolve(r);
+            } catch (Throwable e) {
+                String m = e.getMessage();
+                call.reject(m == null ? e.getClass().getSimpleName() : m.length() > 200 ? m.substring(0, 200) : m);
+            }
+        }).start();
     }
 }

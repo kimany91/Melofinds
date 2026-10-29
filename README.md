@@ -259,6 +259,17 @@ arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion �
   Signature : clé jamais dans le dépôt ; avec les secrets `APK_KEYSTORE_B64` et
   `APK_KEYSTORE_PASSWORD`, les mises à jour de l'APK s'installent sans désinstaller.
 
+## Playlist collée dans la recherche
+
+Colle le lien d'une playlist YouTube dans la barre de recherche (même **non répertoriée** ;
+pas privée) : toutes ses vidéos s'affichent, licences vérifiées comme une recherche, avec
+les mêmes filtres et tris (`playlistIdOf` / `parsePlaylistPage` dans `src/core/ytparse.js`).
+- Avec ta clé YouTube : l'API officielle (`playlistItems`, 50 vidéos par unité).
+- Appli Android : le téléphone lit la playlist (NewPipe, `YtPlaylist.java`, 500 vidéos au
+  plus) puis toutes les descriptions.
+- Site sans clé : Piped (pas toujours disponible). Version Claude : la page de la playlist.
+- Les « mix » automatiques de YouTube (liens `list=RD…`) ne sont pas des playlists : ignorés.
+
 ## Chaîne du beatmaker (version web)
 
 Chaque prod affiche le **logo de la chaîne** qui l'a postée. Un appui dessus lance le

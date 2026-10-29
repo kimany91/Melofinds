@@ -277,7 +277,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 // Ce que sait faire l'APK installée (les anciennes versions n'ont pas tout)
-const nativeYt = { desc: false, scan: false, tba: false, used: false, checked: false };
+const nativeYt = { desc: false, scan: false, tba: false, used: false, playlist: false, checked: false };
 if (isNative()) {
   document.documentElement.classList.add('apk');
   (async () => {
@@ -287,6 +287,7 @@ if (isNative()) {
       nativeYt.scan = f.includes('scanQr');
       nativeYt.tba = f.includes('tbAnalyzer');
       nativeYt.used = f.includes('usedBy');
+      nativeYt.playlist = f.includes('ytPlaylist');
     } catch { /* ancienne version de l'APK */ }
     nativeYt.checked = true;
   })();
@@ -1838,6 +1839,16 @@ const resultText = (r) => [...(r.excerpts || []), r.full_content || ''].join('\n
 const cleanTitle = cleanYtTitle;
 
 // Page de résultats YouTube → vidéos (parseResultsPage : moteur)
+// Page d'une playlist YouTube (version Claude) → vidéos, dans l'ordre
+async function listPlaylistPage(listId) {
+  let list = [];
+  for (const host of ['www.youtube.com', 'm.youtube.com']) {
+    const p = await pcall('web_fetch', { urls: [`https://${host}/playlist?list=${listId}`], objective: 'Lister toutes les vidéos de cette playlist, dans l’ordre : titre exact et lien de chacune.' });
+    list = parsePlaylistPage((p.results || []).map(resultText).join('\n'));
+    if (list.length) break;
+  }
+  return list;
+}
 async function listVideos(query) {
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAQ%253D%253D`;
   const p = await pcall('web_fetch', { urls: [url], objective: 'Lister toutes les vidéos de la page de résultats : titre exact et lien de chacune.' });
@@ -2344,6 +2355,7 @@ async function pipedReadPending(pending) {
 
 async function channelFetch(add, before) {
   const ch = session.channel;
+  if (ch.kind === 'playlist') return playlistFetch(add);
   setStatus(`Je récupère les vidéos de ${ch.name || 'la chaîne'}…`, 0.08);
   if (!ch.id) await resolveChannelId(ch);
   if (!ch.id) throw { code: 'channel', message: 'chaîne introuvable' };
@@ -2437,6 +2449,118 @@ function openChannel(item) {
   $('#results').scrollIntoView({ behavior: 'smooth', block: 'start' });
   runSearch(true);
 }
+// Playlist collée dans la recherche (même non répertoriée) : toutes ses vidéos, vérifiées
+// comme une recherche. Avec ta clé YouTube : l'API (playlistItems) ; dans l'appli Android :
+// le téléphone la lit (NewPipe) ; sinon Piped ; version Claude : la page de la playlist.
+function openPlaylist(listId) {
+  if (searching) { toast('Attends la fin de la recherche en cours'); return; }
+  if (!session?.channel) beforeChannel = session ? { session, sort: $('#sort').value } : null;
+  const ch = { kind: 'playlist', id: listId, name: '', owner: '', avatar: '' };
+  session = { prompt: `playlist ${listId}`, plan: buildPlan('type beat', { licenses: searchPrefs.licenses, device, depth: 'rapide' }),
+    done: [], items: new Map(), at: new Date().toISOString(), channel: ch };
+  rendered = new Set();
+  $('#grid').replaceChildren();
+  showView('search');
+  closeDrawer();
+  renderChannelBar();
+  $('#results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  runSearch(true);
+}
+async function playlistFetch(add) {
+  const ch = session.channel;
+  setStatus('Je récupère les vidéos de la playlist…', 0.08);
+  const found = [];
+  let err = null;
+  if (ytKey()) {
+    try {
+      if (!ch.name) {
+        const b = await ytApi('playlists', { part: 'snippet', id: ch.id });
+        const sn = b.items?.[0]?.snippet;
+        ch.name = String(sn?.title || '').slice(0, 120);
+        ch.owner = String(sn?.channelTitle || '').slice(0, 80);
+      }
+      for (let p = 0; p < 10 && !ch.end; p++) {
+        const b = await ytApi('playlistItems', { part: 'snippet', playlistId: ch.id, maxResults: '50', ...(ch.next ? { pageToken: ch.next } : {}) });
+        ch.next = b.nextPageToken || null;
+        ch.end = !ch.next;
+        for (const it of b.items || []) {
+          const id = it.snippet?.resourceId?.videoId;
+          const title = decodeHtml(it.snippet?.title || '');
+          if (/^[\w-]{11}$/.test(id || '') && !/^(?:private|deleted) video$/i.test(title)) found.push({ id, title, channel: it.snippet?.videoOwnerChannelTitle, channelId: it.snippet?.videoOwnerChannelId });
+        }
+        setStatus(`Je récupère les vidéos de la playlist… ${found.length}`, 0.08 + 0.02 * p);
+      }
+    } catch (e) { err = e; }
+  }
+  if (!found.length && nativeYt.playlist) {
+    try {
+      const r = await mfn().ytPlaylist({ id: ch.id });
+      ch.name ||= String(r?.name || '').slice(0, 120);
+      ch.owner ||= String(r?.uploader || '').slice(0, 80);
+      ch.end = true;
+      for (const it of r?.items || []) {
+        if (!/^[\w-]{11}$/.test(it?.id || '')) continue;
+        const cid = (String(it.uploaderUrl || '').match(/\/channel\/(UC[\w-]{22})/) || [])[1];
+        found.push({ id: it.id, title: String(it.title || ''), views: Number(it.views) >= 0 ? Number(it.views) : null, duration: Number(it.duration) > 0 ? Number(it.duration) : 0, channel: it.uploader, channelId: cid });
+      }
+    } catch (e) { err = e; }
+  }
+  if (!found.length) {
+    ch.next = null;
+    ch.end = false;
+    try {
+      for (let p = 0; p < 10 && !ch.end; p++) {
+        const path = ch.next ? `/nextpage/playlists/${ch.id}?nextpage=${encodeURIComponent(ch.next)}` : `/playlists/${ch.id}`;
+        const { body } = await pipedGet(path);
+        ch.next = body.nextpage || null;
+        ch.end = !ch.next;
+        ch.name ||= String(body.name || '').slice(0, 120);
+        ch.owner ||= String(body.uploader || '').slice(0, 80);
+        for (const it of body.relatedStreams || []) {
+          const id = pipedId(it);
+          if (id) found.push({ id, title: it.title || '', views: it.views, raw: it });
+        }
+      }
+    } catch (e) { err = e; }
+  }
+  for (const v of found) {
+    add({ id: v.id, title: v.title, views: v.views }, `playlist:${ch.id}`, v.raw?.shortDescription || '');
+    const cur = session.items.get(v.id);
+    if (!cur) continue;
+    if (v.raw) pipedChannelInfo(cur, v.raw);
+    if (v.duration > 0 || v.raw?.duration > 0) cur.duration = v.duration || v.raw.duration;
+    if (v.channel) cur.channel ||= String(v.channel).slice(0, 80);
+    if (/^UC[\w-]{22}$/.test(v.channelId || '')) cur.channelId ||= v.channelId;
+  }
+  renderChannelBar();
+  const pending = [...session.items.values()].filter((i) => i.status === 'pending');
+  if (!pending.length) {
+    if (!session.items.size) {
+      if (errorKind(err) && errorKind(err) !== 'piped') throw err;  // clé YouTube : quota, clé refusée…
+      setStatus(null);
+      showNotice('error', `Je n’arrive pas à lire cette playlist${err ? ` (${String(err?.message || err?.code || '').slice(0, 120)})` : ''}. Vérifie le lien : une playlist privée ne se lit pas (non répertoriée, oui).${!ytKey() && isNative() && !nativeYt.playlist ? ' Mets l’appli à jour : elle lit les playlists toute seule.' : !ytKey() && !isNative() ? ' Sans clé YouTube, le site passe par Piped, pas toujours disponible : l’appli Android (ou ta clé YouTube) lit les playlists à coup sûr.' : ''}`);
+    } else setStatus(ch.end ? 'Toutes les vidéos de la playlist sont là.' : 'Aucune nouvelle vidéo.', 1, true);
+    return false;
+  }
+  if (ytKey()) await apiReadPending(pending);
+  else if (nativeYt.desc) await nativeReadPending(pending);
+  else await pipedReadPending(pending);
+  return true;
+}
+// Appli Android sans clé : le téléphone lit toutes les descriptions (60 par 60)
+async function nativeReadPending(pending) {
+  const total = pending.length;
+  let read = 0;
+  for (const item of pending) { item.description = item.snippet || ''; item.partial = true; item.status = 'done'; }
+  renderResults();
+  for (const batch of chunk(pending, 60)) {
+    setStatus(`${total} vidéos trouvées · je lis les descriptions (${read}/${total})`, 0.4 + 0.6 * (read / total));
+    await nativeAskDesc(batch);
+    read += batch.length;
+    renderResults();
+  }
+  await pcFillDescriptions(pending.filter(needsDesc));
+}
 function leaveChannel() {
   if (searching) { toast('Attends la fin du chargement'); return; }
   const back = beforeChannel;
@@ -2458,10 +2582,10 @@ function renderChannelBar() {
   const n = [...session.items.values()].filter((i) => i.status !== 'pending').length;
   bar.replaceChildren(
     chanAvatar(ch.avatar, ch.name, 'big'),
-    h('div', { class: 'chan-txt' }, h('span', {}, 'Chaîne'), h('b', {}, ch.name || 'Beatmaker'),
+    h('div', { class: 'chan-txt' }, h('span', {}, ch.kind === 'playlist' ? `Playlist${ch.owner ? ` · ${ch.owner}` : ''}` : 'Chaîne'), h('b', {}, ch.name || (ch.kind === 'playlist' ? 'Playlist' : 'Beatmaker')),
       h('small', {}, `${n} vidéo${n > 1 ? 's' : ''}${ch.end ? ' · toutes chargées' : ' · « Plus de résultats » pour la suite'}`)),
-    h('a', { class: 'ghost sm', href: ch.id ? `https://www.youtube.com/channel/${ch.id}/videos` : ytSearchUrl(ch.name), target: '_blank', rel: 'noopener' }, 'YouTube', icon('ext')),
-    h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Quitter la chaîne', title: 'Revenir à ta recherche', onclick: leaveChannel }, icon('x')));
+    h('a', { class: 'ghost sm', href: ch.kind === 'playlist' ? `https://www.youtube.com/playlist?list=${ch.id}` : ch.id ? `https://www.youtube.com/channel/${ch.id}/videos` : ytSearchUrl(ch.name), target: '_blank', rel: 'noopener' }, 'YouTube', icon('ext')),
+    h('button', { type: 'button', class: 'icon-btn', 'aria-label': ch.kind === 'playlist' ? 'Quitter la playlist' : 'Quitter la chaîne', title: 'Revenir à ta recherche', onclick: leaveChannel }, icon('x')));
 }
 // Logo rond de la chaîne (sinon son initiale sur une couleur tirée du nom)
 function chanAvatar(url, name, size = '') {
@@ -2733,6 +2857,8 @@ function startSearch() {
   if (!prompt) { promptEl.focus(); toast('Décris la prod que tu cherches'); return; }
   if (searching) return;
   promptEl.blur();
+  const listId = playlistIdOf(prompt);
+  if (listId) { openPlaylist(listId); return; }
   const plan = buildPlan(prompt, { licenses: searchPrefs.licenses, device, depth: device === 'mobile' ? 'rapide' : 'normal' });
   session = { prompt, plan, done: [], items: new Map(), at: new Date().toISOString() };
   beforeChannel = null;
@@ -2747,7 +2873,7 @@ $('#moreBtn').addEventListener('click', () => { if (session) runSearch(false); }
 async function runSearch(first) {
   if (searching || !session) return;
   const queries = nextQueries(first);
-  if (!queries.length) { toast(session.channel ? 'Toutes les vidéos de la chaîne sont déjà là' : 'J’ai fait le tour de cette recherche. Essaie d’autres mots.'); return; }
+  if (!queries.length) { toast(session.channel ? `Toutes les vidéos de la ${session.channel.kind === 'playlist' ? 'playlist' : 'chaîne'} sont déjà là` : 'J’ai fait le tour de cette recherche. Essaie d’autres mots.'); return; }
   searching = true;
   noteGame.open();
   showNotice(null);
@@ -2761,7 +2887,7 @@ async function runSearch(first) {
   let searchTask = null;
   try {
     // 1) Trouver les vidéos : page de résultats YouTube de chaque recherche (+ recherche web)
-    setStatus(session.channel ? `Je récupère les vidéos de ${session.channel.name || 'la chaîne'}…` : `Je cherche sur YouTube (${queries.length} recherche${queries.length > 1 ? 's' : ''})…`, 0.08);
+    setStatus(session.channel ? `Je récupère les vidéos de ${session.channel.name || (session.channel.kind === 'playlist' ? 'la playlist' : 'la chaîne')}…` : `Je cherche sur YouTube (${queries.length} recherche${queries.length > 1 ? 's' : ''})…`, 0.08);
     if (first) showSkeletons(device === 'mobile' ? 4 : 8);
     let failures = 0;
     let firstErr = null;
@@ -2786,6 +2912,17 @@ async function runSearch(first) {
       .then((list) => { list.forEach((v) => add(v, queries[0], v.text)); return null; })
       .catch((e) => (errorKind(e) ? e : null));
     let doneQ = 0;
+    if (session.channel?.kind === 'playlist') {
+      // playlist collée : sa page YouTube, pas une recherche
+      const ch = session.channel;
+      try {
+        const got = await listPlaylistPage(ch.id);
+        got.forEach((v) => add(v, `playlist:${ch.id}`));
+        ch.end = true;
+        if (!got.length) throw { code: 'playlist', message: 'playlist vide, privée ou illisible' };
+      } catch (e) { if (errorKind(e)) throw e; failures = queries.length; firstErr = e; }
+      queries.length = 0;
+    }
     await pool(queries, 3, async (q) => {
       try { (await listVideos(q)).forEach((v) => add(v, q)); } catch (e) { if (errorKind(e)) throw e; failures++; firstErr ||= e; }
       doneQ++;
@@ -2795,6 +2932,7 @@ async function runSearch(first) {
     if (searchErr) throw searchErr;
     const pending = [...session.items.values()].filter((i) => i.status === 'pending').slice(0, LIMITS().read);
     if (!pending.length) {
+      if (session.channel?.kind === 'playlist' && firstErr) { showNotice('error', `Je n’arrive pas à lire cette playlist : ${String(firstErr?.message || firstErr?.code || '').slice(0, 160)}. Vérifie le lien (une playlist privée ne se lit pas ; non répertoriée, oui).`); setStatus(null); return; }
       if (failures === queries.length) { showNotice('error', `Parallel Search a renvoyé une erreur : ${String(firstErr?.message || firstErr?.code || '').slice(0, 160)}`); setStatus(null); }
       else setStatus('Aucune nouvelle vidéo pour ces recherches. Essaie d’autres mots.', 1, true);
       return;
