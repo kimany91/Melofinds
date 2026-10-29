@@ -241,6 +241,16 @@ arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion �
 - **Tunebat Analyzer** : bouton BPM (voir plus haut) : la prod est téléchargée, analysée par
   Tunebat dans une fenêtre visible, puis effacée.
 - **Déjà posé dessus** (voir plus haut) : recherche YouTube / SoundCloud et comparaison du son.
+- **Onglet Téléphone** (seulement dans l'appli) : le bouton téléphone d'une prod la télécharge
+  dans **Musique / Melofinds Instru** (son YouTube d'origine en .m4a, nommé comme sur le PC :
+  `Titre [Clé, BPM] [Licence]`, jamais « free » ; `src/core/prodname.js`). Le dossier est
+  choisi une fois dans le sélecteur d'Android : l'appli n'a accès qu'à lui (aucune permission
+  fichiers ou médias). Il reste si l'appli est désinstallée : après une réinstallation,
+  « Choisir le dossier » le retrouve avec les prods (index `.melofinds.json` dans le dossier).
+  Lecture hors connexion par le lecteur d'Android (`PhonePlayerService.java`) : continue écran
+  verrouillé, commandes sur l'écran verrouillé et le casque, pause si le casque est débranché.
+  Sans connexion au démarrage, l'écran « Pas de connexion » (`apk/www`) liste les prods du
+  dossier et les joue. Code : `PhoneLibrary.java`, `PhonePlayerService.java`.
 - **Descriptions complètes** (licence, BPM, clé) : quand YouTube ne donne que le début,
   l'appli lit la page de la vidéo depuis le téléphone, sinon via NewPipe Extractor
   (`YtDescription.java`) ; puis le
@@ -250,8 +260,9 @@ arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion �
   (YouTube Operational API, Invidious, Jina…) ne marchent plus en 2026.
 - **Retour haptique** léger sur chaque action (selon le réglage « vibrations » du
   téléphone), plus marqué quand le BPM est trouvé. La version web Android vibre aussi.
-- **Sécurité** : permissions Internet et micro (« Rec dessus ») seulement : aucun accès aux
-  fichiers ni aux médias du téléphone ; le son de la prod ne va que dans le cache de l'appli
+- **Sécurité** : permissions Internet, micro (« Rec dessus ») et lecture en arrière-plan
+  seulement : aucun accès aux fichiers ni aux médias du téléphone (le dossier Melofinds Instru
+  passe par le sélecteur d'Android) ; le son de la prod ne va que dans le cache de l'appli
   et il est effacé après Tunebat ; la fenêtre Tunebat ne va que sur Tunebat.
 - Code : `android/` (Capacitor 8, module natif `MelofindsNativePlugin.java`),
   `capacitor.config.json`, `apk/www` (écran hors connexion), construction
@@ -269,6 +280,9 @@ les mêmes filtres et tris (`playlistIdOf` / `parsePlaylistPage` dans `src/core/
   plus) puis toutes les descriptions.
 - Site sans clé : Piped (pas toujours disponible). Version Claude : la page de la playlist.
 - Les « mix » automatiques de YouTube (liens `list=RD…`) ne sont pas des playlists : ignorés.
+- Tri **« Dernières ajoutées à la playlist »** (par défaut en mode playlist) : date d'ajout
+  donnée par l'API avec ta clé ; sinon l'ordre de la playlist, la fin d'abord (YouTube ajoute
+  les nouvelles vidéos à la fin).
 
 ## Chaîne du beatmaker (version web)
 

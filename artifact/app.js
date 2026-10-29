@@ -130,7 +130,7 @@ const LIMITS = () => (WEB
 // ---------------------------------------------------------------------------
 // Navigation
 
-const VIEWS = ['search', 'saved', 'history', ...(window.MF_TARGET === 'web' ? ['recs', 'pc'] : [])];
+const VIEWS = ['search', 'saved', 'history', ...(window.MF_TARGET === 'web' ? ['recs', 'pc', 'phone'] : [])];
 function showView(name) {
   if (!VIEWS.includes(name)) name = 'search';
   $$('.nav-item').forEach((t) => { const on = t.dataset.view === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
@@ -140,6 +140,7 @@ function showView(name) {
   if (name === 'history') renderHistory();
   if (name === 'recs') renderRecs();
   if (name === 'pc') { listenPc(); renderPcView(); askPcLib(); }
+  if (name === 'phone') phoneRefresh();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 $$('.nav-item').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
@@ -277,7 +278,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 // Ce que sait faire l'APK installée (les anciennes versions n'ont pas tout)
-const nativeYt = { desc: false, scan: false, tba: false, used: false, playlist: false, checked: false };
+const nativeYt = { desc: false, scan: false, tba: false, used: false, playlist: false, phone: false, checked: false };
 if (isNative()) {
   document.documentElement.classList.add('apk');
   (async () => {
@@ -288,6 +289,8 @@ if (isNative()) {
       nativeYt.tba = f.includes('tbAnalyzer');
       nativeYt.used = f.includes('usedBy');
       nativeYt.playlist = f.includes('ytPlaylist');
+      nativeYt.phone = f.includes('phone');
+      if (nativeYt.phone) phoneSetup();
     } catch { /* ancienne version de l'APK */ }
     nativeYt.checked = true;
   })();
@@ -543,6 +546,180 @@ function syncUsed(item) {
   if (box) box.replaceChildren(h('h4', {}, 'Déjà posé dessus'), ...usedBody(item));
 }
 
+// ---------------------------------------------------------------------------
+// Onglet Téléphone (appli Android seulement) : le bouton téléphone télécharge la prod dans le
+// dossier « Musique / Melofinds Instru » (choisi une fois dans le sélecteur d'Android : l'appli
+// n'a accès qu'à ce dossier). Lecture hors connexion par le lecteur d'Android, qui continue
+// écran verrouillé. Le dossier reste si l'appli est désinstallée : il suffit de le rechoisir.
+// Nom du fichier : comme sur le PC (src/core/prodname.js), jamais « free » dedans.
+const phone = { linked: null, name: '', files: [], jobs: {}, state: null, q: '', setup: false };
+const PH_LABEL = { '': 'Télécharger sur mon téléphone', busy: 'Téléchargement sur ton téléphone…', ok: 'Sur ton téléphone ✓' };
+const phoneHas = (id) => phone.files.some((f) => f.meta?.id === id);
+const phoneSt = (id) => (phone.jobs[id] ? 'busy' : phoneHas(id) ? 'ok' : '');
+function phoneButton(item) {
+  const id = ytIdOf(item);
+  const st = phoneSt(id);
+  return h('button', { type: 'button', class: `ph-btn${st ? ` ${st}` : ''}`, 'data-ph': id, 'aria-label': PH_LABEL[st], title: PH_LABEL[st],
+    onclick: (e) => { e.stopPropagation(); if (st === 'ok') showView('phone'); else phoneDownload(item); } }, icon(st === 'ok' ? 'check' : 'phone'));
+}
+function syncPhoneBtns() {
+  $$('.ph-btn[data-ph]').forEach((b) => {
+    const st = phoneSt(b.dataset.ph);
+    b.className = `ph-btn${st ? ` ${st}` : ''}`;
+    b.setAttribute('aria-label', PH_LABEL[st]);
+    b.title = PH_LABEL[st];
+    b.replaceChildren(icon(st === 'ok' ? 'check' : 'phone'));
+  });
+}
+async function phoneSetup() {
+  if (phone.setup) return;
+  phone.setup = true;
+  $('#navPhone').hidden = false;
+  try { await mfn().addListener('phonePlayer', (st) => { phone.state = st; renderPhonePlayer(); }); } catch { /* ancienne appli */ }
+  try {
+    const r = await mfn().phoneInfo();
+    phone.linked = !!r?.linked;
+    phone.name = String(r?.name || '');
+    if (r?.player) phone.state = r.player;
+    if (phone.linked) await phoneRefresh(true);
+  } catch { /* plus tard */ }
+  if (local.get('view', '') === 'phone') showView('phone');
+}
+async function phoneRefresh(quiet = false) {
+  if (!nativeYt.phone) { renderPhoneView(); return; }
+  try {
+    const r = await mfn().phoneList();
+    phone.files = Array.isArray(r?.files) ? r.files : [];
+    phone.linked = true;
+  } catch (e) {
+    if (e?.code === 'nofolder') { phone.linked = false; phone.files = []; } else if (!quiet) toast(`Dossier illisible : ${e?.message || ''}`);
+  }
+  renderPhoneView();
+  syncPhoneBtns();
+}
+async function phonePick() {
+  haptic();
+  try {
+    const r = await mfn().phonePickFolder();
+    phone.linked = true;
+    phone.name = String(r?.name || '');
+    phone.files = Array.isArray(r?.files) ? r.files : [];
+    haptic('success');
+    toast(phone.files.length ? `Dossier relié : ${phone.files.length} prod${phone.files.length > 1 ? 's' : ''} retrouvée${phone.files.length > 1 ? 's' : ''}` : 'Dossier « Melofinds Instru » prêt');
+  } catch (e) {
+    if (e?.code !== 'cancel') { haptic('warn'); toast(e?.message || 'Dossier non relié'); }
+  }
+  renderPhoneView();
+  syncPhoneBtns();
+}
+async function phoneDownload(item) {
+  const id = ytIdOf(item);
+  if (!nativeYt.phone || !id || phone.jobs[id]) return;
+  if (phoneHas(id)) { showView('phone'); return; }
+  if (!phone.linked) {
+    toast('Choisis d’abord le dossier : Musique, puis « Utiliser ce dossier »');
+    await phonePick();
+    if (!phone.linked) return;
+  }
+  const r = analyzed(item, session?.plan || null);
+  const L = r.license;
+  const name = prodFileName({ title: item.title, key: r.key || null, bpm: r.bpm || null, lic: L.titleOnly ? null : L.category, limit: L.limit, tbKey: !!r.keyTb, tbBpm: !!r.bpmTb });
+  phone.jobs[id] = true;
+  syncPhoneBtns();
+  haptic();
+  toast('Téléchargement sur ton téléphone…');
+  try {
+    const res = await mfn().phoneDownload({ id, name, meta: { title: String(item.title || '').slice(0, 200), key: r.key || null, bpm: r.bpm || null, lic: L.category, channel: String(item.channel || '').slice(0, 80) } });
+    haptic('success');
+    toast(`Sur ton téléphone : ${res?.name || name}`, { label: 'Écouter', run: () => { showView('phone'); phonePlayName(res?.name); } });
+  } catch (e) {
+    haptic('warn');
+    if (e?.code === 'nofolder') { phone.linked = false; toast('Rechoisis le dossier « Melofinds Instru »', { label: 'Choisir', run: phonePick }); } else toast(`Téléchargement impossible : ${String(e?.message || '').slice(0, 120)}`);
+  } finally {
+    delete phone.jobs[id];
+    await phoneRefresh(true);
+  }
+}
+const phoneShown = () => {
+  const q = strip(phone.q).toLowerCase().trim();
+  return [...phone.files].sort((a, b) => (b.at || 0) - (a.at || 0)).filter((f) => !q || strip(f.name).toLowerCase().includes(q));
+};
+async function phonePlayName(name) {
+  const list = phoneShown();
+  const i = Math.max(0, list.findIndex((f) => f.name === name));
+  try { await mfn().phonePlay({ names: list.map((f) => f.name), index: i }); haptic(); } catch (e) { toast(`Lecture impossible : ${e?.message || ''}`); }
+}
+const phoneCtl = (cmd, ms = 0) => mfn()?.phoneControl({ cmd, ms }).catch(() => {});
+const fmtMs = (ms) => { const s = Math.max(0, Math.round((ms || 0) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+let phoneSeeking = false;
+function renderPhonePlayer() {
+  const box = $('#phonePlayer');
+  if (!box) return;
+  const st = phone.state;
+  box.hidden = !st?.active || !st?.name;
+  if (box.hidden) return;
+  if (!box.firstChild) {
+    const range = h('input', { type: 'range', min: '0', max: '1000', value: '0', 'aria-label': 'Position' });
+    range.addEventListener('input', () => { phoneSeeking = true; });
+    range.addEventListener('change', () => { phoneSeeking = false; phoneCtl('seek', Math.round((Number(range.value) / 1000) * (phone.state?.duration || 0))); });
+    box.append(h('b', { class: 'pp-title' }),
+      h('div', { class: 'seek' }, h('span', { class: 'pp-pos' }), range, h('span', { class: 'pp-dur' })),
+      h('div', { class: 'ctl' },
+        h('button', { type: 'button', 'aria-label': 'Précédente', onclick: () => phoneCtl('prev') }, icon('prev')),
+        h('button', { type: 'button', class: 'main pp-toggle', 'aria-label': 'Lecture / pause', onclick: () => phoneCtl('toggle') }, icon('play')),
+        h('button', { type: 'button', 'aria-label': 'Suivante', onclick: () => phoneCtl('next') }, icon('next')),
+        h('button', { type: 'button', 'aria-label': 'Arrêter', onclick: () => phoneCtl('stop') }, icon('stop'))));
+  }
+  box.querySelector('.pp-title').textContent = String(st.title || st.name || '');
+  box.querySelector('.pp-pos').textContent = fmtMs(st.position);
+  box.querySelector('.pp-dur').textContent = fmtMs(st.duration);
+  const range = box.querySelector('input[type="range"]');
+  if (!phoneSeeking) range.value = st.duration ? String(Math.round((st.position / st.duration) * 1000)) : '0';
+  box.querySelector('.pp-toggle').replaceChildren(icon(st.playing ? 'pause' : 'play'));
+  $$('.phone-row').forEach((r) => r.classList.toggle('on', r.dataset.name === st.name));
+}
+function renderPhoneView() {
+  const list = $('#phoneList');
+  if (!list) return;
+  $('#phoneFolderBtn').textContent = phone.linked ? 'Changer de dossier' : 'Choisir le dossier';
+  if (!nativeYt.phone) {
+    list.replaceChildren(h('div', { class: 'phone-empty' }, h('p', { class: 'muted' }, 'Mets l’appli à jour pour télécharger les prods sur ton téléphone.'), h('a', { class: 'primary', href: APK_URL, rel: 'noopener' }, 'Mettre à jour l’appli')));
+    return;
+  }
+  if (!phone.linked) {
+    list.replaceChildren(h('div', { class: 'phone-empty' },
+      h('b', {}, 'Choisis le dossier une fois'),
+      h('p', { class: 'muted' }, 'Le sélecteur d’Android s’ouvre sur Musique : touche « Utiliser ce dossier » puis « Autoriser ». Je crée « Melofinds Instru » dedans (ou je retrouve celui qui existe déjà, avec tes prods, si tu as réinstallé l’appli). Melofinds n’a accès qu’à ce dossier.'),
+      h('button', { type: 'button', class: 'primary', onclick: phonePick }, icon('phone'), 'Choisir le dossier')));
+    renderPhonePlayer();
+    return;
+  }
+  const shown = phoneShown();
+  if (!phone.files.length) {
+    list.replaceChildren(h('div', { class: 'phone-empty' }, h('b', {}, 'Aucune prod pour l’instant'), h('p', { class: 'muted' }, 'Touche le bouton téléphone sur une prod (ou « Sur mon tel » dans ses détails) : elle arrive ici, à écouter même sans connexion.')));
+  } else {
+    list.replaceChildren(...shown.map((f) => {
+      const m = f.meta || {};
+      const sub = [m.channel || null, f.size ? `${(f.size / 1048576).toFixed(1)} Mo` : null, f.at ? fmtAgo(f.at) : null].filter(Boolean).join(' · ');
+      return h('div', { class: `phone-row${phone.state?.name === f.name ? ' on' : ''}`, 'data-name': f.name },
+        h('button', { type: 'button', class: 'ph-play', 'aria-label': `Écouter ${f.name}`, onclick: () => phonePlayName(f.name) }, icon('play')),
+        h('span', { class: 'phone-t' }, h('b', {}, String(f.name).replace(/\.[a-z0-9]+$/i, '')), h('small', {}, sub || 'Melofinds Instru')),
+        h('button', { type: 'button', class: 'ph-del', 'aria-label': `Supprimer ${f.name}`, title: 'Supprimer du téléphone', onclick: async () => {
+          if (!confirm(`Supprimer « ${f.name} » de ton téléphone ?`)) return;
+          try { await mfn().phoneDelete({ name: f.name }); toast('Supprimée du téléphone'); } catch (e) { toast(`Suppression impossible : ${e?.message || ''}`); }
+          phoneRefresh(true);
+        } }, icon('trash')));
+    }));
+    if (!shown.length) list.append(h('p', { class: 'muted' }, 'Aucune prod ne correspond.'));
+  }
+  renderPhonePlayer();
+}
+$('#phoneFolderBtn')?.addEventListener('click', () => phonePick());
+$('#phoneSearch')?.addEventListener('input', (e) => { phone.q = e.target.value; renderPhoneView(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && nativeYt.phone) mfn()?.phoneState?.().then((st) => { phone.state = st; renderPhonePlayer(); }).catch(() => {});
+});
+
 function refreshItem(item) {
   if (session?.items?.has(item.id)) renderResults();
   if ($('#view-saved')?.classList.contains('active') && isSaved(item.id)) renderSavedProds();
@@ -643,6 +820,7 @@ function renderCard(item, r, { isNew = false, index = 0, plan = null } = {}) {
   card.append(h('div', { class: 'card-links' },
     WEB && vid ? tbButton(item) : null,
     WEB && vid ? pcButton(item) : null,
+    WEB && vid && nativeYt.phone ? phoneButton(item) : null,
     h('a', { class: 'yt-link', href: ytWatchUrl(item), target: '_blank', rel: 'noopener', 'aria-label': `Ouvrir « ${item.title} » sur YouTube` }, 'YouTube', icon('ext'))));
   const open = () => openBeat(item, plan);
   main.addEventListener('click', open);
@@ -1807,6 +1985,7 @@ function openBeat(item, plan) {
       saveBtn,
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => openStudio(item) }, icon('mic'), 'Rec dessus') : null,
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost', onclick: () => sendToPc(item) }, icon('down'), 'Sur mon PC') : null,
+      WEB && ytIdOf(item) && nativeYt.phone ? h('button', { type: 'button', class: 'ghost', onclick: () => phoneDownload(item) }, icon('phone'), phoneHas(ytIdOf(item)) ? 'Sur mon tel ✓' : 'Sur mon tel') : null,
       WEB && ytIdOf(item) ? h('button', { type: 'button', class: 'ghost tb-ghost', onclick: () => openBpmSheet(item) }, 'Trouver BPM et clé') : null,
       item.url ? h('button', { type: 'button', class: 'ghost', onclick: () => copyText(item.url) }, 'Copier le lien') : null),
     WEB ? h('a', { class: 'link d-yt', href: ytWatchUrl(item), target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube', icon('ext')) : null,
@@ -2456,6 +2635,7 @@ function openPlaylist(listId) {
   if (searching) { toast('Attends la fin de la recherche en cours'); return; }
   if (!session?.channel) beforeChannel = session ? { session, sort: $('#sort').value } : null;
   const ch = { kind: 'playlist', id: listId, name: '', owner: '', avatar: '' };
+  $('#sort').value = 'ajout';
   session = { prompt: `playlist ${listId}`, plan: buildPlan('type beat', { licenses: searchPrefs.licenses, device, depth: 'rapide' }),
     done: [], items: new Map(), at: new Date().toISOString(), channel: ch };
   rendered = new Set();
@@ -2486,7 +2666,8 @@ async function playlistFetch(add) {
         for (const it of b.items || []) {
           const id = it.snippet?.resourceId?.videoId;
           const title = decodeHtml(it.snippet?.title || '');
-          if (/^[\w-]{11}$/.test(id || '') && !/^(?:private|deleted) video$/i.test(title)) found.push({ id, title, channel: it.snippet?.videoOwnerChannelTitle, channelId: it.snippet?.videoOwnerChannelId });
+          const added = Date.parse(it.snippet?.publishedAt || '') || 0;  // date d'ajout à la playlist
+          if (/^[\w-]{11}$/.test(id || '') && !/^(?:private|deleted) video$/i.test(title)) found.push({ id, title, added, channel: it.snippet?.videoOwnerChannelTitle, channelId: it.snippet?.videoOwnerChannelId });
         }
         setStatus(`Je récupère les vidéos de la playlist… ${found.length}`, 0.08 + 0.02 * p);
       }
@@ -2523,10 +2704,14 @@ async function playlistFetch(add) {
       }
     } catch (e) { err = e; }
   }
+  ch.pos ||= 0;
   for (const v of found) {
     add({ id: v.id, title: v.title, views: v.views }, `playlist:${ch.id}`, v.raw?.shortDescription || '');
     const cur = session.items.get(v.id);
     if (!cur) continue;
+    // ordre de la playlist (et date d'ajout quand l'API la donne) : tri « Dernières ajoutées »
+    if (cur.plPos == null) cur.plPos = ++ch.pos;
+    if (v.added) cur.plAdded = v.added;
     if (v.raw) pipedChannelInfo(cur, v.raw);
     if (v.duration > 0 || v.raw?.duration > 0) cur.duration = v.duration || v.raw.duration;
     if (v.channel) cur.channel ||= String(v.channel).slice(0, 80);
@@ -2577,6 +2762,9 @@ function renderChannelBar() {
   const bar = $('#chanBar');
   if (!bar) return;
   const ch = session?.channel;
+  const opt = $('#sort option[value="ajout"]');
+  if (opt) opt.hidden = ch?.kind !== 'playlist';
+  if (ch?.kind !== 'playlist' && $('#sort').value === 'ajout') $('#sort').value = searchPrefs.sort || 'licence';
   bar.hidden = !ch;
   if (!ch) { bar.replaceChildren(); return; }
   const n = [...session.items.values()].filter((i) => i.status !== 'pending').length;
@@ -2862,7 +3050,7 @@ function startSearch() {
   const plan = buildPlan(prompt, { licenses: searchPrefs.licenses, device, depth: device === 'mobile' ? 'rapide' : 'normal' });
   session = { prompt, plan, done: [], items: new Map(), at: new Date().toISOString() };
   beforeChannel = null;
-  if ($('#sort').value === 'recent' && searchPrefs.sort !== 'recent') $('#sort').value = searchPrefs.sort || 'licence';
+  if (($('#sort').value === 'recent' && searchPrefs.sort !== 'recent') || $('#sort').value === 'ajout') $('#sort').value = searchPrefs.sort || 'licence';
   renderChannelBar();
   rendered = new Set();
   $('#grid').replaceChildren();
@@ -3192,6 +3380,12 @@ function sortRows(rows, how) {
     const d = (r) => (r._item.duration > 0 ? r._item.duration : null);
     return [...rows].sort((a, b) => (d(a) == null) - (d(b) == null) || (how === 'duree-desc' ? d(b) - d(a) : d(a) - d(b)) || b.score - a.score);
   }
+  if (how === 'ajout') {
+    // date d'ajout à la playlist si connue, sinon sa place (YouTube ajoute à la fin)
+    const t = (r) => r._item.plAdded || 0;
+    const p = (r) => r._item.plPos || 0;
+    return [...rows].sort((a, b) => t(b) - t(a) || p(b) - p(a));
+  }
   if (how === 'recent') {
     const t = (r) => r._item.ts || 0;
     return [...rows].sort((a, b) => t(b) - t(a) || b.score - a.score);
@@ -3270,7 +3464,7 @@ $('#verifiedPill').addEventListener('click', () => {
 });
 $('#findInput').addEventListener('input', () => { clearTimeout(renderResults._t); renderResults._t = setTimeout(renderResults, 120); });
 $('#sort').value = searchPrefs.sort || 'licence';
-$('#sort').addEventListener('change', () => { searchPrefs.sort = $('#sort').value; local.set('searchPrefs', searchPrefs); renderResults(); });
+$('#sort').addEventListener('change', () => { if ($('#sort').value !== 'ajout') { searchPrefs.sort = $('#sort').value; local.set('searchPrefs', searchPrefs); } renderResults(); });
 function syncBpmPill() {
   const on = !!searchPrefs.bpm;
   $('#bpmPill').classList.toggle('on', on);
@@ -3286,7 +3480,7 @@ $('#bpmPill').addEventListener('click', () => {
     $('#bpmMax').value = range.max || '';
     searchPrefs.bpm = { min: Number($('#bpmMin').value) || null, max: Number($('#bpmMax').value) || null };
     if (['licence', 'pertinence'].includes($('#sort').value)) $('#sort').value = 'bpm-asc';
-    searchPrefs.sort = $('#sort').value;
+    if ($('#sort').value !== 'ajout') searchPrefs.sort = $('#sort').value;
     local.set('searchPrefs', searchPrefs); syncBpmPill(); renderResults();
     $('#bpmMin').focus();
   }
@@ -3332,7 +3526,7 @@ $('#bpmClear').addEventListener('click', () => {
   $('#bpmPop').hidden = true;
   $('#bpmPill').setAttribute('aria-expanded', 'false');
   if ($('#sort').value.startsWith('bpm')) $('#sort').value = 'licence';
-  searchPrefs.sort = $('#sort').value;
+  if ($('#sort').value !== 'ajout') searchPrefs.sort = $('#sort').value;
   local.set('searchPrefs', searchPrefs); syncBpmPill(); renderResults();
 });
 

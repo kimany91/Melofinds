@@ -18,6 +18,17 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanner;
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions;
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
 
+import android.os.Environment;
+import android.provider.DocumentsContract;
+
+import androidx.activity.result.ActivityResult;
+import androidx.documentfile.provider.DocumentFile;
+
+import com.getcapacitor.annotation.ActivityCallback;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -78,6 +89,7 @@ public class MelofindsNativePlugin extends Plugin {
         features.put("tbAnalyzer");
         features.put("usedBy");
         features.put("ytPlaylist");
+        features.put("phone");
         r.put("features", features);
         call.resolve(r);
     }
@@ -307,5 +319,196 @@ public class MelofindsNativePlugin extends Plugin {
                 call.reject(m == null ? e.getClass().getSimpleName() : m.length() > 200 ? m.substring(0, 200) : m);
             }
         }).start();
+    }
+
+    // ------------------------------------------------------------------ onglet Téléphone
+
+    private static final ExecutorService PHONE = Executors.newFixedThreadPool(2);
+
+    @Override
+    public void load() {
+        PhonePlayerService.listener = st -> notifyListeners("phonePlayer", st);
+    }
+
+    private static void fail(PluginCall call, Throwable e) {
+        String m = e.getMessage();
+        call.reject(m == null ? e.getClass().getSimpleName() : m.length() > 200 ? m.substring(0, 200) : m);
+    }
+
+    /** Le dossier « Melofinds Instru » est-il relié ? { linked, name } */
+    @PluginMethod
+    public void phoneInfo(PluginCall call) {
+        PHONE.submit(() -> {
+            DocumentFile d = PhoneLibrary.folder(getContext(), false);
+            JSObject r = new JSObject();
+            r.put("linked", d != null);
+            r.put("name", d != null ? d.getName() : "");
+            r.put("player", PhonePlayerService.snapshot());
+            call.resolve(r);
+        });
+    }
+
+    /**
+     * Choisir (ou retrouver après une réinstallation) le dossier : le sélecteur d'Android s'ouvre
+     * sur Musique / Melofinds Instru. L'appli n'aura accès qu'à ce dossier.
+     */
+    @PluginMethod
+    public void phonePickFolder(PluginCall call) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            File music = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC);
+            String doc = new File(music, PhoneLibrary.FOLDER).exists() ? "primary:Music/" + PhoneLibrary.FOLDER : "primary:Music";
+            i.putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", doc));
+        }
+        try {
+            startActivityForResult(call, i, "folderPicked");
+        } catch (Exception e) {
+            call.reject("Sélecteur de dossier indisponible");
+        }
+    }
+
+    @ActivityCallback
+    private void folderPicked(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        Intent data = result.getData();
+        if (result.getResultCode() != Activity.RESULT_OK || data == null || data.getData() == null) {
+            call.reject("Annulé", "cancel");
+            return;
+        }
+        Uri tree = data.getData();
+        int rw = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+        try {
+            getContext().getContentResolver().takePersistableUriPermission(tree, rw);
+        } catch (SecurityException e) {
+            call.reject("Android n'a pas donné l'accès à ce dossier : choisis-en un autre (pas la racine ni Téléchargements)");
+            return;
+        }
+        // un seul dossier autorisé : les anciens accès sont rendus
+        for (android.content.UriPermission p : getContext().getContentResolver().getPersistedUriPermissions()) {
+            if (!p.getUri().equals(tree)) {
+                try { getContext().getContentResolver().releasePersistableUriPermission(p.getUri(), rw); } catch (Exception ignored) { }
+            }
+        }
+        PhoneLibrary.saveTree(getContext(), tree);
+        PHONE.submit(() -> {
+            try {
+                DocumentFile d = PhoneLibrary.folder(getContext(), true);
+                if (d == null) { call.reject("Impossible de créer « " + PhoneLibrary.FOLDER + " » ici : choisis le dossier Musique"); return; }
+                JSObject r = new JSObject();
+                r.put("linked", true);
+                r.put("name", d.getName());
+                r.put("files", PhoneLibrary.list(getContext(), d));
+                call.resolve(r);
+            } catch (Throwable e) {
+                fail(call, e);
+            }
+        });
+    }
+
+    /** Prods du dossier : { files: [{ name, size, at, meta: { id, title, key, bpm, lic… } }] } */
+    @PluginMethod
+    public void phoneList(PluginCall call) {
+        PHONE.submit(() -> {
+            try {
+                DocumentFile d = PhoneLibrary.folder(getContext(), false);
+                if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
+                JSObject r = new JSObject();
+                r.put("files", PhoneLibrary.list(getContext(), d));
+                call.resolve(r);
+            } catch (Throwable e) {
+                fail(call, e);
+            }
+        });
+    }
+
+    /** Télécharge une prod dans le dossier : { id, name (sans extension), meta } → { name } */
+    @PluginMethod
+    public void phoneDownload(PluginCall call) {
+        String id = call.getString("id", "");
+        String name = call.getString("name", "");
+        JSObject meta = call.getObject("meta", new JSObject());
+        if (!YtStream.VIDEO_ID.matcher(id).matches()) { call.reject("Vidéo invalide"); return; }
+        PHONE.submit(() -> {
+            try {
+                DocumentFile d = PhoneLibrary.folder(getContext(), true);
+                if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
+                JSONObject m = new JSONObject(meta.toString());
+                String got = PhoneLibrary.download(getContext(), d, id, name, m);
+                JSObject r = new JSObject();
+                r.put("name", got);
+                call.resolve(r);
+            } catch (Throwable e) {
+                fail(call, e);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void phoneDelete(PluginCall call) {
+        String name = call.getString("name", "");
+        PHONE.submit(() -> {
+            try {
+                DocumentFile d = PhoneLibrary.folder(getContext(), false);
+                if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
+                JSObject r = new JSObject();
+                r.put("ok", PhoneLibrary.delete(getContext(), d, name));
+                call.resolve(r);
+            } catch (Throwable e) {
+                fail(call, e);
+            }
+        });
+    }
+
+    /** Lecture hors connexion (continue écran verrouillé) : { names: [...], index } */
+    @PluginMethod
+    public void phonePlay(PluginCall call) {
+        JSArray names = call.getArray("names", new JSArray());
+        int index = call.getInt("index", 0);
+        PHONE.submit(() -> {
+            try {
+                DocumentFile d = PhoneLibrary.folder(getContext(), false);
+                if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
+                java.util.Map<String, DocumentFile> byName = new java.util.HashMap<>();
+                for (DocumentFile f : d.listFiles()) if (f.getName() != null && f.isFile()) byName.put(f.getName(), f);
+                List<PhonePlayerService.Track> q = new ArrayList<>();
+                int start = 0;
+                for (int i = 0; i < names.length() && q.size() < 1000; i++) {
+                    String n = names.optString(i, "");
+                    DocumentFile f = byName.get(n);
+                    if (f == null || !PhoneLibrary.AUDIO.matcher(n).matches()) continue;
+                    if (i == index) start = q.size();
+                    q.add(new PhonePlayerService.Track(f.getUri(), n, n.replaceAll("\\.[A-Za-z0-9]+$", "")));
+                }
+                if (q.isEmpty()) { call.reject("Prod introuvable dans le dossier"); return; }
+                synchronized (PhonePlayerService.queue) {
+                    PhonePlayerService.queue.clear();
+                    PhonePlayerService.queue.addAll(q);
+                    PhonePlayerService.index = start;
+                }
+                Activity a = getActivity();
+                Runnable go = () -> PhonePlayerService.command(getContext(), "play", 0);
+                if (a != null) a.runOnUiThread(go); else go.run();
+                call.resolve();
+            } catch (Throwable e) {
+                fail(call, e);
+            }
+        });
+    }
+
+    /** { cmd: toggle | pause | resume | next | prev | seek | stop, ms } */
+    @PluginMethod
+    public void phoneControl(PluginCall call) {
+        String cmd = call.getString("cmd", "");
+        if (!java.util.Arrays.asList("toggle", "pause", "resume", "next", "prev", "seek", "stop").contains(cmd)) { call.reject("Commande inconnue"); return; }
+        long ms = call.getLong("ms", 0L);
+        PhonePlayerService.command(getContext(), cmd, ms);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void phoneState(PluginCall call) {
+        call.resolve(PhonePlayerService.snapshot());
     }
 }

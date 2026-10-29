@@ -24,6 +24,7 @@ const MODULES = [
   'src/core/ytparse.js',
   'src/core/tunebat.js',
   'src/core/usedby.js',
+  'src/core/prodname.js',
   'src/youtube/demo.js',
 ];
 

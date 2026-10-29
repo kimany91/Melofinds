@@ -96,7 +96,8 @@ jobs:
           "$BT/apksigner" verify --print-certs Melofinds.apk | head -5
           "$BT/aapt" dump badging Melofinds.apk | grep -E "^package:|^application-label:|uses-permission" | tee badging.txt
           grep -q "package: name='io.github.kimany91.melofinds'" badging.txt
-          # Internet et micro (« Rec dessus ») seulement : aucun accès aux fichiers ni aux médias
+          # Internet, micro (« Rec dessus »), lecture écran verrouillé : aucun accès aux fichiers ni aux médias
+          # (le dossier « Melofinds Instru » passe par le sélecteur d'Android, accès à ce dossier seul)
           ! grep -E "MANAGE_EXTERNAL_STORAGE|READ_MEDIA_|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|MANAGE_MEDIA|CAMERA" badging.txt
           ls -l Melofinds.apk
 

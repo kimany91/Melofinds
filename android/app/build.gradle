@@ -72,6 +72,8 @@ dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
     // Scanner de QR code de Google (sans accès à l'appareil photo pour Melofinds)
     implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'
+    // Onglet Téléphone : le dossier « Melofinds Instru » (sélecteur d'Android, accès à ce dossier seul)
+    implementation 'androidx.documentfile:documentfile:1.0.1'
     testImplementation "junit:junit:$junitVersion"
 }
 

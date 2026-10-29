@@ -25,6 +25,9 @@
   <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-loop" viewBox="0 0 24 24"><path d="M4 11V9a3 3 0 0 1 3-3h11M15 3l3 3-3 3M20 13v2a3 3 0 0 1-3 3H6M9 21l-3-3 3-3" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-qr" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M14 14h2.5v2.5H14zM17.5 17.5H20V20h-2.5zM14 18h2v2h-2zM18 14h2v2h-2z" fill="currentColor"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10.5 18.5h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M7 5v14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M18 5.5v13L9 12l9-6.5Z" fill="currentColor"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M17 5v14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M6 5.5v13L15 12 6 5.5Z" fill="currentColor"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 </svg>
 
@@ -35,6 +38,7 @@
     <button class="nav-item" type="button" data-view="saved" role="tab"><svg><use href="#i-heart"/></svg><span>Favoris</span><em class="dot" id="savedDot" hidden></em></button>
     <button class="nav-item" type="button" data-view="history" role="tab"><svg><use href="#i-clock"/></svg><span>Historique</span></button>
     <button class="nav-item" type="button" data-view="recs" role="tab" id="navRecs" hidden><svg><use href="#i-mic"/></svg><span>Recs</span></button>
+    <button class="nav-item" type="button" data-view="phone" role="tab" id="navPhone" hidden><svg><use href="#i-phone"/></svg><span>Téléphone</span></button>
     <button class="nav-item" type="button" data-view="pc" role="tab" id="navPc" hidden><svg><use href="#i-down"/></svg><span class="nav-lg">File d’attente</span><span class="nav-sm">File</span><em class="dot" id="pcNavDot" hidden></em></button>
   </nav>
   <button type="button" class="verify-btn" id="openVerify" title="Vérifier la licence d’une prod"><svg><use href="#i-shield"/></svg><span>Vérifier une prod</span></button>
@@ -73,6 +77,7 @@
         <div class="rtools">
           <label class="find" for="findInput"><svg aria-hidden="true"><use href="#i-search"/></svg><input id="findInput" type="search" placeholder="Filtrer : spotify, wav…"></label>
           <select id="sort" aria-label="Trier">
+            <option value="ajout" hidden>Dernières ajoutées à la playlist</option>
             <option value="licence">Meilleure licence</option>
             <option value="ratio">Meilleur ratio likes / vues</option>
             <option value="vues">Plus de vues</option>
@@ -161,6 +166,20 @@
     <div class="pc-sync" id="pcSync" hidden></div>
     <p class="hint" id="pcLibMeta"></p>
     <div class="pc-grid" id="pcLibGrid"></div>
+  </section>
+
+  <!-- ================= TÉLÉPHONE (appli Android) ================= -->
+  <section id="view-phone" class="view">
+    <div class="page-head">
+      <h2>Sur mon téléphone</h2>
+      <button type="button" class="link" id="phoneFolderBtn">Dossier</button>
+    </div>
+    <p class="muted phone-intro">Les prods téléchargées avec le bouton <b>téléphone</b> : dans le dossier <b>Musique / Melofinds Instru</b>, à écouter hors connexion, même écran verrouillé. Elles restent si tu désinstalles l’appli.</p>
+    <div id="phonePlayer" class="phone-player" hidden></div>
+    <div class="pc-lib-bar">
+      <input type="search" id="phoneSearch" class="pc-input" placeholder="Chercher une prod" aria-label="Chercher une prod téléchargée">
+    </div>
+    <div id="phoneList" class="phone-list"></div>
   </section>
 
   <!-- ================= HISTORIQUE ================= -->

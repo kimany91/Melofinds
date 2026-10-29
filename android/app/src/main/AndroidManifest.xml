@@ -18,6 +18,12 @@
             android:exported="false"
             android:theme="@style/AppTheme.NoActionBar" />
 
+        <!-- Onglet Téléphone : lecture des prods hors connexion, même écran verrouillé -->
+        <service
+            android:name=".PhonePlayerService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"
@@ -50,4 +56,9 @@
     <!-- « Rec dessus » : enregistrer sa voix sur la prod (micro) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Onglet Téléphone : lecture qui continue écran verrouillé (aucun accès aux fichiers :
+         seul le dossier « Melofinds Instru », choisi dans le sélecteur d'Android) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 </manifest>
