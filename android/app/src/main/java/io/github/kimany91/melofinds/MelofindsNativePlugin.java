@@ -324,6 +324,8 @@ public class MelofindsNativePlugin extends Plugin {
     // ------------------------------------------------------------------ onglet Téléphone
 
     private static final ExecutorService PHONE = Executors.newFixedThreadPool(2);
+    // la lecture n'attend jamais derrière les téléchargements
+    private static final ExecutorService PLAY = Executors.newSingleThreadExecutor();
 
     @Override
     public void load() {
@@ -545,7 +547,7 @@ public class MelofindsNativePlugin extends Plugin {
     public void phonePlay(PluginCall call) {
         JSArray names = call.getArray("names", new JSArray());
         int index = call.getInt("index", 0);
-        PHONE.submit(() -> {
+        PLAY.submit(() -> {
             try {
                 DocumentFile d = PhoneLibrary.folder(getContext(), false);
                 if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }

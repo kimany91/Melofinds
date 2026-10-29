@@ -581,6 +581,8 @@ async function phoneSetup() {
       if (hold && Date.now() < hold.until && st.name === phone.state?.name && Math.abs((st.position || 0) - hold.ms) > 2000) {
         st = { ...st, position: hold.ms + (st.playing ? Date.now() - hold.at : 0) };  // le lecteur n'a pas encore avancé
       } else phone.seekHold = null;
+      if (st.error && st.error !== phone.lastError) toast(`Lecture impossible : ${String(st.error).slice(0, 90)}`);
+      phone.lastError = st.error || '';
       phone.state = { ...st, at: Date.now() };
       renderPhonePlayer();
     });
@@ -692,7 +694,13 @@ const phoneShown = () => {
   const q = strip(phone.q).toLowerCase().trim();
   return [...phone.files].sort((a, b) => (b.at || 0) - (a.at || 0))
     .filter((f) => phone.filter !== 'fav' || f.meta?.fav)
-    .filter((f) => !q || q.split(/\s+/).every((w) => strip(`${f.name} ${phoneTags(f).join(' ')} ${f.meta?.channel || ''}`).toLowerCase().includes(w)));
+    .filter((f) => {
+      if (!q) return true;
+      // « boombap » trouve aussi « Boom bap » (espaces ignorés)
+      const t = strip(`${f.name} ${phoneTags(f).join(' ')} ${f.meta?.channel || ''}`).toLowerCase();
+      const flat = t.replace(/[\s\-_]+/g, '');
+      return q.split(/\s+/).every((w) => t.includes(w) || flat.includes(w)) || flat.includes(q.replace(/[\s\-_]+/g, ''));
+    });
 };
 // Étiquettes : gardées dans le dossier au téléchargement ; les anciennes prods les reçoivent une fois
 function phoneTags(f) {
@@ -858,9 +866,10 @@ const phoneHeart = (f, cls = '') => h('button', { type: 'button', class: `ph-hea
   onclick: (e) => { e.stopPropagation(); if (f) phoneToggleFav(f.name); } }, icon('heart'));
 const phoneChips = (chips) => (chips.length ? h('span', { class: 'ph-chips' }, ...chips.map((c) => h('i', { class: c.c }, c.t))) : null);
 // Étiquettes cliquables : un appui cherche les prods du téléphone qui l'ont
-function phoneTagRow(f, max = 12) {
+function phoneTagRow(f, max = 12, clickable = true) {
   const tags = phoneTags(f).slice(0, max);
   if (!tags.length) return null;
+  if (!clickable) return h('span', { class: 'ph-tags' }, ...tags.map((t) => h('i', { class: 'ph-tag' }, t)));
   return h('span', { class: 'ph-tags' }, ...tags.map((t) => h('button', { type: 'button', class: 'ph-tag', onclick: (e) => {
     e.stopPropagation();
     haptic();
@@ -995,26 +1004,30 @@ function renderPhoneView() {
       const m = f.meta || {};
       const parts = phoneParts(f.name);
       const thumb = phoneThumb(m.id);
-      const cur = phone.state?.name === f.name;
+      const cur = phone.state?.name === f.name && !!phone.state?.active;
       return h('div', { class: `ph-row${cur ? ' on' : ''}${cur && phone.state?.playing ? ' playing' : ''}`, 'data-name': f.name, style: phoneTint(f), role: 'button', tabindex: '0',
-        onclick: () => { if (cur) { phoneCtl('toggle'); phoneScrollTop(); } else phonePlayName(f.name); } },
+        onclick: () => {
+          const live = phone.state?.active && phone.state?.name === f.name;
+          if (live) { phoneCtl('toggle'); phoneScrollTop(); } else phonePlayName(f.name);
+        } },
         h('span', { class: 'ph-art' }, thumb ? h('img', { src: thumb, alt: '', loading: 'lazy', onerror: (e) => e.currentTarget.remove() }) : null,
           h('span', { class: 'ph-ov' }, icon('play'), h('span', { class: 'eq' }, h('i'), h('i'), h('i')))),
-        h('span', { class: 'ph-t' }, h('b', {}, parts.title), phoneChips(parts.chips), phoneTagRow(f, 4), h('small', {}, [m.channel || null, f.size ? `${(f.size / 1048576).toFixed(1)} Mo` : null, f.at ? fmtAgo(f.at) : null].filter(Boolean).join(' · '))),
+        h('span', { class: 'ph-t' }, h('b', {}, parts.title), phoneChips(parts.chips), phoneTagRow(f, 4, false), h('small', {}, [m.channel || null, f.size ? `${(f.size / 1048576).toFixed(1)} Mo` : null, f.at ? fmtAgo(f.at) : null].filter(Boolean).join(' · '))),
         h('span', { class: 'ph-acts' },
           phoneHeart(f),
-          m.id ? h('button', { type: 'button', class: 'ph-find', 'aria-label': `Ouvrir ${parts.title} dans la recherche`, title: 'Ouvrir dans la recherche', onclick: (e) => { e.stopPropagation(); phoneOpenInSearch(f); } }, icon('search')) : null),
-        h('button', { type: 'button', class: 'ph-del', 'aria-label': `Supprimer ${parts.title}`, title: 'Supprimer du téléphone', onclick: async (e) => {
-          e.stopPropagation();
-          if (!confirm(`Supprimer « ${parts.title} » de ton téléphone ?`)) return;
-          try { await mfn().phoneDelete({ name: f.name }); toast('Supprimée du téléphone'); } catch (err) { toast(`Suppression impossible : ${err?.message || ''}`); }
-          phoneRefresh(true);
-        } }, icon('trash')));
+          m.id ? h('button', { type: 'button', class: 'ph-find', 'aria-label': `Ouvrir ${parts.title} dans la recherche`, title: 'Ouvrir dans la recherche', onclick: (e) => { e.stopPropagation(); phoneOpenInSearch(f); } }, icon('search')) : null,
+          h('button', { type: 'button', class: 'ph-del', 'aria-label': `Supprimer ${parts.title}`, title: 'Supprimer du téléphone', onclick: async (e) => {
+            e.stopPropagation();
+            if (!confirm(`Supprimer « ${parts.title} » de ton téléphone ?`)) return;
+            try { await mfn().phoneDelete({ name: f.name }); toast('Supprimée du téléphone'); } catch (err) { toast(`Suppression impossible : ${err?.message || ''}`); }
+            phoneRefresh(true);
+          } }, icon('trash'))));
     }));
     if (!shown.length) list.append(h('p', { class: 'muted ph-none' }, phone.filter === 'fav' ? 'Aucun favori : touche le cœur d’une prod.' : 'Aucune prod ne correspond.'));
   }
   renderPhonePlayer();
 }
+$('#phoneSearch')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } });
 $('#phoneSearchClear')?.addEventListener('click', () => { phone.q = ''; const i = $('#phoneSearch'); if (i) { i.value = ''; i.focus(); } haptic(); renderPhoneView(); });
 $('#phonePlayBar')?.addEventListener('click', (e) => {
   const b = e.target.closest('button');

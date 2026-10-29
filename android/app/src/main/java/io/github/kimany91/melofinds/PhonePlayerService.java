@@ -64,6 +64,8 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
     private MediaSession session;
     private boolean prepared;
     private long pendingSeek = -1;
+    private boolean retried;
+    static volatile String lastError = "";
     private android.graphics.Bitmap art;
     private Uri artFor;
     private boolean resumeOnFocus;
@@ -85,6 +87,8 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
     // ------------------------------------------------------------------ commandes
 
     static void command(Context c, String cmd, long ms) {
+        // lecteur arrêté (bouton Stop, ou fermé par Android) : relancer = rejouer la prod choisie
+        if (running == null && ("toggle".equals(cmd) || "resume".equals(cmd))) cmd = "play";
         Intent i = new Intent(c, PhonePlayerService.class);
         i.putExtra("cmd", cmd);
         i.putExtra("ms", ms);
@@ -106,6 +110,7 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
         boolean ok = s != null && s.mp != null && s.prepared;
         o.put("active", s != null);
         o.put("mode", mode);
+        o.put("error", lastError);
         o.put("playing", ok && s.mp.isPlaying());
         o.put("position", ok ? s.mp.getCurrentPosition() : 0);
         o.put("duration", ok ? s.mp.getDuration() : 0);
@@ -120,6 +125,8 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
         long ms = intent != null ? intent.getLongExtra("ms", 0) : 0;
         if ("play".equals(cmd)) {
             startFg();  // tout de suite : Android l'exige pour un service lancé au premier plan
+            retried = false;
+            lastError = "";
             load();
         } else if ("toggle".equals(cmd)) {
             if (mp != null && prepared && mp.isPlaying()) pause(); else resume();
@@ -169,17 +176,28 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
         mp.setWakeMode(getApplicationContext(), PowerManager.PARTIAL_WAKE_LOCK);  // continue écran éteint
         mp.setOnPreparedListener(p -> {
             prepared = true;
+            retried = false;
             p.setLooping("boucle".equals(mode));
             if (pendingSeek > 0) { p.seekTo((int) Math.min(pendingSeek, p.getDuration())); pendingSeek = -1; }
             resume();
         });
         mp.setOnCompletionListener(p -> skip(1));
-        mp.setOnErrorListener((p, what, extra) -> { prepared = false; report(); skip(1); return true; });
+        mp.setOnErrorListener((p, what, extra) -> {
+            prepared = false;
+            if (!retried) { retried = true; ui.postDelayed(this::load, 400); return true; }  // une 2e chance
+            lastError = (t.title.length() > 60 ? t.title.substring(0, 60) : t.title) + " (erreur " + what + ")";
+            report();
+            skip(1);
+            return true;
+        });
         try {
             mp.setDataSource(this, t.uri);
             mp.prepareAsync();
         } catch (Exception e) {
             prepared = false;
+            if (!retried) { retried = true; ui.postDelayed(this::load, 400); return; }
+            lastError = t.title + " : " + e.getMessage();
+            report();
             skip(1);
             return;
         }
