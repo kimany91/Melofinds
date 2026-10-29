@@ -950,6 +950,9 @@ body.mobile .chan-txt b { font-size: 17px; }
 .ph-find svg { width: 18px; height: 18px; }
 .ph-find:active { transform: scale(.88); }
 .pp .ph-find { color: rgba(255,255,255,.7); width: 40px; height: 40px; }
+.pp .ph-pc { color: rgba(255,255,255,.7); width: 40px; height: 40px; }
+.pp .ph-pc svg { width: 19px; height: 19px; }
+.pp .ph-pc.on { color: #fff; background: hsl(var(--ph) 70% / .35); }
 .ph-acts { position: absolute; top: 4px; right: 4px; display: flex; gap: 0; }
 .ph-acts .ph-heart, .ph-acts .ph-find, .ph-acts .ph-del, .ph-acts .ph-pc { width: 32px; height: 32px; }
 .ph-pc { display: grid; place-items: center; padding: 0; border-radius: 50%; border: 0; background: transparent; color: var(--faint); }

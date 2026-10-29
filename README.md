@@ -259,7 +259,7 @@ arrivent **sans réinstaller** ; hors connexion, un écran « Pas de connexion �
   Bouton PC (PC relié, en ligne) : Melofinds PC télécharge la prod en .wav dans un dossier
   temporaire (jamais dans ton dossier de prods, 4 gardés au plus, tout effacé à l'arrêt) et la
   joue avec le lecteur intégré à Windows ; la barre « Sur ton PC » met en pause ou arrête.
-  Seule la dernière demande compte ; une demande de plus de 3 min (PC éteint) est ignorée.
+  Seule la dernière demande compte ; une demande de plus de 3 min (PC éteint) est ignorée. Le panneau du PC montre la prod en écoute (bouton Arrêter).
   Sans connexion au démarrage, l'écran « Pas de connexion » (`apk/www`) liste les prods du
   dossier et les joue. Code : `PhoneLibrary.java`, `PhonePlayerService.java`.
 - **Descriptions complètes** (licence, BPM, clé) : quand YouTube ne donne que le début,

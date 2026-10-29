@@ -852,12 +852,28 @@ async function phonePcListen(f) {
   haptic();
   if (!pc.info) { toast('Relie d’abord ton PC (onglet PC)'); return; }
   if (!pcOn()) { toast('Ton PC est éteint ou hors ligne'); return; }
+  if (pc.info.version && versionLt(pc.info.version, PC_LISTEN_MIN)) {
+    toast(`Ton PC a la version ${pc.info.version} : mets-le à jour pour écouter dessus`, { label: 'Mettre à jour', run: phonePcUpdate, ms: 7000 });
+    return;
+  }
   if (phonePc.v === v && (phonePc.s === 'playing' || phonePc.s === 'paused')) { phonePcCtl('toggle'); return; }
   const t = phoneParts(f.name).title;
   if (phone.state?.playing) phoneCtl('pause');
-  Object.assign(phonePc, { v, t, s: 'sent', at: Date.now(), err: '' });
+  const at = Date.now();
+  Object.assign(phonePc, { v, t, s: 'sent', at, err: '' });
   renderPhonePcBar();
-  try { await ntfyPublish({ cmd: 'listen', v, t: String(f.meta?.title || t).slice(0, 160) }); } catch { phonePc.s = ''; renderPhonePcBar(); toast('Pas de réseau'); }
+  try { await ntfyPublish({ cmd: 'listen', v, t: String(f.meta?.title || t).slice(0, 160) }); } catch { phonePc.s = ''; renderPhonePcBar(); toast('Pas de réseau'); return; }
+  // pas de réponse : PC hors ligne en vrai, ou version trop ancienne
+  setTimeout(() => {
+    if (phonePc.at !== at || phonePc.s !== 'sent') return;
+    phonePc.s = '';
+    renderPhonePcBar();
+    toast('Ton PC ne répond pas : vérifie qu’il est en ligne et à jour', { label: 'Mettre à jour', run: phonePcUpdate, ms: 7000 });
+  }, 45e3);
+}
+const PC_LISTEN_MIN = '1.20.4';
+function phonePcUpdate() {
+  ntfyPublish({ update: 1 }).then(() => toast('Le PC se met à jour… réessaie dans une minute')).catch(() => toast('Pas de réseau'));
 }
 function phonePcCtl(a) {
   haptic();
@@ -952,7 +968,7 @@ function renderPhonePlayer() {
   const f = phone.files.find((x) => x.name === st.name);
   const id = st.id || f?.meta?.id || '';
   const parts = phoneParts(st.name);
-  const sig = `${st.name}|${phoneThumb(id).slice(0, 80)}${phoneThumb(id).length}|${phoneTint(f)}|${!!f?.meta?.fav}|${phoneTags(f).join(',')}`;
+  const sig = `${st.name}|${phoneThumb(id).slice(0, 80)}${phoneThumb(id).length}|${phoneTint(f)}|${!!f?.meta?.fav}|${phoneTags(f).join(',')}|${!!pc.info}`;
   if (box.dataset.sig !== sig) {
     box.dataset.sig = sig;
     box.dataset.name = st.name;
@@ -980,7 +996,9 @@ function renderPhonePlayer() {
         h('div', { class: 'pp-top' },
           thumb ? h('img', { class: 'pp-art', src: thumb, alt: '' }) : h('div', { class: 'pp-art none' }, icon('phone')),
           h('div', { class: 'pp-meta' }, h('small', {}, 'En lecture'), h('b', {}, parts.title), phoneChips(parts.chips), phoneTagRow(f), f?.meta?.channel ? h('span', { class: 'pp-ch' }, f.meta.channel) : null),
-          h('div', { class: 'pp-side' }, phoneHeart(f, 'pp-fav'), f?.meta?.id ? h('button', { type: 'button', class: 'ph-find', 'aria-label': 'Ouvrir dans la recherche', title: 'Ouvrir dans la recherche', onclick: () => phoneOpenInSearch(f) }, icon('search')) : null)),
+          h('div', { class: 'pp-side' }, phoneHeart(f, 'pp-fav'),
+            f?.meta?.id && pc.info ? h('button', { type: 'button', class: `ph-pc${phonePc.s && phonePc.v === f.meta.id ? ' on' : ''}`, 'data-v': f.meta.id, 'aria-label': 'Écouter sur mon PC', title: 'Écouter sur mon PC', onclick: () => phonePcListen(f) }, icon('pc')) : null,
+            f?.meta?.id ? h('button', { type: 'button', class: 'ph-find', 'aria-label': 'Ouvrir dans la recherche', title: 'Ouvrir dans la recherche', onclick: () => phoneOpenInSearch(f) }, icon('search')) : null)),
         h('div', { class: 'seek' }, h('span', { class: 'pp-pos' }), range, h('span', { class: 'pp-dur' })),
         h('div', { class: 'ctl' },
           h('button', { type: 'button', class: 'pp-mode', 'aria-label': 'Mode de lecture', onclick: phoneNextMode }, icon('order'), h('span', {}, '')),
@@ -4550,8 +4568,8 @@ function onPcViewMessage(d, m, fresh) {
   if (m.aud) { pcSeen(d); onPcAudio(d, m, fresh); return true; }
   if (m.desc) { pcSeen(d); onPcDesc(d); return true; }
   if (m.listen) { pcSeen(d); onPcListen(d, m); return true; }
-  if (m.cmd === 'listen') {  // PC d'avant 1.20.3 : il ne sait pas encore jouer une prod
-    if (fresh && phonePc.s) { phonePc.s = ''; renderPhonePcBar(); toast('Mets à jour Melofinds PC pour écouter sur ton PC'); }
+  if (m.cmd === 'listen') {  // PC trop ancien : il ne sait pas encore jouer une prod
+    if (fresh && phonePc.s) { phonePc.s = ''; renderPhonePcBar(); toast('Mets à jour Melofinds PC pour écouter sur ton PC', { label: 'Mettre à jour', run: phonePcUpdate, ms: 7000 }); }
     return true;
   }
   if (m.cmd === 'desc') return true;  // PC d'avant 3.18 : il ne sait pas lire les descriptions

@@ -543,6 +543,24 @@ def manager_window(selftest=False):
     wait_box.pack(fill="x", pady=(6, 0))
     wait_state = {"sig": None}
 
+    # Prod jouée sur ce PC depuis l'onglet Téléphone de l'appli (bouton PC)
+    lis = card(home, pady=12)
+    lis_top = tk.Frame(lis, bg=PANEL)
+    lis_top.pack(fill="x")
+    label(lis_top, "ÉCOUTE DEPUIS LE TÉLÉPHONE", 8, FAINT, bold=True).pack(side="left")
+
+    def stop_listen():
+        try:
+            P.listen_stop.write_text("1", encoding="utf-8")
+        except OSError:
+            pass
+    Btn(lis_top, "Arrêter", stop_listen, padx=10, pady=4).pack(side="right")
+    lis_title = label(lis, "", 13, bold=True, wrap=560)
+    lis_title.pack(anchor="w", pady=(6, 0))
+    lis_state = label(lis, "", 10, MUTED)
+    lis_state.pack(anchor="w")
+    LIS_TEXT = {"loading": "Téléchargement pour l'écoute (dossier temporaire, effacé ensuite)…", "playing": "♪ En lecture sur ce PC", "paused": "En pause"}
+
     def fill_wait(items):
         if items == wait_state["sig"]:
             return
@@ -1813,7 +1831,25 @@ def manager_window(selftest=False):
             I.start_worker()  # ouvrir le panneau remet en ligne s'il le faut
     show("home" if C.load_config()["devices"] else "devices")
     tick()
+    def tick_listen():
+        try:
+            st = json.loads(P.listen.read_text(encoding="utf-8"))
+            if not isinstance(st, dict) or time.time() - float(st.get("at") or 0) > 3 * 3600:
+                st = None
+        except (OSError, ValueError, TypeError):
+            st = None
+        if st:
+            lis_title.configure(text=str(st.get("t") or "Prod")[:160])
+            lis_state.configure(text=LIS_TEXT.get(st.get("s"), ""))
+            lis.configure(highlightbackground=ACCENT2)
+            if not lis.winfo_ismapped():
+                lis.pack(fill="x", pady=(0, 14), before=waitc)
+        elif lis.winfo_ismapped():
+            lis.pack_forget()
+        root.after(700, tick_listen)
+
     tick_progress()
+    tick_listen()
     tick_player()
     if selftest:
         for k in ("home", "prods", "flmake", "devices", "settings"):

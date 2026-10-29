@@ -82,7 +82,7 @@ class Mci:
     """Lecteur intégré à Windows (MCI) : .wav, pause, reprise. Rien à installer."""
 
     def __init__(self, alias="mflisten"):
-        self.alias, self.path = alias, None
+        self.alias, self.path, self.error = alias, None, ""
         self.ok = C.WINDOWS
         if self.ok:
             import ctypes
@@ -92,16 +92,34 @@ class Mci:
     def _cmd(self, text):
         if not self.ok:
             return None
-        return self._buf.value if self._send(text, self._buf, 255, 0) == 0 else None
+        code = self._send(text, self._buf, 255, 0)
+        if code == 0:
+            return self._buf.value
+        self.error = self._error(code)
+        return None
+
+    def _error(self, code):
+        try:
+            import ctypes
+            b = ctypes.create_unicode_buffer(256)
+            ctypes.windll.winmm.mciGetErrorStringW(code, b, 255)
+            return b.value or f"erreur {code}"
+        except Exception:
+            return f"erreur {code}"
 
     def play(self, path):
+        """Le .wav s'ouvre avec le lecteur de sons de Windows (waveaudio), sinon celui des médias."""
         self.stop()
+        self.error = ""
         p = str(path).replace('"', "")
-        if self._cmd(f'open "{p}" type mpegvideo alias {self.alias}') is None and self._cmd(f'open "{p}" alias {self.alias}') is None:
-            return False
-        self._cmd(f"play {self.alias}")
-        self.path = str(path)
-        return True
+        for kind in ("waveaudio", "mpegvideo"):
+            if self._cmd(f'open "{p}" type {kind} alias {self.alias}') is None:
+                continue
+            self.path = str(path)
+            if self._cmd(f"play {self.alias}") is not None:
+                return True
+            self.stop()
+        return False
 
     def mode(self):
         return (self._cmd(f"status {self.alias} mode") or "stopped") if self.path else None
@@ -159,7 +177,20 @@ class Listen:
             except OSError:
                 pass
 
+    def _show(self, state, title):
+        """Pour le panneau : la prod que le PC joue (ou télécharge) depuis le téléphone."""
+        try:
+            if state in ("loading", "playing", "paused"):
+                tmp = P.listen.with_suffix(".tmp")
+                tmp.write_text(json.dumps({"t": title, "s": state, "at": time.time()}, ensure_ascii=False), encoding="utf-8")
+                tmp.replace(P.listen)
+            else:
+                P.listen.unlink(missing_ok=True)
+        except OSError:
+            pass
+
     def _say(self, code, vid, state, title="", err=""):
+        self._show(state, title)
         body = {"v": vid, "s": state}
         if title:
             body["t"] = title[:160]
@@ -223,6 +254,10 @@ class Listen:
             except queue.Empty:
                 act = None
             try:
+                if act is None and P.listen_stop.exists():  # « Arrêter » dans le panneau
+                    P.listen_stop.unlink(missing_ok=True)
+                    self.gen += 1
+                    act = ("stop", self.cur[0] if self.cur else "")
                 if act is None:
                     if self.cur and self.player.mode() == "stopped":  # arrivée à la fin
                         code, vid, title = self.cur
@@ -234,6 +269,7 @@ class Listen:
                 if kind == "quit":
                     self.player.stop()
                     self.cur = None
+                    self._show("stopped", "")
                     self.clear()
                     return
                 if kind == "halt":  # une nouvelle prod arrive : celle d'avant s'arrête tout de suite
@@ -248,7 +284,9 @@ class Listen:
                         self._say(code, vid, "playing", title)
                         self.clear(self.KEEP, spare=Path(path).name)
                     else:
-                        self._say(code, vid, "error", title, "le PC n'arrive pas à lire ce son")
+                        err = getattr(self.player, "error", "")
+                        log(f"Écoute sur le PC impossible : {err}")
+                        self._say(code, vid, "error", title, f"le PC n'arrive pas à lire ce son{f' ({err})' if err else ''}")
                 elif kind == "toggle" and self.cur:
                     st = self.player.toggle()
                     if st:
@@ -257,7 +295,10 @@ class Listen:
                     was = self.cur
                     self.player.stop()
                     self.cur = None
-                    self._say(act[1], was[1] if was else "", "stopped", was[2] if was else "")
+                    if act[1]:
+                        self._say(act[1], was[1] if was else "", "stopped", was[2] if was else "")
+                    else:
+                        self._show("stopped", "")
             except Exception:
                 log("Écoute sur le PC :\n" + traceback.format_exc())
 
@@ -676,7 +717,7 @@ def worker(once=False):
     st = C.load_state()
     announced = set()
     recent = []
-    last_maint = time.time() - 24 * 3600 + 120  # 1re vérification de mise à jour 2 min après le démarrage
+    last_maint = time.time() - 6 * 3600 + 120  # 1re vérification de mise à jour 2 min après le démarrage
     last_alive = time.time()
     last_cycle = time.time()
     log(f"Melofinds PC {C.VERSION} en ligne.")
@@ -729,7 +770,7 @@ def worker(once=False):
                     last_alive = time.time()
                     for d in devices:
                         C.reply(d["code"], {"pc": "alive", "version": C.VERSION})
-                if time.time() - last_maint > 24 * 3600 and not once:
+                if time.time() - last_maint > 6 * 3600 and not once:  # mises à jour : toutes les 6 h
                     last_maint = time.time()
                     C.update_ytdlp()
                     try:
@@ -770,7 +811,7 @@ def worker(once=False):
                             if C.VIDEO_ID.match(vid):
                                 C.reply(code, {"v": vid, "cancel": True})
                             continue
-                        vid = str(msg.get("v") or "")
+                        vid = "" if msg.get("cmd") else str(msg.get("v") or "")  # écoute sur le PC… : pas un téléchargement
                         if vid and time.time() - peeked > 3 and msgs[-1][0].get("id"):
                             # une annulation envoyée pendant le téléchargement d'avant
                             try:
@@ -785,7 +826,7 @@ def worker(once=False):
                             continue
                         # prods qui attendent derrière celle-ci (file d'attente du panneau)
                         left = [C.clean_title(m.get("t") or m.get("v"))[:120] for e2, m in msgs[n + 1:]
-                                if m and m.get("v") and m["n"] not in seen and not (str(m.get("v")) in cancels and cancels[str(m.get("v"))] >= (e2.get("time") or 0))]
+                                if m and m.get("v") and not m.get("cmd") and m["n"] not in seen and not (str(m.get("v")) in cancels and cancels[str(m.get("v"))] >= (e2.get("time") or 0))]
                         try:
                             fl = _handle(msg, code, d, root, cfg, st, recent, seen, done, left, remote)
                         except Exception:
@@ -812,7 +853,9 @@ def worker(once=False):
                 log("Erreur inattendue (le programme reste en ligne) :\n" + traceback.format_exc())
             if once:
                 break
-            _sleep(C.POLL_SECONDS)
+            # un téléphone vient d'envoyer une commande (écoute sur le PC…) : réponse plus rapide
+            busy = any(time.time() - t < 180 for t in remote.active.values())
+            _sleep(min(C.POLL_SECONDS, 6) if busy else C.POLL_SECONDS)
     finally:
         if reason not in ("update", "shutdown"):  # mise à jour : le nouveau programme se réannonce tout de suite
             try:
