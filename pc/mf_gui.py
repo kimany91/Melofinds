@@ -115,6 +115,59 @@ def _mmss(sec):
     return f"{sec // 60}:{sec % 60:02d}"
 
 
+def _hls(h, l, s):
+    import colorsys
+    r, g, b = colorsys.hls_to_rgb((h % 360) / 360, max(0.0, min(1.0, l)), max(0.0, min(1.0, s)))
+    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
+
+def listen_palette(color):
+    """Couleurs de la barre d'écoute, tirées de la couleur de la prod [teinte, saturation %]
+    (la même que sur le téléphone) ; violet Melofinds si elle n'en a pas."""
+    h, s = (color[0], color[1] / 100) if isinstance(color, (list, tuple)) and len(color) == 2 else (262, 0.6)
+    return {"bg": _hls(h, 0.12, s * 0.55), "bg2": _hls(h, 0.18, s * 0.5), "line": _hls(h, 0.6, s),
+            "chip": _hls(h, 0.26, s * 0.6), "chip_fg": _hls(h, 0.82, s), "fill": _hls(h, 0.7, s), "knob": "#ffffff"}
+
+
+def read_listen(now=None):
+    """La prod jouée sur le PC depuis le téléphone (écrite par le programme en ligne), ou None."""
+    try:
+        st = json.loads(P.listen.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    now = time.time() if now is None else now
+    if not isinstance(st, dict) or st.get("s") not in ("loading", "playing", "paused"):
+        return None
+    try:
+        at = float(st.get("at") or 0)
+        pos, length = int(st.get("pos") or 0), int(st.get("len") or 0)
+    except (TypeError, ValueError):
+        return None
+    if now - at > (30 if st["s"] == "playing" else 3 * 3600):  # programme arrêté sans avoir effacé
+        return None
+    if st["s"] == "loading":
+        pos = length = 0
+    if st["s"] == "playing":
+        pos += int((now - at) * 1000)  # la position avance toute seule entre deux nouvelles
+    img = str(st.get("img") or "")
+    if img and not re.fullmatch(r"[A-Za-z0-9_-]{11}\.png", Path(img).name):
+        img = ""
+    tags = [str(x)[:24] for x in (st.get("tags") or [])[:4] if isinstance(x, str)] if isinstance(st.get("tags"), list) else []
+    return {"v": str(st.get("v") or "")[:11], "t": str(st.get("t") or "Prod")[:160], "ch": str(st.get("ch") or "")[:60],
+            "tags": tags, "s": st["s"], "pos": max(0, min(pos, length)) if length else 0, "len": max(0, length),
+            "img": img, "color": st.get("color")}
+
+
+def listen_command(a, ms=None):
+    """Bouton de la barre d'écoute : le programme en ligne le fait (pause, arrêt, avance)."""
+    try:
+        tmp = P.listen_cmd.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"a": a, **({"ms": int(ms)} if ms is not None else {})}), encoding="utf-8")
+        tmp.replace(P.listen_cmd)
+    except OSError:
+        pass
+
+
 class Player:
     """Lecture des sons dans le panneau avec le lecteur intégré à Windows (MCI) : .wav,
     .mp3…, pause, reprise, position. Ailleurs : le lecteur par défaut du système."""
@@ -404,6 +457,131 @@ def manager_window(selftest=False):
     main = tk.Frame(root, bg=BG)
     main.pack(side="left", fill="both", expand=True)
 
+    # ----- Barre d'écoute (en bas, sur toutes les pages) : la prod jouée ici depuis le téléphone
+    lb = {"v": None, "img": None, "photo": None, "sig": None, "drag": None, "st": None}
+    lbar = tk.Frame(root, bg=PANEL, height=104)
+    lbar.pack_propagate(False)
+    lb_line = tk.Frame(lbar, bg=ACCENT2, height=2)
+    lb_line.pack(side="top", fill="x")
+    lb_in = tk.Frame(lbar, bg=PANEL, padx=16, pady=12)
+    lb_in.pack(fill="both", expand=True)
+    lb_in.grid_columnconfigure(1, weight=3, minsize=230)
+    lb_in.grid_columnconfigure(2, weight=2, minsize=300)
+    lb_artbox = tk.Frame(lb_in, width=128, height=72, bg=PANEL3)
+    lb_artbox.pack_propagate(False)
+    lb_artbox.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 14))
+    lb_art = tk.Label(lb_artbox, bg=PANEL3, fg=FAINT, text="♪", font=(SYMB, 20), bd=0)
+    lb_art.pack(fill="both", expand=True)
+    lb_meta = tk.Frame(lb_in, bg=PANEL)
+    lb_meta.grid(row=0, column=1, rowspan=2, sticky="nsew")
+    lb_state = tk.Label(lb_meta, bg=PANEL, fg=FAINT, font=(FONT, 8, "bold"), anchor="w")
+    lb_state.pack(anchor="w", fill="x")
+    lb_title = tk.Label(lb_meta, bg=PANEL, fg=FG, font=(FONT, 12, "bold"), anchor="w")
+    lb_title.pack(anchor="w", fill="x")
+    lb_chips = tk.Frame(lb_meta, bg=PANEL)
+    lb_chips.pack(anchor="w", pady=(3, 0))
+    lb_ch = tk.Label(lb_meta, bg=PANEL, fg=MUTED, font=(FONT, 9), anchor="w")
+    lb_ch.pack(anchor="w", fill="x")
+    lb_play = tk.Frame(lb_in, bg=PANEL)
+    lb_play.grid(row=0, column=2, rowspan=2, sticky="nsew", padx=(14, 0))
+    lb_ctl = tk.Frame(lb_play, bg=PANEL)
+    lb_ctl.pack(pady=(0, 4))
+    lb_toggle = tk.Canvas(lb_ctl, width=44, height=44, bg=PANEL, highlightthickness=0, cursor="hand2")
+    lb_stop = tk.Canvas(lb_ctl, width=34, height=34, bg=PANEL, highlightthickness=0, cursor="hand2")
+    lb_toggle.pack(side="left", padx=8)
+    lb_stop.pack(side="left", padx=8)
+    lb_seekrow = tk.Frame(lb_play, bg=PANEL)
+    lb_seekrow.pack(fill="x")
+    lb_pos = tk.Label(lb_seekrow, bg=PANEL, fg=MUTED, font=(MONO, 9), width=5, anchor="e")
+    lb_pos.pack(side="left")
+    lb_seek = tk.Canvas(lb_seekrow, width=120, height=18, bg=PANEL, highlightthickness=0, cursor="hand2")
+    lb_seek.pack(side="left", fill="x", expand=True, padx=8)
+    lb_len = tk.Label(lb_seekrow, bg=PANEL, fg=MUTED, font=(MONO, 9), width=5, anchor="w")
+    lb_len.pack(side="left")
+    lb_bgs = [lbar, lb_in, lb_meta, lb_state, lb_title, lb_chips, lb_ch, lb_play, lb_ctl, lb_toggle, lb_stop,
+              lb_seekrow, lb_pos, lb_seek, lb_len]
+
+    def lb_draw_buttons(pal, playing, busy):
+        lb_toggle.delete("all")
+        lb_toggle.create_oval(2, 2, 42, 42, fill="#ffffff" if not busy else pal["chip"], outline="")
+        dark = pal["bg"]
+        if busy:
+            lb_toggle.create_text(22, 22, text="…", fill="#ffffff", font=(FONT, 14, "bold"))
+        elif playing:
+            lb_toggle.create_rectangle(15, 13, 19, 31, fill=dark, outline="")
+            lb_toggle.create_rectangle(25, 13, 29, 31, fill=dark, outline="")
+        else:
+            lb_toggle.create_polygon(17, 12, 17, 32, 32, 22, fill=dark, outline="")
+        lb_stop.delete("all")
+        lb_stop.create_oval(2, 2, 32, 32, fill=pal["bg2"], outline="")
+        lb_stop.create_rectangle(12, 12, 22, 22, fill="#ffffff", outline="")
+
+    def lb_draw_seek(pal, pos, length):
+        lb_seek.delete("all")
+        w = max(20, lb_seek.winfo_width())
+        y = 9
+        if length <= 0:
+            return  # téléchargement en cours : pas encore de barre
+        lb_seek.create_line(6, y, w - 6, y, fill=pal["bg2"], width=4, capstyle="round")
+        if length > 0:
+            x = 6 + (w - 12) * max(0.0, min(1.0, pos / length))
+            lb_seek.create_line(6, y, x, y, fill=pal["fill"], width=4, capstyle="round")
+            lb_seek.create_oval(x - 6, y - 6, x + 6, y + 6, fill=pal["knob"], outline="")
+
+    def lb_frac(e):
+        w = max(20, lb_seek.winfo_width())
+        return max(0.0, min(1.0, (e.x - 6) / (w - 12)))
+
+    def lb_seek_move(e):
+        st = lb["st"]
+        if st and st["len"]:
+            lb["drag"] = lb_frac(e) * st["len"]
+            lb_pos.configure(text=_mmss(lb["drag"] / 1000))
+            lb_draw_seek(listen_palette(st["color"]), lb["drag"], st["len"])
+
+    def lb_seek_up(e):
+        st = lb["st"]
+        if st and st["len"]:
+            listen_command("seek", lb_frac(e) * st["len"])
+        lb["drag"] = None
+    lb_seek.bind("<Button-1>", lb_seek_move)
+    lb_seek.bind("<B1-Motion>", lb_seek_move)
+    lb_seek.bind("<ButtonRelease-1>", lb_seek_up)
+
+    def lb_toggle_click(_e=None):
+        st = lb["st"]
+        if st and st["s"] != "loading":
+            listen_command("toggle")
+            st["s"] = "paused" if st["s"] == "playing" else "playing"  # tout de suite à l'écran
+            lb["sig"] = None
+    lb_toggle.bind("<Button-1>", lb_toggle_click)
+    lb_stop.bind("<Button-1>", lambda e: (listen_command("stop"), lbar.pack_forget()))
+
+    def lb_paint(st):
+        pal = listen_palette(st["color"])
+        for w in lb_bgs:
+            w.configure(bg=pal["bg"])
+        lb_line.configure(bg=pal["line"])
+        for w in lb_chips.winfo_children():
+            w.destroy()
+        for t in st["tags"]:
+            tk.Label(lb_chips, text=t, bg=pal["chip"], fg=pal["chip_fg"], font=(MONO, 8, "bold"), padx=6, pady=1).pack(side="left", padx=(0, 4))
+        lb_title.configure(text=st["t"] if len(st["t"]) <= 52 else st["t"][:50].rstrip() + "…")
+        lb_ch.configure(text=st["ch"])
+        lb_state.configure(text={"loading": "DEPUIS TON TÉLÉPHONE · TÉLÉCHARGEMENT…",
+                                 "playing": "DEPUIS TON TÉLÉPHONE · EN LECTURE", "paused": "DEPUIS TON TÉLÉPHONE · EN PAUSE"}[st["s"]],
+                           fg=pal["chip_fg"])
+        if st["img"] != lb["img"]:
+            lb["img"] = st["img"]
+            try:
+                lb["photo"] = tk.PhotoImage(file=st["img"]) if st["img"] else None
+            except Exception:
+                lb["photo"] = None
+            lb_art.configure(image=lb["photo"] or "", text="" if lb["photo"] else "♪")
+        lb_art.configure(bg=pal["bg2"])
+        lb_artbox.configure(bg=pal["bg2"])
+        lb_draw_buttons(pal, st["s"] == "playing", st["s"] == "loading")
+
     logo = tk.Frame(side, bg=BG2, padx=20, pady=22)
     logo.pack(fill="x")
     mark = tk.Canvas(logo, width=30, height=30, bg=BG2, highlightthickness=0)
@@ -543,23 +721,6 @@ def manager_window(selftest=False):
     wait_box.pack(fill="x", pady=(6, 0))
     wait_state = {"sig": None}
 
-    # Prod jouée sur ce PC depuis l'onglet Téléphone de l'appli (bouton PC)
-    lis = card(home, pady=12)
-    lis_top = tk.Frame(lis, bg=PANEL)
-    lis_top.pack(fill="x")
-    label(lis_top, "ÉCOUTE DEPUIS LE TÉLÉPHONE", 8, FAINT, bold=True).pack(side="left")
-
-    def stop_listen():
-        try:
-            P.listen_stop.write_text("1", encoding="utf-8")
-        except OSError:
-            pass
-    Btn(lis_top, "Arrêter", stop_listen, padx=10, pady=4).pack(side="right")
-    lis_title = label(lis, "", 13, bold=True, wrap=560)
-    lis_title.pack(anchor="w", pady=(6, 0))
-    lis_state = label(lis, "", 10, MUTED)
-    lis_state.pack(anchor="w")
-    LIS_TEXT = {"loading": "Téléchargement pour l'écoute (dossier temporaire, effacé ensuite)…", "playing": "♪ En lecture sur ce PC", "paused": "En pause"}
 
     def fill_wait(items):
         if items == wait_state["sig"]:
@@ -1832,21 +1993,31 @@ def manager_window(selftest=False):
     show("home" if C.load_config()["devices"] else "devices")
     tick()
     def tick_listen():
-        try:
-            st = json.loads(P.listen.read_text(encoding="utf-8"))
-            if not isinstance(st, dict) or time.time() - float(st.get("at") or 0) > 3 * 3600:
-                st = None
-        except (OSError, ValueError, TypeError):
-            st = None
+        st = read_listen()
         if st:
-            lis_title.configure(text=str(st.get("t") or "Prod")[:160])
-            lis_state.configure(text=LIS_TEXT.get(st.get("s"), ""))
-            lis.configure(highlightbackground=ACCENT2)
-            if not lis.winfo_ismapped():
-                lis.pack(fill="x", pady=(0, 14), before=waitc)
-        elif lis.winfo_ismapped():
-            lis.pack_forget()
-        root.after(700, tick_listen)
+            if lb["drag"] is not None and lb["st"]:
+                st["pos"] = lb["drag"]
+            sig = (st["v"], st["s"], st["img"], str(st["color"]), tuple(st["tags"]), st["t"])
+            if sig != lb["sig"]:
+                lb["sig"] = sig
+                lb_paint(st)
+            lb["st"] = st
+            if lb["drag"] is None:
+                lb_pos.configure(text=_mmss(st["pos"] / 1000) if st["len"] else "")
+                lb_draw_seek(listen_palette(st["color"]), st["pos"], st["len"])
+            lb_len.configure(text=_mmss(st["len"] / 1000) if st["len"] else "")
+            if not lbar.winfo_ismapped():
+                lbar.pack(side="bottom", fill="x", before=side)
+                # un peu plus haute pendant l'écoute : le menu de gauche garde toute sa place
+                root.minsize(880, 690)
+                if root.winfo_height() < 690:
+                    root.geometry(f"{max(880, root.winfo_width())}x690")
+        else:
+            lb["st"], lb["sig"] = None, None
+            if lbar.winfo_ismapped():
+                lbar.pack_forget()
+                root.minsize(880, 580)
+        root.after(250, tick_listen)
 
     tick_progress()
     tick_listen()

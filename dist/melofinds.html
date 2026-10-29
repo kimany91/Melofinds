@@ -1171,7 +1171,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 29/10/2026 à 20:41</p>
+    <p class="build-stamp">Version du 29/10/2026 à 21:46</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -4791,12 +4791,15 @@ async function phonePcListen(f) {
     return;
   }
   if (phonePc.v === v && (phonePc.s === 'playing' || phonePc.s === 'paused')) { phonePcCtl('toggle'); return; }
-  const t = phoneParts(f.name).title;
+  const parts = phoneParts(f.name);
+  const t = parts.title;
   if (phone.state?.playing) phoneCtl('pause');
   const at = Date.now();
   Object.assign(phonePc, { v, t, s: 'sent', at, err: '' });
   renderPhonePcBar();
-  try { await ntfyPublish({ cmd: 'listen', v, t: String(f.meta?.title || t).slice(0, 160) }); } catch { phonePc.s = ''; renderPhonePcBar(); toast('Pas de réseau'); return; }
+  // pour la barre d'écoute du PC : pastilles clé / BPM / licence, chaîne, couleur de la prod
+  const col = f.meta?.color && typeof f.meta.color.h === 'number' ? { h: f.meta.color.h, s: Number(f.meta.color.s) || 60 } : undefined;
+  try { await ntfyPublish({ cmd: 'listen', v, t: t.slice(0, 160), tags: parts.chips.map((c) => String(c.t).slice(0, 24)).slice(0, 4), ch: String(f.meta?.channel || '').slice(0, 60), color: col }); } catch { phonePc.s = ''; renderPhonePcBar(); toast('Pas de réseau'); return; }
   // pas de réponse : PC hors ligne en vrai, ou version trop ancienne
   setTimeout(() => {
     if (phonePc.at !== at || phonePc.s !== 'sent') return;

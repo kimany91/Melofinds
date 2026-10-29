@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.20.4"
+VERSION = "1.20.5"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -96,7 +96,7 @@ class Paths:
         self.progress = b / "progress.json"  # téléchargement en cours (affiché par le panneau)
         self.kick = b / "kick"  # le panneau a changé un projet : le programme en ligne prévient l'app tout de suite
         self.listen = b / "listen.json"  # prod jouée sur le PC depuis le téléphone (affichée par le panneau)
-        self.listen_stop = b / "listen-stop"  # bouton Arrêter du panneau
+        self.listen_cmd = b / "listen-cmd.json"  # boutons de la barre d'écoute du panneau
         return self
 
 

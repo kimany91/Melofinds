@@ -1,4 +1,4 @@
-import hashlib, hmac, importlib.util, json, tempfile, time, unittest
+import hashlib, hmac, importlib.util, json, re, tempfile, time, unittest
 from pathlib import Path
 
 import os, sys
@@ -1428,7 +1428,13 @@ class FakePlayer:
     ok = True
 
     def __init__(self):
-        self.path, self.state, self.played = None, None, []
+        self.path, self.state, self.played, self.length, self.pos = None, None, [], 90_000, 0
+
+    def position(self):
+        return self.pos
+
+    def seek(self, ms):
+        self.pos = int(ms)
 
     def play(self, path):
         self.path, self.state = str(path), "playing"
@@ -1465,7 +1471,9 @@ class EcouteSurLePC(unittest.TestCase):
             p.write_bytes(self.WAV)
             return p, ""
         self.player = FakePlayer()
-        self.l = mf_worker.Listen(self.dir, self.player, fetch, lambda code, body: self.replies.append(body["listen"]))
+        png = self.dir / "art"
+        self.l = mf_worker.Listen(self.dir, self.player, fetch, lambda code, body: self.replies.append(body["listen"]),
+                                  art=lambda vid, folder: (None, (200, 70)))
 
     def tearDown(self):
         self.l.close()
@@ -1525,7 +1533,8 @@ class EcouteSurLePC(unittest.TestCase):
             (self.dir / f"{v}.wav").write_bytes(self.WAV)
             time.sleep(0.01)
         (self.dir / "autre.txt").write_text("pas à moi")
-        l2 = self.W.Listen(self.dir, FakePlayer(), None, lambda *a: None)  # au démarrage : tout est effacé
+        (self.dir / "aaaaaaaaaaa.png").write_bytes(b"\x89PNG")
+        l2 = self.W.Listen(self.dir, FakePlayer(), None, lambda *a: None, art=lambda v, f: (None, None))  # au démarrage : tout est effacé
         l2.close()
         self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["autre.txt"])
 
@@ -1534,3 +1543,53 @@ class EcouteSurLePC(unittest.TestCase):
         r.listen = self.l
         r.command(self.CODE, {"cmd": "listen", "v": "jNQXAC9IVRw", "ts": time.time() * 1000}, {**mpc.load_config(), "remote": False})
         self.wait_for("playing")
+
+    def test_barre_du_panneau(self):
+        import mf_gui
+        self.ask("jNQXAC9IVRw", tags=["F# min", "140 BPM", 5, "x" * 99], ch="geesyn", color={"h": 30, "s": 80})
+        self.wait_for("playing")
+        time.sleep(0.4)
+        st = mf_gui.read_listen()
+        self.assertEqual((st["v"], st["t"], st["ch"], st["s"], st["len"]), ("jNQXAC9IVRw", "Luther Type Beat", "geesyn", "playing", 90_000))
+        self.assertEqual(st["tags"], ["F# min", "140 BPM", "x" * 24])
+        self.assertEqual(st["color"], [30, 80])  # la couleur du téléphone, pas celle recalculée
+        # boutons du panneau : pause (le téléphone est prévenu), avance, arrêt
+        mf_gui.listen_command("toggle")
+        self.wait_for("paused")
+        self.assertEqual(mf_gui.read_listen()["s"], "paused")
+        mf_gui.listen_command("seek", 45_000)
+        time.sleep(0.6)
+        self.assertEqual(self.player.pos, 45_000)
+        self.assertEqual(mf_gui.read_listen()["pos"], 45_000)
+        mf_gui.listen_command("stop")
+        self.wait_for("stopped")
+        self.assertIsNone(mf_gui.read_listen())
+
+    def test_couleur_tiree_de_la_miniature(self):
+        self.ask("jNQXAC9IVRw")
+        self.wait_for("playing")
+        time.sleep(0.4)
+        import mf_gui
+        self.assertEqual(mf_gui.read_listen()["color"], [200, 70])
+        pal = mf_gui.listen_palette([200, 70])
+        self.assertTrue(all(re.fullmatch(r"#[0-9a-f]{6}", c) for c in pal.values()))
+        self.assertEqual(mf_gui.listen_palette(None), mf_gui.listen_palette([262, 60]))
+
+    def test_lecture_du_fichier_refuse_le_bizarre(self):
+        import mf_gui
+        mpc.P.listen.write_text(json.dumps({"s": "playing", "at": time.time() - 120, "pos": 0, "len": 1}), encoding="utf-8")
+        self.assertIsNone(mf_gui.read_listen())  # programme arrêté sans effacer : pas de barre fantôme
+        mpc.P.listen.write_text(json.dumps({"s": "paused", "at": time.time(), "pos": 5, "len": 10, "img": "C:/Windows/evil.png"}), encoding="utf-8")
+        self.assertEqual(mf_gui.read_listen()["img"], "")
+        mpc.P.listen.write_text("pas du json", encoding="utf-8")
+        self.assertIsNone(mf_gui.read_listen())
+        mpc.P.listen.unlink()
+
+
+class CouleurMiniature(unittest.TestCase):
+    def test_teinte_dominante(self):
+        import mf_worker
+        red = bytes([220, 30, 30]) * 500
+        h, s = mf_worker._hue_of(red)
+        self.assertTrue(h < 10 or h > 350)
+        self.assertIsNone(mf_worker._hue_of(bytes([128, 128, 128]) * 500))  # gris : pas de couleur

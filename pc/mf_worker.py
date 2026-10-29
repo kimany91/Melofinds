@@ -79,10 +79,10 @@ def _stop_reason():
 
 
 class Mci:
-    """Lecteur intégré à Windows (MCI) : .wav, pause, reprise. Rien à installer."""
+    """Lecteur intégré à Windows (MCI) : .wav, pause, reprise, position. Rien à installer."""
 
     def __init__(self, alias="mflisten"):
-        self.alias, self.path, self.error = alias, None, ""
+        self.alias, self.path, self.error, self.length = alias, None, "", 0
         self.ok = C.WINDOWS
         if self.ok:
             import ctypes
@@ -116,6 +116,11 @@ class Mci:
             if self._cmd(f'open "{p}" type {kind} alias {self.alias}') is None:
                 continue
             self.path = str(path)
+            self._cmd(f"set {self.alias} time format milliseconds")
+            try:
+                self.length = int(self._cmd(f"status {self.alias} length") or 0)
+            except ValueError:
+                self.length = 0
             if self._cmd(f"play {self.alias}") is not None:
                 return True
             self.stop()
@@ -123,6 +128,12 @@ class Mci:
 
     def mode(self):
         return (self._cmd(f"status {self.alias} mode") or "stopped") if self.path else None
+
+    def position(self):
+        try:
+            return int(self._cmd(f"status {self.alias} position") or 0) if self.path else 0
+        except ValueError:
+            return 0
 
     def toggle(self):
         m = self.mode()
@@ -134,55 +145,132 @@ class Mci:
             return "playing"
         return None
 
+    def seek(self, ms):
+        if not self.path:
+            return
+        was = self.mode()
+        self._cmd(f"seek {self.alias} to {int(max(0, min(ms, self.length or ms)))}")
+        if was == "playing":
+            self._cmd(f"play {self.alias}")
+
     def stop(self):
         if self.path:
             self._cmd(f"close {self.alias}")
-        self.path = None
+        self.path, self.length = None, 0
+
+
+def _hue_of(rgb):
+    """Couleur dominante et vive d'une petite image (octets RVB) : (teinte, saturation %), ou None.
+    Même calcul que l'appli (PhoneLibrary.colorOf)."""
+    import colorsys
+    import math
+    x = y = w = ls = 0.0
+    for i in range(0, len(rgb) - 2, 3):
+        h, s, v = colorsys.rgb_to_hsv(rgb[i] / 255, rgb[i + 1] / 255, rgb[i + 2] / 255)
+        if s * v < 0.04:
+            continue
+        wt = s * s * (0.3 + v)
+        x += math.cos(h * 2 * math.pi) * wt
+        y += math.sin(h * 2 * math.pi) * wt
+        w += wt
+        ls += s * wt
+    if w < 0.5:
+        return None
+    return int(round((math.degrees(math.atan2(y, x)) + 360) % 360)), int(round(max(45, min(85, ls / w * 100 + 15))))
+
+
+def fetch_art(vid, folder):
+    """Miniature YouTube de la prod en PNG 128×72 (le panneau sait l'afficher sans rien
+    installer) et sa couleur. Renvoie (chemin ou None, (teinte, saturation) ou None)."""
+    ffmpeg = C.tool_path("ffmpeg.exe")
+    if not ffmpeg or not C.VIDEO_ID.match(vid):
+        return None, None
+    folder = Path(folder)
+    jpg, png = folder / f"{vid}.jpg", folder / f"{vid}.png"
+    try:
+        data = C.http_get(f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg", timeout=10)
+        if len(data) < 500 or len(data) > 400_000 or not data.startswith(b"\xff\xd8"):
+            return None, None
+        folder.mkdir(parents=True, exist_ok=True)
+        jpg.write_bytes(data)
+        C.run_tool([ffmpeg, "-y", "-v", "error", "-i", str(jpg), "-vf", "scale=128:72", str(png)], 30)
+        r = C.run_tool([ffmpeg, "-v", "error", "-i", str(jpg), "-vf", "scale=32:18", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], 30)
+        color = _hue_of(r.stdout) if r.returncode == 0 else None
+        return (png if png.exists() and png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" else None), color
+    except Exception:
+        return None, None
+    finally:
+        try:
+            jpg.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 class Listen:
     """Bouton PC de l'onglet Téléphone : la prod est téléchargée en .wav dans un dossier
-    temporaire (jamais dans ton dossier de prods) et jouée sur le PC. Seule la dernière
-    demande compte ; les sons d'écoute sont effacés (4 gardés au plus, tous à l'arrêt)."""
+    temporaire (jamais dans ton dossier de prods) et jouée sur le PC, avec sa barre d'écoute
+    dans le panneau (miniature, couleur, avance, pause, arrêt). Seule la dernière demande
+    compte ; les sons d'écoute sont effacés (4 gardés au plus, tous à l'arrêt)."""
     PER_HOUR = 60
     KEEP = 4
     MAX_AGE_MS = 180_000  # demande faite pendant que le PC était éteint : pas de son surprise plus tard
+    FILE = re.compile(r"[A-Za-z0-9_-]{11}\.(wav|png|jpg)")
 
-    def __init__(self, folder=None, player=None, fetch=None, reply=None):
+    def __init__(self, folder=None, player=None, fetch=None, reply=None, art=None):
         self.dir = Path(folder or Path(tempfile.gettempdir()) / "melofinds-ecoute-pc")
         self.player = player or Mci()
         self.fetch = fetch or C.download_listen
+        self.art_fetch = art or fetch_art
         self.reply = reply or C.reply
         self.gen = 0
         self.recent = []
-        self.cur = None          # (code, vid, titre) du son chargé
+        self.cur = None          # le son chargé : {code, v, t, tags, ch, color, img}
+        self.info = {}           # dernière demande : ce qu'il faut afficher
+        self.state = ""
+        self.shown_at = 0.0
         self.q = queue.Queue()   # tout ce qui touche au lecteur passe par un seul fil
         self.clear()
+        for f in (P.listen, P.listen_cmd):
+            try:
+                f.unlink(missing_ok=True)
+            except OSError:
+                pass
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
 
     def _files(self):
         try:
-            return [p for p in self.dir.iterdir() if p.is_file() and re.fullmatch(r"[A-Za-z0-9_-]{11}\.wav", p.name)]
+            return [p for p in self.dir.iterdir() if p.is_file() and self.FILE.fullmatch(p.name)]
         except OSError:
             return []
 
     def clear(self, keep=0, spare=None):
-        files = sorted(self._files(), key=lambda p: p.stat().st_mtime, reverse=True)
-        for p in files[keep:]:
-            if spare and p.name == spare:
-                continue
-            try:
-                p.unlink()
-            except OSError:
-                pass
+        """Efface les sons et miniatures d'écoute (garde les `keep` sons les plus récents)."""
+        files = self._files()
+        wavs = sorted((p for p in files if p.suffix == ".wav"), key=lambda p: p.stat().st_mtime, reverse=True)
+        kept = {p.stem for p in wavs[:keep]} | ({Path(spare).stem} if spare else set())
+        for p in files:
+            if p.stem not in kept:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
 
-    def _show(self, state, title):
-        """Pour le panneau : la prod que le PC joue (ou télécharge) depuis le téléphone."""
+    # ---------------------------------------------------------------- affichage
+
+    def _show(self, state):
+        """listen.json, lu par le panneau : la prod, sa miniature, sa couleur, où en est la lecture."""
+        self.state = state
+        self.shown_at = time.time()
         try:
             if state in ("loading", "playing", "paused"):
+                i = self.info
+                pos = self.player.position() if state != "loading" else 0
+                body = {"v": i.get("v", ""), "t": i.get("t", ""), "ch": i.get("ch", ""), "tags": i.get("tags", []),
+                        "s": state, "at": time.time(), "pos": pos, "len": self.player.length if state != "loading" else 0,
+                        "img": str(i["img"]) if i.get("img") else "", "color": i.get("color")}
                 tmp = P.listen.with_suffix(".tmp")
-                tmp.write_text(json.dumps({"t": title, "s": state, "at": time.time()}, ensure_ascii=False), encoding="utf-8")
+                tmp.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
                 tmp.replace(P.listen)
             else:
                 P.listen.unlink(missing_ok=True)
@@ -190,23 +278,41 @@ class Listen:
             pass
 
     def _say(self, code, vid, state, title="", err=""):
-        self._show(state, title)
+        if vid == self.info.get("v") or state in ("stopped", "ended"):
+            self._show(state)
         body = {"v": vid, "s": state}
         if title:
             body["t"] = title[:160]
         if err:
             body["err"] = str(err)[:200]
+        if not code:
+            return
         try:
             self.reply(code, {"listen": body})
         except Exception:
             pass
 
+    # ---------------------------------------------------------------- demandes du téléphone
+
+    @staticmethod
+    def _clean_info(msg, vid):
+        tags = msg.get("tags")
+        tags = [re.sub(r"[\x00-\x1f]", "", str(x))[:24] for x in tags[:4] if isinstance(x, str) and x.strip()] if isinstance(tags, list) else []
+        col = msg.get("color")
+        color = None
+        if isinstance(col, dict) and isinstance(col.get("h"), (int, float)) and not isinstance(col.get("h"), bool):
+            s = col.get("s")
+            color = [int(max(0, min(360, col["h"]))), int(max(0, min(100, s if isinstance(s, (int, float)) and not isinstance(s, bool) else 60)))]
+        return {"v": vid, "t": C.clean_title(msg.get("t") or vid)[:160], "tags": tags,
+                "ch": re.sub(r"[\x00-\x1f]", "", str(msg.get("ch") or ""))[:60], "color": color, "img": None}
+
     def request(self, code, msg):
         a = str(msg.get("a") or "")
-        if a in ("toggle", "stop"):
+        if a in ("toggle", "stop", "seek"):
             if a == "stop":
                 self.gen += 1  # un téléchargement en cours ne jouera pas
-            self.q.put((a, code))
+            ms = msg.get("ms")
+            self.q.put((a, code, ms if isinstance(ms, (int, float)) and not isinstance(ms, bool) else 0))
             return
         vid = str(msg.get("v") or "")
         if not C.VIDEO_ID.match(vid):
@@ -214,7 +320,8 @@ class Listen:
         ts = msg.get("ts")
         if isinstance(ts, (int, float)) and time.time() * 1000 - ts > self.MAX_AGE_MS:
             return
-        title = C.clean_title(msg.get("t") or vid)[:160]
+        info = self._clean_info(msg, vid)
+        title = info["t"]
         if not self.player.ok:
             self._say(code, vid, "error", title, "lecture sur le PC : Windows seulement")
             return
@@ -226,79 +333,118 @@ class Listen:
         self.recent.append(now)
         self.gen += 1
         gen = self.gen
-        self.q.put(("halt", code))
+        self.q.put(("halt", code, info))
+        threading.Thread(target=self._get_art, args=(gen, info), daemon=True).start()
         have = self.dir / f"{vid}.wav"
         if C.is_wav(have):
-            self.q.put(("play", gen, code, vid, title, have))
+            self.q.put(("play", gen, code, info, have))
             return
         self._say(code, vid, "loading", title)
         log(f"Écoute sur le PC : {title}")
-        threading.Thread(target=self._get, args=(gen, code, vid, title), daemon=True).start()
+        threading.Thread(target=self._get, args=(gen, code, info), daemon=True).start()
 
-    def _get(self, gen, code, vid, title):
+    def _get_art(self, gen, info):
+        png = self.dir / f"{info['v']}.png"
+        color = None
+        if not png.exists():
+            try:
+                png, color = self.art_fetch(info["v"], self.dir)
+            except Exception:
+                png = None
+        if gen == self.gen:
+            self.q.put(("art", gen, png, color))
+
+    def _get(self, gen, code, info):
         try:
-            path, err = self.fetch(vid, self.dir)
+            path, err = self.fetch(info["v"], self.dir)
         except Exception as e:
             path, err = None, f"erreur inattendue : {e}"
         if gen != self.gen:
             return  # une autre prod a été demandée entre-temps
         if not path:
-            self._say(code, vid, "error", title, err or "téléchargement impossible")
+            self._say(code, info["v"], "error", info["t"], err or "téléchargement impossible")
             return
-        self.q.put(("play", gen, code, vid, title, path))
+        self.q.put(("play", gen, code, info, path))
+
+    # ---------------------------------------------------------------- lecteur (un seul fil)
+
+    def _panel_command(self):
+        """Boutons de la barre d'écoute du panneau : { a: toggle | stop | seek, ms }."""
+        try:
+            raw = P.listen_cmd.read_text(encoding="utf-8")
+            P.listen_cmd.unlink(missing_ok=True)
+            c = json.loads(raw)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(c, dict) or c.get("a") not in ("toggle", "stop", "seek"):
+            return None
+        if c["a"] == "stop":
+            self.gen += 1
+        ms = c.get("ms")
+        return c["a"], (self.cur or {}).get("code", ""), ms if isinstance(ms, (int, float)) and not isinstance(ms, bool) else 0
 
     def _loop(self):
         while True:
             try:
-                act = self.q.get(timeout=1)
+                act = self.q.get(timeout=0.25)
             except queue.Empty:
                 act = None
             try:
-                if act is None and P.listen_stop.exists():  # « Arrêter » dans le panneau
-                    P.listen_stop.unlink(missing_ok=True)
-                    self.gen += 1
-                    act = ("stop", self.cur[0] if self.cur else "")
+                if act is None and P.listen_cmd.exists():
+                    act = self._panel_command()
                 if act is None:
                     if self.cur and self.player.mode() == "stopped":  # arrivée à la fin
-                        code, vid, title = self.cur
+                        cur = self.cur
                         self.player.stop()
                         self.cur = None
-                        self._say(code, vid, "ended", title)
+                        self._say(cur["code"], cur["v"], "ended", cur["t"])
+                    elif self.cur and self.state == "playing" and time.time() - self.shown_at > 1:
+                        self._show("playing")  # le panneau suit la lecture
                     continue
                 kind = act[0]
                 if kind == "quit":
                     self.player.stop()
                     self.cur = None
-                    self._show("stopped", "")
+                    self._show("stopped")
                     self.clear()
                     return
                 if kind == "halt":  # une nouvelle prod arrive : celle d'avant s'arrête tout de suite
                     self.player.stop()
                     self.cur = None
+                    self.info = act[2]
+                elif kind == "art":
+                    _, gen, png, color = act
+                    if gen == self.gen:
+                        if png:
+                            self.info["img"] = png
+                        if color and not self.info.get("color"):
+                            self.info["color"] = list(color)
+                        if self.state in ("loading", "playing", "paused"):
+                            self._show(self.state)
                 elif kind == "play":
-                    _, gen, code, vid, title, path = act
+                    _, gen, code, info, path = act
                     if gen != self.gen:
                         continue
                     if self.player.play(path):
-                        self.cur = (code, vid, title)
-                        self._say(code, vid, "playing", title)
+                        self.cur = {**info, "code": code}
+                        self._say(code, info["v"], "playing", info["t"])
                         self.clear(self.KEEP, spare=Path(path).name)
                     else:
                         err = getattr(self.player, "error", "")
                         log(f"Écoute sur le PC impossible : {err}")
-                        self._say(code, vid, "error", title, f"le PC n'arrive pas à lire ce son{f' ({err})' if err else ''}")
+                        self._say(code, info["v"], "error", info["t"], f"le PC n'arrive pas à lire ce son{f' ({err})' if err else ''}")
                 elif kind == "toggle" and self.cur:
                     st = self.player.toggle()
                     if st:
-                        self._say(act[1], self.cur[1], st, self.cur[2])
+                        self._say(self.cur["code"], self.cur["v"], st, self.cur["t"])
+                elif kind == "seek" and self.cur:
+                    self.player.seek(act[2])
+                    self._show(self.state or "playing")
                 elif kind == "stop":
                     was = self.cur
                     self.player.stop()
                     self.cur = None
-                    if act[1]:
-                        self._say(act[1], was[1] if was else "", "stopped", was[2] if was else "")
-                    else:
-                        self._show("stopped", "")
+                    self._say(was["code"] if was else act[1], was["v"] if was else "", "stopped", was["t"] if was else "")
             except Exception:
                 log("Écoute sur le PC :\n" + traceback.format_exc())
 
