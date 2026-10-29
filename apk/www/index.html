@@ -15,7 +15,10 @@
   button { font: 600 15px system-ui, sans-serif; color: #fff; border: 0; cursor: pointer; }
   .retry { justify-self: center; border-radius: 999px; padding: 11px 22px; background: linear-gradient(90deg, #8b5cf6, #ec4899); }
   h2 { font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #8b879b; margin: 10px 0 0; }
-  .row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; border: 1px solid #262a36; background: #14161d; text-align: left; }
+  .row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; padding: 8px; border-radius: 14px; border: 1px solid #262a36; background: #14161d; text-align: left; }
+  .row img, .row .ph { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: #2a2340; display: block; }
+  .pimg { width: 100%; max-height: 200px; border-radius: 14px; object-fit: cover; }
+  .mode { width: auto !important; padding: 0 12px; border-radius: 99px !important; font-size: 12px !important; }
   .row.on { border-color: #6d4fd8; background: #1b1730; }
   .row .play { width: 38px; height: 38px; border-radius: 50%; background: var(--acc); font-size: 15px; }
   .row b { display: block; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -42,6 +45,7 @@
   <section id="offline" hidden>
     <h2>Tes prods sur le téléphone</h2>
     <div id="player" class="player" hidden>
+      <img id="pImg" class="pimg" alt="" hidden>
       <b id="pTitle"></b>
       <div class="seek"><span id="pPos">0:00</span><input id="pSeek" type="range" min="0" max="1000" value="0" aria-label="Position"><span id="pDur">0:00</span></div>
       <div class="ctl">
@@ -49,6 +53,7 @@
         <button type="button" data-cmd="toggle" class="main" id="pToggle" aria-label="Lecture / pause">▶</button>
         <button type="button" data-cmd="next" aria-label="Suivante">⏭</button>
         <button type="button" data-cmd="stop" aria-label="Arrêter">■</button>
+        <button type="button" id="pMode" class="mode" aria-label="Mode de lecture">À la suite</button>
       </div>
     </div>
     <div id="list" style="display:grid;gap:8px;margin-top:10px"></div>
@@ -60,6 +65,8 @@
   var n = cap && cap.Plugins && cap.Plugins.MelofindsNative;
   if (!n || !n.phoneList) return;
   var files = [];
+  var thumbs = {};
+  var MODES = { suite: 'À la suite', aleatoire: 'Aléatoire', boucle: 'En boucle' };
   var state = null;
   var seeking = false;
   var $ = function (id) { return document.getElementById(id); };
@@ -70,6 +77,8 @@
     files.forEach(function (f, i) {
       var row = document.createElement('div');
       row.className = 'row' + (state && state.name === f.name ? ' on' : '');
+      var id = f.meta && f.meta.id;
+      if (id && thumbs[id]) { var im = document.createElement('img'); im.src = thumbs[id]; im.alt = ''; row.appendChild(im); }
       var b = document.createElement('button');
       b.className = 'play';
       b.type = 'button';
@@ -80,6 +89,7 @@
       var name = document.createElement('b');
       name.textContent = String(f.name).replace(/\.[a-z0-9]+$/i, '');
       t.appendChild(name);
+      row.style.gridTemplateColumns = (id && thumbs[id] ? 'auto ' : '') + 'auto 1fr';
       row.appendChild(b);
       row.appendChild(t);
       list.appendChild(row);
@@ -95,11 +105,20 @@
     $('pDur').textContent = fmt(state.duration);
     if (!seeking) $('pSeek').value = state.duration ? Math.round(state.position / state.duration * 1000) : 0;
     $('pToggle').textContent = state.playing ? '❚❚' : '▶';
+    $('pMode').textContent = MODES[state.mode] || MODES.suite;
+    var img = state.id && thumbs[state.id];
+    $('pImg').hidden = !img;
+    if (img && $('pImg').src !== img) $('pImg').src = img;
     Array.prototype.forEach.call(document.querySelectorAll('.row'), function (r, i) { r.classList.toggle('on', files[i] && files[i].name === state.name); });
   }
   Array.prototype.forEach.call(document.querySelectorAll('[data-cmd]'), function (b) {
     b.onclick = function () { n.phoneControl({ cmd: b.dataset.cmd }).catch(function () {}); };
   });
+  $('pMode').onclick = function () {
+    var order = ['suite', 'aleatoire', 'boucle'];
+    var next = order[(order.indexOf((state && state.mode) || 'suite') + 1) % 3];
+    if (n.phoneMode) n.phoneMode({ mode: next }).then(function (st) { state = st; renderPlayer(); }).catch(function () {});
+  };
   $('pSeek').oninput = function () { seeking = true; };
   $('pSeek').onchange = function () { seeking = false; n.phoneControl({ cmd: 'seek', ms: Math.round($('pSeek').value / 1000 * ((state && state.duration) || 0)) }).catch(function () {}); };
   if (n.addListener) n.addListener('phonePlayer', function (st) { state = st; renderPlayer(); });
@@ -107,6 +126,8 @@
     files = (r && r.files || []).slice().sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
     $('offline').hidden = false;
     render();
+    var ids = files.map(function (f) { return f.meta && f.meta.id; }).filter(Boolean);
+    if (ids.length && n.phoneThumbs) n.phoneThumbs({ ids: ids }).then(function (r) { thumbs = (r && r.t) || {}; render(); renderPlayer(); }).catch(function () {});
     return n.phoneState ? n.phoneState() : null;
   }).then(function (st) { if (st) { state = st; renderPlayer(); } }).catch(function () { /* dossier pas encore choisi */ });
 })();

@@ -40,8 +40,15 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
         final Uri uri;
         final String name;
         final String title;
-        Track(Uri uri, String name, String title) { this.uri = uri; this.name = name; this.title = title; }
+        final String id;   // vidéo YouTube (miniature), ou ""
+        final Uri art;     // miniature gardée dans le dossier, ou null
+        Track(Uri uri, String name, String title, String id, Uri art) { this.uri = uri; this.name = name; this.title = title; this.id = id; this.art = art; }
     }
+
+    /** Modes de lecture : à la suite, aléatoire, la prod en boucle. */
+    static volatile String mode = "suite";
+    private static final java.util.ArrayDeque<Integer> history = new java.util.ArrayDeque<>();
+    private static final java.util.Random random = new java.util.Random();
 
     interface Listener { void state(JSObject s); }
 
@@ -56,6 +63,9 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
     private MediaPlayer mp;
     private MediaSession session;
     private boolean prepared;
+    private long pendingSeek = -1;
+    private android.graphics.Bitmap art;
+    private Uri artFor;
     private boolean resumeOnFocus;
     private AudioFocusRequest focusRequest;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -91,9 +101,11 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
             o.put("title", t != null ? t.title : "");
             o.put("index", index);
             o.put("count", queue.size());
+            o.put("id", t != null ? t.id : "");
         }
         boolean ok = s != null && s.mp != null && s.prepared;
         o.put("active", s != null);
+        o.put("mode", mode);
         o.put("playing", ok && s.mp.isPlaying());
         o.put("position", ok ? s.mp.getCurrentPosition() : 0);
         o.put("duration", ok ? s.mp.getDuration() : 0);
@@ -117,7 +129,10 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
         else if ("prev".equals(cmd)) {
             if (mp != null && prepared && mp.getCurrentPosition() > 4000) seek(0); else skip(-1);
         } else if ("seek".equals(cmd)) seek(ms);
-        else if ("stop".equals(cmd)) stopAll();
+        else if ("mode".equals(cmd)) {
+            if (mp != null) mp.setLooping("boucle".equals(mode));
+            refresh();
+        } else if ("stop".equals(cmd)) stopAll();
         return START_NOT_STICKY;
     }
 
@@ -152,7 +167,12 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
         mp = new MediaPlayer();
         mp.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build());
         mp.setWakeMode(getApplicationContext(), PowerManager.PARTIAL_WAKE_LOCK);  // continue écran éteint
-        mp.setOnPreparedListener(p -> { prepared = true; resume(); });
+        mp.setOnPreparedListener(p -> {
+            prepared = true;
+            p.setLooping("boucle".equals(mode));
+            if (pendingSeek > 0) { p.seekTo((int) Math.min(pendingSeek, p.getDuration())); pendingSeek = -1; }
+            resume();
+        });
         mp.setOnCompletionListener(p -> skip(1));
         mp.setOnErrorListener((p, what, extra) -> { prepared = false; report(); skip(1); return true; });
         try {
@@ -163,8 +183,19 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
             skip(1);
             return;
         }
+        loadArt(t);
         updateMeta(t);
         refresh();
+    }
+
+    private void loadArt(Track t) {
+        if (t.art == null) { art = null; artFor = null; return; }
+        if (t.art.equals(artFor)) return;
+        artFor = t.art;
+        art = null;
+        try (java.io.InputStream in = getContentResolver().openInputStream(t.art)) {
+            if (in != null) art = android.graphics.BitmapFactory.decodeStream(in);
+        } catch (Exception ignored) { }
     }
 
     private void resume() {
@@ -196,19 +227,36 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
     private void skip(int d) {
         synchronized (queue) {
             if (queue.isEmpty()) { stopAll(); return; }
-            int n = index + d;
-            if (n >= queue.size()) {  // fin de la liste : on s'arrête sur la dernière
-                if (mp != null && prepared) { mp.pause(); mp.seekTo(0); }
-                refresh();
-                return;
+            if ("aleatoire".equals(mode) && queue.size() > 1) {
+                if (d < 0 && !history.isEmpty()) {
+                    index = history.pop();
+                } else if (d > 0) {
+                    history.push(index);
+                    while (history.size() > 200) history.removeLast();
+                    int n;
+                    do { n = random.nextInt(queue.size()); } while (n == index);
+                    index = n;
+                }
+            } else {
+                int n = index + d;
+                if (n >= queue.size()) {  // fin de la liste : on s'arrête sur la dernière
+                    if (mp != null && prepared) { mp.pause(); mp.seekTo(0); }
+                    refresh();
+                    return;
+                }
+                index = Math.max(0, n);
             }
-            index = Math.max(0, n);
         }
         load();
     }
 
     private void seek(long ms) {
-        if (mp != null && prepared) mp.seekTo((int) Math.max(0, Math.min(ms, mp.getDuration())));
+        if (mp != null && prepared) {
+            mp.seekTo((int) Math.max(0, Math.min(ms, mp.getDuration())));
+            ui.postDelayed(this::refresh, 250);  // position à jour une fois l'avance faite
+        } else {
+            pendingSeek = ms;  // le son se prépare encore : l'avance se fera juste après
+        }
         refresh();
     }
 
@@ -278,10 +326,11 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
 
     private void updateMeta(Track t) {
         if (session == null) return;
-        session.setMetadata(new MediaMetadata.Builder()
+        MediaMetadata.Builder b = new MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, t.title)
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, "Melofinds Instru")
-            .build());
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, "Melofinds Instru");
+        if (art != null) b.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
+        session.setMetadata(b.build());
     }
 
     private void refresh() {
@@ -289,11 +338,12 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
         if (session != null) {
             Track t = current();
             if (t != null && mp != null && prepared) {
-                session.setMetadata(new MediaMetadata.Builder()
+                MediaMetadata.Builder b = new MediaMetadata.Builder()
                     .putString(MediaMetadata.METADATA_KEY_TITLE, t.title)
                     .putString(MediaMetadata.METADATA_KEY_ARTIST, "Melofinds Instru")
-                    .putLong(MediaMetadata.METADATA_KEY_DURATION, mp.getDuration())
-                    .build());
+                    .putLong(MediaMetadata.METADATA_KEY_DURATION, mp.getDuration());
+                if (art != null) b.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
+                session.setMetadata(b.build());
             }
             session.setPlaybackState(new PlaybackState.Builder()
                 .setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
@@ -331,6 +381,7 @@ public class PhonePlayerService extends Service implements AudioManager.OnAudioF
         b.setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(t != null ? t.title : "Melofinds")
             .setContentText("Melofinds Instru")
+            .setLargeIcon(art)
             .setVisibility(Notification.VISIBILITY_PUBLIC)  // visible écran verrouillé
             .setOngoing(playing)
             .setShowWhen(false)

@@ -552,7 +552,7 @@ function syncUsed(item) {
 // n'a accès qu'à ce dossier). Lecture hors connexion par le lecteur d'Android, qui continue
 // écran verrouillé. Le dossier reste si l'appli est désinstallée : il suffit de le rechoisir.
 // Nom du fichier : comme sur le PC (src/core/prodname.js), jamais « free » dedans.
-const phone = { linked: null, name: '', files: [], jobs: {}, state: null, q: '', setup: false };
+const phone = { linked: null, name: '', files: [], jobs: {}, state: null, q: '', setup: false, filter: 'all', thumbs: new Map(), colors: local.get('phColors', {}) || {} };
 const PH_LABEL = { '': 'Télécharger sur mon téléphone', busy: 'Téléchargement sur ton téléphone…', ok: 'Sur ton téléphone ✓' };
 const phoneHas = (id) => phone.files.some((f) => f.meta?.id === id);
 const phoneSt = (id) => (phone.jobs[id] ? 'busy' : phoneHas(id) ? 'ok' : '');
@@ -575,12 +575,13 @@ async function phoneSetup() {
   if (phone.setup) return;
   phone.setup = true;
   $('#navPhone').hidden = false;
-  try { await mfn().addListener('phonePlayer', (st) => { phone.state = st; renderPhonePlayer(); }); } catch { /* ancienne appli */ }
+  try { await mfn().addListener('phonePlayer', (st) => { phone.state = { ...st, at: Date.now() }; renderPhonePlayer(); }); } catch { /* ancienne appli */ }
+  try { await mfn().addListener('phoneChanged', () => phoneRefresh(true)); } catch { /* ancienne appli */ }
   try {
     const r = await mfn().phoneInfo();
     phone.linked = !!r?.linked;
     phone.name = String(r?.name || '');
-    if (r?.player) phone.state = r.player;
+    if (r?.player) phone.state = { ...r.player, at: Date.now() };
     if (phone.linked) await phoneRefresh(true);
   } catch { /* plus tard */ }
   if (local.get('view', '') === 'phone') showView('phone');
@@ -596,6 +597,7 @@ async function phoneRefresh(quiet = false) {
   }
   renderPhoneView();
   syncPhoneBtns();
+  phoneLoadThumbs();
 }
 async function phonePick() {
   haptic();
@@ -642,82 +644,235 @@ async function phoneDownload(item) {
 }
 const phoneShown = () => {
   const q = strip(phone.q).toLowerCase().trim();
-  return [...phone.files].sort((a, b) => (b.at || 0) - (a.at || 0)).filter((f) => !q || strip(f.name).toLowerCase().includes(q));
+  return [...phone.files].sort((a, b) => (b.at || 0) - (a.at || 0))
+    .filter((f) => phone.filter !== 'fav' || f.meta?.fav)
+    .filter((f) => !q || strip(f.name).toLowerCase().includes(q));
 };
+// « Titre [C# min, 140 BPM] [FFP].m4a » → titre + pastilles (clé, BPM, licence, trouvé par Tunebat)
+function phoneParts(name) {
+  let t = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '');
+  const tags = [];
+  let m;
+  while ((m = t.match(/\s*\[([^\]]*)\]\s*$/))) { tags.unshift(m[1]); t = t.slice(0, m.index); }
+  const chips = [];
+  for (const g of tags) {
+    if (/^(FFP|F|FFP, UPTO.*)$/i.test(g)) { chips.push({ t: g === 'F' ? 'Free' : g.replace('FFP, UPTO', 'Up to').replace(/^FFP$/, 'FFP'), c: g === 'F' ? 'fnp' : /UPTO/.test(g) ? 'upto' : 'ffp' }); continue; }
+    const found = /\(Finded\)/i.test(g);
+    for (const x of g.replace(/\(Finded\)\s*/i, '').replace(/^Key\s+/i, '').split(/\s*,\s*/)) if (x) chips.push({ t: x.replace(/ minor$/, ' min').replace(/ major$/, ' maj'), c: found ? 'tb' : '' });
+  }
+  return { title: t.trim() || String(name || ''), chips };
+}
+// Couleur dominante (et vive) de la miniature, pour teinter la prod
+function thumbColor(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 32; c.height = 18;
+        const g = c.getContext('2d', { willReadFrequently: true });
+        g.drawImage(img, 0, 0, 32, 18);
+        const d = g.getImageData(0, 0, 32, 18).data;
+        let x = 0; let y = 0; let w = 0; let ls = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i] / 255; const gg = d[i + 1] / 255; const b = d[i + 2] / 255;
+          const mx = Math.max(r, gg, b); const mn = Math.min(r, gg, b);
+          const sat = mx ? (mx - mn) / mx : 0;
+          if (mx - mn < 0.04) continue;
+          let hh = mx === r ? (gg - b) / (mx - mn) : mx === gg ? 2 + (b - r) / (mx - mn) : 4 + (r - gg) / (mx - mn);
+          hh = (hh * 60 + 360) % 360;
+          const wt = sat * sat * (0.3 + mx);
+          x += Math.cos(hh * Math.PI / 180) * wt; y += Math.sin(hh * Math.PI / 180) * wt; w += wt; ls += sat * wt;
+        }
+        if (w < 0.5) { resolve(null); return; }
+        const hue = Math.round((Math.atan2(y, x) * 180 / Math.PI + 360) % 360);
+        const satAvg = ls / w;
+        resolve({ h: hue, s: Math.round(Math.max(45, Math.min(85, satAvg * 100 + 15))) });
+      } catch { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+const phoneTint = (id) => {
+  const c = phone.colors[id];
+  return c ? `--ph:${c.h} ${c.s}%` : '';
+};
+const phoneThumb = (id) => phone.thumbs.get(id) || (navigator.onLine && /^[\w-]{11}$/.test(id || '') ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : '');
+async function phoneLoadThumbs() {
+  const ids = [...new Set(phone.files.map((f) => f.meta?.id).filter((id) => /^[\w-]{11}$/.test(id || '') && !phone.thumbs.has(id)))];
+  if (!ids.length || !mfn()?.phoneThumbs) return;
+  let t = {};
+  try { t = (await mfn().phoneThumbs({ ids }))?.t || {}; } catch { return; }
+  let colored = false;
+  for (const [id, src] of Object.entries(t)) {
+    if (typeof src !== 'string' || !src.startsWith('data:image/')) continue;
+    phone.thumbs.set(id, src);
+    if (!phone.colors[id]) { const c = await thumbColor(src); if (c) { phone.colors[id] = c; colored = true; } }
+  }
+  if (colored) { const keep = Object.fromEntries(Object.entries(phone.colors).slice(-400)); phone.colors = keep; local.set('phColors', keep); }
+  renderPhoneView();
+}
 async function phonePlayName(name) {
   const list = phoneShown();
   const i = Math.max(0, list.findIndex((f) => f.name === name));
   try { await mfn().phonePlay({ names: list.map((f) => f.name), index: i }); haptic(); } catch (e) { toast(`Lecture impossible : ${e?.message || ''}`); }
 }
-const phoneCtl = (cmd, ms = 0) => mfn()?.phoneControl({ cmd, ms }).catch(() => {});
+const phoneCtl = (cmd, ms = 0) => mfn()?.phoneControl({ cmd, ms: Math.round(ms) }).catch(() => {});
 const fmtMs = (ms) => { const s = Math.max(0, Math.round((ms || 0) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const PH_MODES = { suite: ['À la suite', 'order'], aleatoire: ['Aléatoire', 'shuffle'], boucle: ['En boucle', 'repeat1'] };
+async function phoneNextMode() {
+  const order = ['suite', 'aleatoire', 'boucle'];
+  const cur = phone.state?.mode || 'suite';
+  const next = order[(order.indexOf(cur) + 1) % order.length];
+  haptic();
+  try { const st = await mfn().phoneMode({ mode: next }); phone.state = { ...(phone.state || {}), ...st, at: Date.now() }; } catch { phone.state = { ...(phone.state || {}), mode: next }; }
+  toast(`Lecture : ${PH_MODES[next][0].toLowerCase()}`);
+  renderPhonePlayer();
+}
+async function phoneToggleFav(name) {
+  const f = phone.files.find((x) => x.name === name);
+  if (!f) return;
+  const fav = !f.meta?.fav;
+  haptic(fav ? 'success' : 'tap');
+  f.meta = { ...(f.meta || {}), fav };
+  renderPhoneView();
+  try { await mfn().phoneFav({ name, fav }); } catch (e) { f.meta.fav = !fav; renderPhoneView(); toast(`Favori impossible : ${e?.message || ''}`); }
+}
+const phoneHeart = (f, cls = '') => h('button', { type: 'button', class: `ph-heart${f?.meta?.fav ? ' on' : ''}${cls ? ` ${cls}` : ''}`, 'aria-pressed': String(!!f?.meta?.fav), 'aria-label': f?.meta?.fav ? 'Retirer des favoris' : 'Ajouter aux favoris',
+  onclick: (e) => { e.stopPropagation(); if (f) phoneToggleFav(f.name); } }, icon('heart'));
+const phoneChips = (chips) => (chips.length ? h('span', { class: 'ph-chips' }, ...chips.map((c) => h('i', { class: c.c }, c.t))) : null);
 let phoneSeeking = false;
+let phoneTick = 0;
+// position qui avance toute seule entre deux nouvelles du lecteur
+function phonePos() {
+  const st = phone.state;
+  if (!st) return 0;
+  const extra = st.playing && st.at ? Date.now() - st.at : 0;
+  return Math.min(st.duration || 0, (st.position || 0) + extra);
+}
 function renderPhonePlayer() {
   const box = $('#phonePlayer');
   if (!box) return;
   const st = phone.state;
   box.hidden = !st?.active || !st?.name;
-  if (box.hidden) return;
-  if (!box.firstChild) {
-    const range = h('input', { type: 'range', min: '0', max: '1000', value: '0', 'aria-label': 'Position' });
-    range.addEventListener('input', () => { phoneSeeking = true; });
-    range.addEventListener('change', () => { phoneSeeking = false; phoneCtl('seek', Math.round((Number(range.value) / 1000) * (phone.state?.duration || 0))); });
-    box.append(h('b', { class: 'pp-title' }),
-      h('div', { class: 'seek' }, h('span', { class: 'pp-pos' }), range, h('span', { class: 'pp-dur' })),
-      h('div', { class: 'ctl' },
-        h('button', { type: 'button', 'aria-label': 'Précédente', onclick: () => phoneCtl('prev') }, icon('prev')),
-        h('button', { type: 'button', class: 'main pp-toggle', 'aria-label': 'Lecture / pause', onclick: () => phoneCtl('toggle') }, icon('play')),
-        h('button', { type: 'button', 'aria-label': 'Suivante', onclick: () => phoneCtl('next') }, icon('next')),
-        h('button', { type: 'button', 'aria-label': 'Arrêter', onclick: () => phoneCtl('stop') }, icon('stop'))));
+  clearInterval(phoneTick);
+  if (box.hidden) { $$('.ph-row').forEach((r) => r.classList.remove('on', 'playing')); return; }
+  const f = phone.files.find((x) => x.name === st.name);
+  const id = st.id || f?.meta?.id || '';
+  const parts = phoneParts(st.name);
+  const sig = `${st.name}|${phoneThumb(id).slice(0, 80)}${phoneThumb(id).length}|${phoneTint(id)}|${!!f?.meta?.fav}`;
+  if (box.dataset.sig !== sig) {
+    box.dataset.sig = sig;
+    box.dataset.name = st.name;
+    box.setAttribute('style', phoneTint(id));
+    const thumb = phoneThumb(id);
+    const range = h('input', { type: 'range', min: '0', max: '1000', step: '1', value: '0', 'aria-label': 'Position dans la prod' });
+    // pendant qu'on fait glisser : l'affichage suit le doigt ; au lâcher : la lecture va là
+    range.addEventListener('pointerdown', () => { phoneSeeking = true; });
+    range.addEventListener('input', () => { phoneSeeking = true; box.querySelector('.pp-pos').textContent = fmtMs((Number(range.value) / 1000) * (phone.state?.duration || 0)); });
+    range.addEventListener('change', () => {
+      const dur = phone.state?.duration || 0;
+      const ms = (Number(range.value) / 1000) * dur;
+      if (dur > 0) { phone.state = { ...phone.state, position: ms, at: Date.now() }; phoneCtl('seek', ms); }
+      setTimeout(() => { phoneSeeking = false; }, 400);
+    });
+    box.replaceChildren(
+      thumb ? h('div', { class: 'pp-bg', style: `background-image:url("${thumb}")` }) : null,
+      h('div', { class: 'pp-in' },
+        h('div', { class: 'pp-top' },
+          thumb ? h('img', { class: 'pp-art', src: thumb, alt: '' }) : h('div', { class: 'pp-art none' }, icon('phone')),
+          h('div', { class: 'pp-meta' }, h('small', {}, 'En lecture'), h('b', {}, parts.title), phoneChips(parts.chips), f?.meta?.channel ? h('span', { class: 'pp-ch' }, f.meta.channel) : null),
+          phoneHeart(f, 'pp-fav')),
+        h('div', { class: 'seek' }, h('span', { class: 'pp-pos' }), range, h('span', { class: 'pp-dur' })),
+        h('div', { class: 'ctl' },
+          h('button', { type: 'button', class: 'pp-mode', 'aria-label': 'Mode de lecture', onclick: phoneNextMode }, icon('order'), h('span', {}, '')),
+          h('button', { type: 'button', 'aria-label': 'Précédente', onclick: () => phoneCtl('prev') }, icon('prev')),
+          h('button', { type: 'button', class: 'main pp-toggle', 'aria-label': 'Lecture / pause', onclick: () => phoneCtl('toggle') }, icon('play')),
+          h('button', { type: 'button', 'aria-label': 'Suivante', onclick: () => phoneCtl('next') }, icon('next')),
+          h('button', { type: 'button', 'aria-label': 'Arrêter', onclick: () => phoneCtl('stop') }, icon('stop')))));
   }
-  box.querySelector('.pp-title').textContent = String(st.title || st.name || '');
-  box.querySelector('.pp-pos').textContent = fmtMs(st.position);
-  box.querySelector('.pp-dur').textContent = fmtMs(st.duration);
-  const range = box.querySelector('input[type="range"]');
-  if (!phoneSeeking) range.value = st.duration ? String(Math.round((st.position / st.duration) * 1000)) : '0';
+  const [label, ic] = PH_MODES[st.mode] || PH_MODES.suite;
+  const mode = box.querySelector('.pp-mode');
+  mode.replaceChildren(icon(ic), h('span', {}, label));
+  mode.classList.toggle('on', (st.mode || 'suite') !== 'suite');
   box.querySelector('.pp-toggle').replaceChildren(icon(st.playing ? 'pause' : 'play'));
-  $$('.phone-row').forEach((r) => r.classList.toggle('on', r.dataset.name === st.name));
+  const paint = () => {
+    const pos = phonePos();
+    const dur = phone.state?.duration || 0;
+    box.querySelector('.pp-dur').textContent = fmtMs(dur);
+    if (phoneSeeking) return;
+    box.querySelector('.pp-pos').textContent = fmtMs(pos);
+    const range = box.querySelector('input[type="range"]');
+    range.value = dur ? String(Math.round((pos / dur) * 1000)) : '0';
+    range.style.setProperty('--p', `${dur ? (pos / dur) * 100 : 0}%`);
+  };
+  paint();
+  if (st.playing) phoneTick = setInterval(paint, 250);
+  $$('.ph-row').forEach((r) => { const on = r.dataset.name === st.name; r.classList.toggle('on', on); r.classList.toggle('playing', on && !!st.playing); });
 }
 function renderPhoneView() {
   const list = $('#phoneList');
   if (!list) return;
   $('#phoneFolderBtn').textContent = phone.linked ? 'Changer de dossier' : 'Choisir le dossier';
+  const favN = phone.files.filter((f) => f.meta?.fav).length;
+  const seg = $('#phoneSeg');
+  if (seg) {
+    seg.hidden = !phone.linked || !phone.files.length;
+    seg.querySelectorAll('.seg-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.f === phone.filter);
+      b.textContent = b.dataset.f === 'fav' ? `Favoris${favN ? ` · ${favN}` : ''}` : `Tout · ${phone.files.length}`;
+    });
+  }
+  const bar = $('#phoneSearchBar');
+  if (bar) bar.hidden = !phone.linked || phone.files.length < 6;
   if (!nativeYt.phone) {
     list.replaceChildren(h('div', { class: 'phone-empty' }, h('p', { class: 'muted' }, 'Mets l’appli à jour pour télécharger les prods sur ton téléphone.'), h('a', { class: 'primary', href: APK_URL, rel: 'noopener' }, 'Mettre à jour l’appli')));
     return;
   }
   if (!phone.linked) {
     list.replaceChildren(h('div', { class: 'phone-empty' },
+      h('div', { class: 'pe-ico' }, icon('phone')),
       h('b', {}, 'Choisis le dossier une fois'),
-      h('p', { class: 'muted' }, 'Le sélecteur d’Android s’ouvre sur Musique : touche « Utiliser ce dossier » puis « Autoriser ». Je crée « Melofinds Instru » dedans (ou je retrouve celui qui existe déjà, avec tes prods, si tu as réinstallé l’appli). Melofinds n’a accès qu’à ce dossier.'),
-      h('button', { type: 'button', class: 'primary', onclick: phonePick }, icon('phone'), 'Choisir le dossier')));
+      h('p', { class: 'muted' }, 'Le sélecteur d’Android s’ouvre sur Musique : touche « Utiliser ce dossier » puis « Autoriser ». Je crée « Melofinds Instru » dedans, ou je retrouve celui qui existe déjà avec tes prods si tu as réinstallé l’appli. Melofinds n’a accès qu’à ce dossier.'),
+      h('button', { type: 'button', class: 'primary', onclick: phonePick }, 'Choisir le dossier')));
     renderPhonePlayer();
     return;
   }
   const shown = phoneShown();
   if (!phone.files.length) {
-    list.replaceChildren(h('div', { class: 'phone-empty' }, h('b', {}, 'Aucune prod pour l’instant'), h('p', { class: 'muted' }, 'Touche le bouton téléphone sur une prod (ou « Sur mon tel » dans ses détails) : elle arrive ici, à écouter même sans connexion.')));
+    list.replaceChildren(h('div', { class: 'phone-empty' },
+      h('div', { class: 'pe-ico' }, icon('phone')),
+      h('b', {}, 'Aucune prod pour l’instant'),
+      h('p', { class: 'muted' }, 'Touche le bouton téléphone sur une prod (ou « Sur mon tel » dans ses détails) : elle arrive ici, dans Musique / Melofinds Instru, à écouter même sans connexion et écran verrouillé.')));
   } else {
     list.replaceChildren(...shown.map((f) => {
       const m = f.meta || {};
-      const sub = [m.channel || null, f.size ? `${(f.size / 1048576).toFixed(1)} Mo` : null, f.at ? fmtAgo(f.at) : null].filter(Boolean).join(' · ');
-      return h('div', { class: `phone-row${phone.state?.name === f.name ? ' on' : ''}`, 'data-name': f.name },
-        h('button', { type: 'button', class: 'ph-play', 'aria-label': `Écouter ${f.name}`, onclick: () => phonePlayName(f.name) }, icon('play')),
-        h('span', { class: 'phone-t' }, h('b', {}, String(f.name).replace(/\.[a-z0-9]+$/i, '')), h('small', {}, sub || 'Melofinds Instru')),
-        h('button', { type: 'button', class: 'ph-del', 'aria-label': `Supprimer ${f.name}`, title: 'Supprimer du téléphone', onclick: async () => {
-          if (!confirm(`Supprimer « ${f.name} » de ton téléphone ?`)) return;
-          try { await mfn().phoneDelete({ name: f.name }); toast('Supprimée du téléphone'); } catch (e) { toast(`Suppression impossible : ${e?.message || ''}`); }
+      const parts = phoneParts(f.name);
+      const thumb = phoneThumb(m.id);
+      const cur = phone.state?.name === f.name;
+      return h('div', { class: `ph-row${cur ? ' on' : ''}${cur && phone.state?.playing ? ' playing' : ''}`, 'data-name': f.name, style: phoneTint(m.id), role: 'button', tabindex: '0',
+        onclick: () => (cur ? phoneCtl('toggle') : phonePlayName(f.name)) },
+        h('span', { class: 'ph-art' }, thumb ? h('img', { src: thumb, alt: '', loading: 'lazy', onerror: (e) => e.currentTarget.remove() }) : null,
+          h('span', { class: 'ph-ov' }, icon('play'), h('span', { class: 'eq' }, h('i'), h('i'), h('i')))),
+        h('span', { class: 'ph-t' }, h('b', {}, parts.title), phoneChips(parts.chips), h('small', {}, [m.channel || null, f.size ? `${(f.size / 1048576).toFixed(1)} Mo` : null, f.at ? fmtAgo(f.at) : null].filter(Boolean).join(' · '))),
+        phoneHeart(f),
+        h('button', { type: 'button', class: 'ph-del', 'aria-label': `Supprimer ${parts.title}`, title: 'Supprimer du téléphone', onclick: async (e) => {
+          e.stopPropagation();
+          if (!confirm(`Supprimer « ${parts.title} » de ton téléphone ?`)) return;
+          try { await mfn().phoneDelete({ name: f.name }); toast('Supprimée du téléphone'); } catch (err) { toast(`Suppression impossible : ${err?.message || ''}`); }
           phoneRefresh(true);
         } }, icon('trash')));
     }));
-    if (!shown.length) list.append(h('p', { class: 'muted' }, 'Aucune prod ne correspond.'));
+    if (!shown.length) list.append(h('p', { class: 'muted ph-none' }, phone.filter === 'fav' ? 'Aucun favori : touche le cœur d’une prod.' : 'Aucune prod ne correspond.'));
   }
   renderPhonePlayer();
 }
+$('#phoneSeg')?.addEventListener('click', (e) => { const b = e.target.closest('.seg-btn'); if (!b) return; phone.filter = b.dataset.f; haptic(); renderPhoneView(); });
 $('#phoneFolderBtn')?.addEventListener('click', () => phonePick());
 $('#phoneSearch')?.addEventListener('input', (e) => { phone.q = e.target.value; renderPhoneView(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && nativeYt.phone) mfn()?.phoneState?.().then((st) => { phone.state = st; renderPhonePlayer(); }).catch(() => {});
+  if (document.visibilityState === 'visible' && nativeYt.phone) mfn()?.phoneState?.().then((st) => { phone.state = { ...st, at: Date.now() }; renderPhonePlayer(); }).catch(() => {});
 });
 
 function refreshItem(item) {

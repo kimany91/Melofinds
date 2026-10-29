@@ -328,6 +328,8 @@ public class MelofindsNativePlugin extends Plugin {
     @Override
     public void load() {
         PhonePlayerService.listener = st -> notifyListeners("phonePlayer", st);
+        String m = getContext().getSharedPreferences("melofinds_phone", android.content.Context.MODE_PRIVATE).getString("mode", "suite");
+        PhonePlayerService.mode = m;
     }
 
     private static void fail(PluginCall call, Throwable e) {
@@ -417,10 +419,69 @@ public class MelofindsNativePlugin extends Plugin {
                 JSObject r = new JSObject();
                 r.put("files", PhoneLibrary.list(getContext(), d));
                 call.resolve(r);
+                backfill(d);
             } catch (Throwable e) {
                 fail(call, e);
             }
         });
+    }
+
+    private static volatile boolean backfilling = false;
+
+    /** Miniatures manquantes et anciens .m4a à réparer (avance rapide), une fois à la fois. */
+    private void backfill(DocumentFile d) {
+        if (backfilling) return;
+        backfilling = true;
+        new Thread(() -> {
+            try {
+                String playing = PhonePlayerService.snapshot().optString("name", "");
+                if (PhoneLibrary.backfill(getContext(), d, playing)) notifyListeners("phoneChanged", new JSObject());
+            } catch (Throwable ignored) {
+            } finally {
+                backfilling = false;
+            }
+        }).start();
+    }
+
+    /** Miniatures gardées dans le dossier : { ids } → { t: { id: "data:image/jpeg;base64,…" } } */
+    @PluginMethod
+    public void phoneThumbs(PluginCall call) {
+        JSArray ids = call.getArray("ids", new JSArray());
+        PHONE.submit(() -> {
+            DocumentFile d = PhoneLibrary.folder(getContext(), false);
+            JSObject r = new JSObject();
+            r.put("t", d == null ? new JSObject() : PhoneLibrary.thumbs(getContext(), d, ids));
+            call.resolve(r);
+        });
+    }
+
+    /** Favori (gardé dans le dossier, même après une réinstallation) : { name, fav } */
+    @PluginMethod
+    public void phoneFav(PluginCall call) {
+        String name = call.getString("name", "");
+        boolean fav = Boolean.TRUE.equals(call.getBoolean("fav", false));
+        PHONE.submit(() -> {
+            try {
+                DocumentFile d = PhoneLibrary.folder(getContext(), false);
+                if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
+                if (PhoneLibrary.find(d, name) == null) { call.reject("Prod introuvable"); return; }
+                PhoneLibrary.editMeta(getContext(), d, name, m -> m.put("fav", fav));
+                call.resolve();
+            } catch (Throwable e) {
+                fail(call, e);
+            }
+        });
+    }
+
+    /** Mode de lecture : { mode: suite | aleatoire | boucle } */
+    @PluginMethod
+    public void phoneMode(PluginCall call) {
+        String m = call.getString("mode", "suite");
+        if (!java.util.Arrays.asList("suite", "aleatoire", "boucle").contains(m)) { call.reject("Mode inconnu"); return; }
+        PhonePlayerService.mode = m;
+        getContext().getSharedPreferences("melofinds_phone", android.content.Context.MODE_PRIVATE).edit().putString("mode", m).apply();
+        PhonePlayerService.command(getContext(), "mode", 0);
+        call.resolve(PhonePlayerService.snapshot());
     }
 
     /** Télécharge une prod dans le dossier : { id, name (sans extension), meta } → { name } */
@@ -472,6 +533,7 @@ public class MelofindsNativePlugin extends Plugin {
                 if (d == null) { call.reject("Dossier pas relié", "nofolder"); return; }
                 java.util.Map<String, DocumentFile> byName = new java.util.HashMap<>();
                 for (DocumentFile f : d.listFiles()) if (f.getName() != null && f.isFile()) byName.put(f.getName(), f);
+                JSONObject idx = PhoneLibrary.readIndex(getContext(), d);
                 List<PhonePlayerService.Track> q = new ArrayList<>();
                 int start = 0;
                 for (int i = 0; i < names.length() && q.size() < 1000; i++) {
@@ -479,7 +541,10 @@ public class MelofindsNativePlugin extends Plugin {
                     DocumentFile f = byName.get(n);
                     if (f == null || !PhoneLibrary.AUDIO.matcher(n).matches()) continue;
                     if (i == index) start = q.size();
-                    q.add(new PhonePlayerService.Track(f.getUri(), n, n.replaceAll("\\.[A-Za-z0-9]+$", "")));
+                    JSONObject meta = idx.optJSONObject(n);
+                    String vid = meta != null ? meta.optString("id", "") : "";
+                    DocumentFile th = PhoneLibrary.thumbFile(d, vid);
+                    q.add(new PhonePlayerService.Track(f.getUri(), n, n.replaceAll("\\.[A-Za-z0-9]+$", ""), vid, th != null ? th.getUri() : null));
                 }
                 if (q.isEmpty()) { call.reject("Prod introuvable dans le dossier"); return; }
                 synchronized (PhonePlayerService.queue) {
@@ -502,7 +567,8 @@ public class MelofindsNativePlugin extends Plugin {
     public void phoneControl(PluginCall call) {
         String cmd = call.getString("cmd", "");
         if (!java.util.Arrays.asList("toggle", "pause", "resume", "next", "prev", "seek", "stop").contains(cmd)) { call.reject("Commande inconnue"); return; }
-        long ms = call.getLong("ms", 0L);
+        if ("seek".equals(cmd) && !call.getData().has("ms")) { call.reject("Position manquante"); return; }
+        long ms = Math.round(call.getData().optDouble("ms", 0));
         PhonePlayerService.command(getContext(), cmd, ms);
         call.resolve();
     }

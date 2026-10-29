@@ -28,6 +28,9 @@
   <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10.5 18.5h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-prev" viewBox="0 0 24 24"><path d="M7 5v14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M18 5.5v13L9 12l9-6.5Z" fill="currentColor"/></symbol>
   <symbol id="i-next" viewBox="0 0 24 24"><path d="M17 5v14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M6 5.5v13L15 12 6 5.5Z" fill="currentColor"/></symbol>
+  <symbol id="i-order" viewBox="0 0 24 24"><path d="M4 7h11M4 12h11M4 17h7" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M17 14.5v6l4-3-4-3Z" fill="currentColor"/></symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 7h3.5c2 0 3.2 1 4.3 2.6l2.4 3.8c1 1.6 2.3 2.6 4.3 2.6H21M3 17h3.5c1.4 0 2.4-.5 3.3-1.4M14.2 8.4c.9-.9 1.9-1.4 3.3-1.4H21M18.5 4.5 21 7l-2.5 2.5M18.5 14.5 21 17l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-repeat1" viewBox="0 0 24 24"><path d="M4 11V9a3 3 0 0 1 3-3h11M15 3l3 3-3 3M20 13v2a3 3 0 0 1-3 3H6M9 21l-3-3 3-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.2 10.2 12.6 9.3V15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 </svg>
 
@@ -174,12 +177,18 @@
       <h2>Sur mon téléphone</h2>
       <button type="button" class="link" id="phoneFolderBtn">Dossier</button>
     </div>
-    <p class="muted phone-intro">Les prods téléchargées avec le bouton <b>téléphone</b> : dans le dossier <b>Musique / Melofinds Instru</b>, à écouter hors connexion, même écran verrouillé. Elles restent si tu désinstalles l’appli.</p>
-    <div id="phonePlayer" class="phone-player" hidden></div>
-    <div class="pc-lib-bar">
-      <input type="search" id="phoneSearch" class="pc-input" placeholder="Chercher une prod" aria-label="Chercher une prod téléchargée">
+    <p class="muted phone-intro">Musique / Melofinds Instru · hors connexion · écran verrouillé</p>
+    <div id="phonePlayer" class="pp" hidden></div>
+    <div class="ph-tools">
+      <div class="seg" id="phoneSeg" role="tablist" aria-label="Prods affichées" hidden>
+        <button type="button" class="seg-btn active" data-f="all">Tout</button>
+        <button type="button" class="seg-btn" data-f="fav">Favoris</button>
+      </div>
+      <div class="ph-search" id="phoneSearchBar" hidden>
+        <input type="search" id="phoneSearch" class="pc-input" placeholder="Chercher une prod" aria-label="Chercher une prod téléchargée">
+      </div>
     </div>
-    <div id="phoneList" class="phone-list"></div>
+    <div id="phoneList" class="ph-list"></div>
   </section>
 
   <!-- ================= HISTORIQUE ================= -->
