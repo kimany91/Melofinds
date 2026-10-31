@@ -1188,7 +1188,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 29/10/2026 à 21:46</p>
+    <p class="build-stamp">Version du 31/10/2026 à 18:13</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -1971,6 +1971,40 @@ const FR_ARTISTS = [
   F('Yvnnis', ['yvnnis'], ['uk-drill', 'afro'], ['Pop Smoke', 'Central Cee'], 'Drill / afro'),
   F('Rsko', ['rsko'], ['uk-drill', 'afro', 'melodic-trap'], ['Central Cee', 'Burna Boy'], 'Drill mélodique'),
   F('Gambi', ['gambi'], ['jersey', 'trap', 'pop-rap'], ['Lil Uzi Vert', 'Bandmanrill', 'Lil Tecca'], 'Trap / jersey festif'),
+
+  // ===== Scène du Sud (Montpellier, Nîmes, Toulouse) et rap « qui rappe » =====
+  // Sources : Abcdr du Son (FCK LABEL MACHINE, 2026), Mouv' (Montpellier, 2024), La Face B,
+  // Skuuurt, Wart (fiche LEDOUBLE), Igrek, Genius.
+  F('GAL', ['gal', 'jeune beur', 'jeunebeur', 'jeunebeurdelafontaine', 'jeune beur de la fontaine', 'galdelafonsdal'], ['griselda', 'boom-bap', 'soul-sample', 'mafioso'], ['Roc Marciano', 'Westside Gunn', 'Mach-Hommy', 'The Alchemist', 'Earl Sweatshirt'], 'Barz, egotrip et humour sur samples organiques, drumless à la Roc Marciano (Tanger / Paris, 75e Session)'),
+  F('LEDOUBLE', ['ledouble', 'le double', 'ledouble nc', 'ledoubledelafonsdal'], ['atl-classic', 'trap', 'griselda', 'grime'], ['Gucci Mane', 'Young Nudy', 'Key Glock', 'Westside Gunn', 'Skepta'], 'Trap old school et futuriste, d’Atlanta à Montpellier ; grime (Skepta, Giggs) et drumless avec GAL'),
+  F('OgLounis', ['oglounis', 'og lounis', 'lounis'], ['trap', 'atl-classic', 'boom-bap'], ['Migos', 'Gucci Mane', 'Larry June'], 'Rap du Sud (Nîmes), egotrip et introspection, proche de LEDOUBLE'),
+  F('DEELEE S', ['deelee s', 'deelees', 'deelee'], ['boom-bap', 'jazz-chill', 'trap'], ['Larry June', 'The Alchemist', 'Boldy James'], 'Rap ensoleillé et flegmatique, millimétré (Toulouse)'),
+  F('Chavi', ['chavi'], ['trap', 'boom-bap', 'atl-classic'], ['Larry June', 'Gucci Mane', 'Young Nudy'], 'Scène du Sud avec LEDOUBLE et OgLounis (Marseille)'),
+  F('Toothpick', ['toothpick', 'toothpickdelafonsdal'], ['griselda', 'boom-bap', 'trap'], ['Westside Gunn', 'Boldy James', 'Larry June'], 'Proche de GAL et LEDOUBLE, prods de guydelafonsdal (Île-de-France)'),
+
+  // ===== Rap mélancolique / cloud introspectif (2023-2026) =====
+  // Même public sur Spotify / Shazam (« fans also like ») : lucboy, poissonchat, Stanislas, Lushe,
+  // Morphée, LightBoy, Waks, Knotty, Priilick. Prods douces et mélodiques, souvent guitare / piano.
+  F('lucboy', ['lucboy', 'luc boy'], ['rnb-rap', 'pluggnb', 'pop-rap', 'bedroom'], ['Bryson Tiller', 'Summrs', 'Don Toliver', 'Iann Dior'], 'Rap mélodique et romantique, histoires d’amour (Amours d’hiver, Valet de cœur), ~80 BPM'),
+  F('LightBoy', ['lightboy', 'light boy'], ['cloud', 'emo-rap', 'bedroom', 'pluggnb'], ['Lucki', 'Juice WRLD', 'Kid Cudi', 'Summrs'], 'Rap introspectif et mélancolique (Enfant Lumière), cloud planant'),
+  F('poissonchat', ['poissonchat', 'poisson chat'], ['cloud', 'bedroom', 'pluggnb'], ['Lucki', 'Summrs', 'Joji'], 'Cloud mélancolique, proche de Lushe et Stanislas'),
+  F('Lushe', ['lushe'], ['cloud', 'emo-rap', 'bedroom'], ['Lucki', 'Juice WRLD', 'Joji'], 'Cloud / emo, remixes à l’univers anime'),
+  F('Stanislas', ['stanislas'], ['cloud', 'rnb-rap', 'bedroom'], ['Lucki', 'Bryson Tiller', 'Joji'], 'Rap mélancolique et chanté'),
+  F('Morphée', ['morphee', 'morphée'], ['cloud', 'emo-rap', 'bedroom'], ['Lucki', 'Juice WRLD', 'Kid Cudi'], 'Cloud introspectif'),
+  F('Waks', ['waks'], ['cloud', 'emo-rap', 'pluggnb'], ['Lucki', 'Juice WRLD', 'Summrs'], 'Cloud mélancolique'),
+  F('Knotty', ['knotty'], ['cloud', 'emo-rap', 'bedroom'], ['Lucki', 'Juice WRLD', 'Joji'], 'Cloud mélancolique'),
+  F('Priilick', ['priilick', 'prilick'], ['rnb-rap', 'pluggnb', 'cloud'], ['Bryson Tiller', 'Summrs', 'Lucki'], 'Rap mélodique, même public que lucboy'),
+  F('Baby Neelou', ['baby neelou', 'babyneelou', 'neelou'], ['cloud', 'melodic-trap', 'pluggnb'], ['Lucki', 'Summrs', 'Don Toliver'], 'Cloud rap / trap'),
+
+  // ===== Nouvelle génération 2024-2026 =====
+  F('R2', ['r2'], ['trap', 'melodic-trap'], ['Lil Baby', 'Gunna', 'NBA YoungBoy'], 'Trap / rap mélodique (Essonne, « Ruinart »)'),
+  F('Timar', ['timar'], ['trap', 'melodic-trap'], ['Lil Baby', 'NBA YoungBoy', 'Rod Wave'], 'Entre rap de rue et mainstream (Requiem)'),
+  F('2 Mètres', ['2 metres', '2 mètres', 'deux metres', '2metres'], ['melodic-trap', 'trap'], ['Lil Baby', 'Gunna', 'Rod Wave'], 'Héritier de SDM et Werenoi'),
+  F('L2B', ['l2b', 'l2b gang'], ['afro', 'pop-rap', 'melodic-trap'], ['Burna Boy', 'Rema', 'Lil Tecca'], 'Trio festif (Nés pour briller)'),
+  F('Dexter HMC', ['dexter hmc', 'dexter'], ['horrorcore', 'dark-trap'], ['$uicideboy$', 'Three 6 Mafia', 'Ghostemane'], 'Horror-rap'),
+  F('Grav', ['grav thromatic', 'grav'], ['industrial', 'trap-metal', 'dark-trap'], ['JPEGMAFIA', 'Death Grips', 'Ghostemane'], '« Trax music » : trap × techno, voix saturée (Thromatic, 93)'),
+  F('ZKR', ['zkr'], ['dark-trap', 'trap'], ['21 Savage', 'Lil Durk'], 'Trap de rue sombre (Roubaix)'),
+  F('Nono La Grinta', ['nono la grinta', 'nono grinta'], ['uk-drill', 'ny-drill'], ['Pop Smoke', 'Central Cee'], 'Drill'),
 
   // ===== Trap mainstream =====
   F('Damso', ['damso', 'dems', 'dem$'], ['dark-trap', 'melodic-trap', 'cloud'], ['Future', 'Travis Scott', '21 Savage', 'Kid Cudi'], 'Trap sombre et mélodique, introspective (Belgique)'),

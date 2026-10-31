@@ -65,3 +65,27 @@ test('« Bu$hi » est cherché en « Bushi type beat »', () => {
   const p = buildPlan('bu$hi', { licenses: [], device: 'desktop' });
   assert.equal(p.queries[0].q, 'Bushi type beat');
 });
+
+test('nouvelle scène : GAL, LEDOUBLE, lucboy, LightBoy… reconnus et reliés aux bons courants', () => {
+  assert.deepEqual(names('une prod à la gal'), ['GAL']);
+  assert.deepEqual(names('ledouble x gal'), ['LEDOUBLE', 'GAL']);
+  assert.deepEqual(names('le double'), ['LEDOUBLE']);
+  assert.deepEqual(names('lucboy'), ['lucboy']);
+  assert.deepEqual(names('light boy mélancolique'), ['LightBoy']);
+  assert.deepEqual(names('lightbo'), ['LightBoy']);  // mal écrit
+  assert.deepEqual(names('poisson chat et lushe'), ['poissonchat', 'Lushe']);
+  const gal = FR_ARTISTS.find((a) => a.name === 'GAL');
+  assert.ok(gal.styles.includes('griselda') && gal.us.includes('Roc Marciano'));
+  const ld = FR_ARTISTS.find((a) => a.name === 'LEDOUBLE');
+  assert.ok(ld.styles.includes('atl-classic') && ld.us.includes('Gucci Mane'));
+  const p = buildPlan('une prod à la lucboy', { licenses: ['ffp'], device: 'desktop' });
+  assert.equal(p.recognized[0].name, 'lucboy');
+  assert.ok(p.queries.some((q) => /^lucboy type beat/i.test(q.q)));
+});
+
+test('les mots courants ne déclenchent pas les nouveaux noms', () => {
+  assert.deepEqual(names('une prod qui tape grave'), []);
+  assert.deepEqual(names('la galère légale'), []);
+  assert.deepEqual(names('un poisson et un chat'), []);
+  assert.deepEqual(names('enfant lumière'), []);
+});
