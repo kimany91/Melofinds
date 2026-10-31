@@ -250,7 +250,7 @@ def read_progress():
 
 
 STAGES = {"info": "Recherche de la vidéo…", "download": "Téléchargement", "convert": "Conversion en WAV…",
-          "tunebat": "Clé / BPM manquants : recherche sur Tunebat…", "flp": "Création du projet FL…"}
+          "tunebat": "Clé / BPM manquants : recherche sur Tunebat…", "tba": "Clé / BPM : Tunebat Analyzer écoute la prod (fenêtre Tunebat)…", "flp": "Création du projet FL…"}
 
 
 # ---------------------------------------------------------------------------
@@ -1814,6 +1814,18 @@ def manager_window(selftest=False):
     setting_row(rc, "Écouter et gérer depuis l'app web", "Ta liste de projets et des copies d'écoute légères passent par ntfy.sh pour "
                     "l'onglet « File d'attente » de Melofinds Web (renommer, icône, couleur, favori, écouter, même PC éteint).",
                 lambda p: Switch(p, C.load_config().get("remote", True) is not False, set_remote))
+    tc = card(setp)
+    tc.pack(fill="x", pady=(0, 14))
+
+    def set_tba(v):
+        cfg = C.load_config()
+        cfg["tunebat_analyzer"] = bool(v)
+        C.save_config(cfg)
+        toast("Tunebat Analyzer automatique " + ("activé" if v else "désactivé"))
+    setting_row(tc, "Tunebat Analyzer automatique", "Quand la clé ou le BPM ne sont ni dans la description ni trouvés sur Tunebat, "
+                    "la prod est donnée à tunebat.com/Analyzer dans une petite fenêtre Edge / Chrome (profil à part), comme "
+                    "dans l'appli Android. Aussi pour le bouton « BPM » de l'app web. Si Tunebat demande une vérification, fais-la.",
+                lambda p: Switch(p, C.load_config().get("tunebat_analyzer", True) is not False, set_tba))
     pc_ = card(setp)
     pc_.pack(fill="x", pady=(0, 14))
     label(pc_, "Emplacement du programme", 11, bold=True).pack(anchor="w")

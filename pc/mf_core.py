@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.20.5"
+VERSION = "1.20.6"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -1177,9 +1177,10 @@ def wav_link(path):
     return vid
 
 
-def download(video_id, root, info, out=None, progress=None):
+def download(video_id, root, info, out=None, progress=None, analyzer=None):
     """Télécharge la prod en .wav dans root. progress(étape, pourcentage) : « info »,
-    « download » (0-100), « convert »."""
+    « download » (0-100), « convert », « tba ». analyzer(wav, id, progress) → {key, bpm} :
+    Tunebat Analyzer sur le .wav quand la clé ou le BPM manquent encore."""
     step = progress or (lambda *_: None)
     ytdlp = tool_path("yt-dlp.exe")
     ffmpeg = tool_path("ffmpeg.exe")
@@ -1215,13 +1216,9 @@ def download(video_id, root, info, out=None, progress=None):
             key, tb_k = hit["key"], True
         if hit and not bpm and hit.get("bpm"):
             bpm, tb_b = hit["bpm"], True
-    # Chaque prod arrive dans son propre dossier de projet : « Nom/Nom.wav »
     lic, limit, why = check_licence(vt, desc, info.get("lic"), info.get("limit"))
     if lic != str(info.get("lic") or "") and out is not None:
         out["lic"] = {"from": str(info.get("lic") or ""), "to": lic, "why": str(why or "")[:160]}
-    final = unique_project(root, build_name(vt or info.get("t") or video_id, key, bpm, lic, limit, tb_k, tb_b))
-    if not inside(final, root) or final.suffix.lower() != ".wav" or final.parent.parent.resolve() != Path(root).resolve():
-        return False, "nom de fichier refusé"
 
     # 2) Téléchargement + conversion dans un dossier temporaire, hors de ton dossier.
     with tempfile.TemporaryDirectory(prefix="melofinds-") as tmp:
@@ -1255,6 +1252,21 @@ def download(video_id, root, info, out=None, progress=None):
         tagged = tag_wav_link(ffmpeg, wavs[0], Path(tmp) / "tagged.wav", video_id, vt or info.get("t") or "")
         if tagged:
             wavs = [tagged]
+        # Clé / BPM toujours inconnus : Tunebat Analyzer écoute la prod (fenêtre Tunebat visible)
+        if analyzer and (not key or not bpm):
+            step("tba", None)
+            try:
+                hit = analyzer(wavs[0], video_id, step) or {}
+            except Exception:
+                hit = {}
+            if not key and valid_key(hit.get("key")):
+                key, tb_k = hit["key"], True
+            if not bpm and valid_bpm(hit.get("bpm")):
+                bpm, tb_b = valid_bpm(hit["bpm"]), True
+        # Chaque prod arrive dans son propre dossier de projet : « Nom/Nom.wav »
+        final = unique_project(root, build_name(vt or info.get("t") or video_id, key, bpm, lic, limit, tb_k, tb_b))
+        if not inside(final, root) or final.suffix.lower() != ".wav" or final.parent.parent.resolve() != Path(root).resolve():
+            return False, "nom de fichier refusé"
         # 3) Seul le .wav vérifié entre dans ton dossier.
         final.parent.mkdir(parents=True, exist_ok=False)
         shutil.move(str(wavs[0]), str(final))

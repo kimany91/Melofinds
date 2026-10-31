@@ -1356,7 +1356,7 @@ class LicenceEtAnnulation(unittest.TestCase):
         got = []
         with mock.patch.object(mpc, "poll", lambda c, s: events if s != "e3" else []), \
                 mock.patch.object(mpc, "verify", lambda raw, key: json.loads(raw)), \
-                mock.patch.object(mpc, "download", lambda vid, root, msg, out, prog: (got.append(vid), (False, "test"))[1]):
+                mock.patch.object(mpc, "download", lambda vid, root, msg, out, prog, *a: (got.append(vid), (False, "test"))[1]):
             W.worker(once=True)
         self.assertEqual(got, ["dQw4w9WgXcQ"])  # A annulée, B téléchargée
         self.assertIn({"v": "jNQXAC9IVRw", "cancel": True}, self.replies)
@@ -1364,7 +1364,7 @@ class LicenceEtAnnulation(unittest.TestCase):
         events[:] = [e("e4", now + 5, {"mf": 2, "n": "4" * 16, "v": "jNQXAC9IVRw", "t": "Prod A"})]
         with mock.patch.object(mpc, "poll", lambda c, s: events if s != "e4" else []), \
                 mock.patch.object(mpc, "verify", lambda raw, key: json.loads(raw)), \
-                mock.patch.object(mpc, "download", lambda vid, root, msg, out, prog: (got.append(vid), (False, "test"))[1]):
+                mock.patch.object(mpc, "download", lambda vid, root, msg, out, prog, *a: (got.append(vid), (False, "test"))[1]):
             W.worker(once=True)
         self.assertEqual(got, ["dQw4w9WgXcQ", "jNQXAC9IVRw"])
 
@@ -1377,7 +1377,7 @@ class LicenceEtAnnulation(unittest.TestCase):
         got = []
         clock = {"t": time.time()}
 
-        def download(vid, root, msg, out, prog):
+        def download(vid, root, msg, out, prog, *a):
             got.append(vid)
             clock["t"] += 60  # le téléchargement de A dure une minute
             return False, "test"
@@ -1593,3 +1593,129 @@ class CouleurMiniature(unittest.TestCase):
         h, s = mf_worker._hue_of(red)
         self.assertTrue(h < 10 or h > 350)
         self.assertIsNone(mf_worker._hue_of(bytes([128, 128, 128]) * 500))  # gris : pas de couleur
+
+
+class FauxTunebat:
+    """Page « Analyzer » locale : une vérification (rechargement) puis le champ de fichier ;
+    le tableau donne la clé et le BPM du fichier reçu (et sa taille, pour vérifier qu'il est arrivé)."""
+    PAGE = """<!doctype html><title>Analyzer</title><body>%s</body>"""
+    CHECK = "<p>Verifying…</p><script>document.cookie='ok=1';setTimeout(()=>location.reload(),600)</script>"
+    TOOL = """<input type=file id=f><table id=t><tr><th>File</th><th>Key</th><th>BPM</th><th>Camelot</th><th>Size</th></tr></table>
+<script>document.getElementById('f').addEventListener('change',e=>{const x=e.target.files[0];setTimeout(()=>{
+const tr=document.createElement('tr');tr.innerHTML='<td>'+x.name+'</td><td>F♯ Minor</td><td>140</td><td>11A</td><td>'+x.size+'</td>';
+document.getElementById('t').appendChild(tr);},500)});</script>"""
+
+    def __enter__(self):
+        import http.server, socketserver
+        page = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = (page.PAGE % (page.TOOL if "ok=1" in (self.headers.get("Cookie") or "") else page.CHECK)).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+        self.srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}/Analyzer"
+        return self
+
+    def __exit__(self, *a):
+        self.srv.shutdown()
+        self.srv.server_close()
+
+
+class TunebatSurLePC(unittest.TestCase):
+    def test_lecture_du_tableau(self):
+        import mf_tunebat as T
+        n = "Melofinds-abc.wav"
+        self.assertEqual(T.parse_result({"row": "Melofinds-abc | F♯ Minor | 140 | 11A", "key": "F♯ Minor", "bpm": "140", "camelot": "11A"}, n),
+                         {"key": "F# min", "bpm": 140, "camelot": "11A"})
+        self.assertEqual(T.parse_result({"row": "Melofinds-abc.wav 3:05 Bb major 92.4"}, n), {"key": "Bb maj", "bpm": 92, "camelot": ""})
+        self.assertIsNone(T.parse_result({"row": "Melofinds-abc | analyse…"}, n))  # pas encore de résultat
+        self.assertIsNone(T.parse_result({"key": "C minor"}, n))  # la clé sans le BPM ne suffit pas
+
+    def test_websocket_refuse_les_adresses_exterieures(self):
+        import mf_tunebat as T
+        with self.assertRaises(T.TunebatError):
+            T.WS("ws://example.com:9222/devtools/page/x")
+
+    def test_analyzer_dans_un_vrai_navigateur(self):
+        import mf_tunebat as T
+        browser = T.find_browser()
+        if not browser:
+            self.skipTest("ni Edge ni Chrome sur cette machine")
+        wav = Path(tempfile.mkdtemp(prefix="mf-tb-")) / "x.wav"
+        wav.write_bytes(b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 30)
+        steps = []
+        extra = ["--headless=new"] + ([] if mpc.WINDOWS else ["--no-sandbox"])
+        with FauxTunebat() as fake:
+            hit = T.analyze(wav, tag="jNQXAC9IVRw", progress=lambda s: steps.append(s), timeout=60, url=fake.url,
+                            browser=browser, extra_args=extra)
+        self.assertEqual(hit, {"key": "F# min", "bpm": 140, "camelot": "11A"})
+        self.assertEqual(steps, ["open", "analyze"])
+
+    def test_commande_tba_depuis_l_app(self):
+        import mf_worker as W
+        import mf_tunebat as T
+        replies, done = [], threading.Event()
+        WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 24
+
+        def fetch(vid, folder):
+            p = Path(folder) / f"{vid}.wav"
+            p.write_bytes(WAV)
+            return p, ""
+
+        def analyze(path, tag):
+            self.assertTrue(Path(path).exists())
+            if tag == "dQw4w9WgXcQ":
+                raise T.TunebatError("Tunebat n'a pas donné de résultat")
+            return {"key": "F# min", "bpm": 140, "camelot": "11A"}
+
+        def reply(code, body):
+            replies.append(body["tba"])
+            if "key" in body["tba"] or "err" in body["tba"]:
+                if sum(1 for r in replies if "key" in r or "err" in r) == 2:
+                    done.set()
+        t = W.Tba(fetch, analyze, reply)
+        cfg = mpc.load_config()
+        now = time.time() * 1000
+        t.request("c", {"cmd": "tba", "v": "jNQXAC9IVRw", "ts": now}, cfg)
+        t.request("c", {"cmd": "tba", "v": "jNQXAC9IVRw", "ts": now}, cfg)  # en double : ignorée
+        t.request("c", {"cmd": "tba", "v": "dQw4w9WgXcQ", "ts": now}, cfg)
+        t.request("c", {"cmd": "tba", "v": "aaaaaaaaaaa", "ts": now - 10 * 60_000}, cfg)  # trop ancienne
+        self.assertTrue(done.wait(5))
+        self.assertIn({"v": "jNQXAC9IVRw", "key": "F# min", "bpm": 140, "camelot": "11A"}, replies)
+        self.assertIn({"v": "dQw4w9WgXcQ", "err": "Tunebat n'a pas donné de résultat"}, replies)
+        self.assertEqual(sum(1 for r in replies if r.get("s") == "loading"), 2)
+        self.assertFalse(any(r["v"] == "aaaaaaaaaaa" for r in replies))
+        off = []
+        W.Tba(fetch, analyze, lambda c, b: off.append(b["tba"])).request("c", {"v": "jNQXAC9IVRw"}, {**cfg, "tunebat_analyzer": False})
+        self.assertIn("désactivé", off[0]["err"])
+
+    def test_analyzer_pendant_le_telechargement(self):
+        """Clé / BPM introuvables : le .wav passe par l'Analyzer avant d'être nommé."""
+        import subprocess as sp
+        root = Path(tempfile.mkdtemp(prefix="mf-dl-"))
+        WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 24
+        meta = {"title": "[FREE] Luther Type Beat - TREE", "description": "free for profit", "duration": 150}
+
+        def stream(args, timeout, on_line):
+            tmp = args[args.index("-P") + 1].split(":", 1)[1]
+            (Path(tmp) / "audio.wav").write_bytes(WAV)
+            return 0, []
+        seen = []
+        with mock.patch.object(mpc, "tool_path", lambda n: "/bin/true"), \
+                mock.patch.object(mpc, "run_tool", lambda a, t: sp.CompletedProcess(a, 0, json.dumps(meta).encode(), b"")), \
+                mock.patch.object(mpc, "tunebat_lookup", lambda *a, **k: None), \
+                mock.patch.object(mpc, "stream_tool", stream), \
+                mock.patch.object(mpc, "tag_wav_link", lambda *a: None):
+            ok, name = mpc.download("jNQXAC9IVRw", root, {}, {}, lambda st, p: seen.append(st),
+                                    lambda wav, vid, step: {"key": "F# min", "bpm": 140})
+        self.assertTrue(ok, name)
+        self.assertIn("tba", seen)
+        self.assertEqual(name, "Luther Type Beat - TREE [(Finded) Key F# minor, 140 BPM] [FFP].wav")

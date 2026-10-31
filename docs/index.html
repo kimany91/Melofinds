@@ -1188,7 +1188,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 31/10/2026 à 18:13</p>
+    <p class="build-stamp">Version du 31/10/2026 à 18:28</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -4221,7 +4221,7 @@ const TB_LABEL = { '': 'BPM et clé avec Tunebat Analyzer', busy: 'Tunebat analy
 function tbButton(item) {
   const st = tbState(item.id);
   return h('button', { type: 'button', class: `tb-btn${st ? ` ${st}` : ''}`, 'data-tb': item.id, 'aria-label': TB_LABEL[st], title: TB_LABEL[st],
-    onclick: (e) => { e.stopPropagation(); if (nativeYt.tba && !tbState(item.id)) quickBpm(item); else openBpmSheet(item); } }, 'BPM');
+    onclick: (e) => { e.stopPropagation(); if ((nativeYt.tba || pcTbaReady()) && !tbState(item.id)) quickBpm(item); else openBpmSheet(item); } }, 'BPM');
 }
 function syncTbUi() {
   $$('.tb-btn[data-tb]').forEach((b) => {
@@ -4298,9 +4298,42 @@ function tbParse(o) {
   }
   return key || bpm ? { key, bpm, camelot: String(o?.camelot || '').slice(0, 8) } : null;
 }
-async function tunebatAnalyze(item) {
+// Sans l'appli Android (site web sur PC…) : c'est Melofinds PC qui télécharge la prod et la donne
+// à Tunebat Analyzer (petite fenêtre Edge / Chrome sur le PC), puis renvoie la clé et le BPM.
+const PC_TBA_MIN = '1.20.6';
+const pcTbaReady = () => WEB && !!pc.info && pcOn() && !!pc.info.version && !versionLt(pc.info.version, PC_TBA_MIN);
+const tbaWait = new Map();  // id vidéo → demande en cours au PC
+function pcTunebatAnalyze(id, onState) {
+  return new Promise((resolve) => {
+    const old = tbaWait.get(id);
+    if (old) old.done({ status: 'cancel' });
+    const w = { at: Date.now(), onState, timer: 0 };
+    w.done = (r) => { clearTimeout(w.timer); if (tbaWait.get(id) === w) tbaWait.delete(id); resolve(r); };
+    // le PC répond en ~15 s ; une fois lancé, téléchargement + analyse (+ vérification Tunebat éventuelle)
+    w.wait = (ms) => { clearTimeout(w.timer); w.timer = setTimeout(() => w.done({ status: 'fail', err: 'ton PC ne répond pas : vérifie qu’il est en ligne et à jour' }), ms); };
+    w.wait(60e3);
+    tbaWait.set(id, w);
+    ntfyPublish({ cmd: 'tba', v: id }).catch(() => w.done({ status: 'fail', err: 'pas de réseau' }));
+  });
+}
+// Réponse du PC : { v, s: loading | analyze } puis { v, key, bpm, camelot } ou { v, err }
+function onPcTba(d, m) {
+  const t = m.tba;
+  const id = String(t?.v || '');
+  const w = tbaWait.get(id);
+  if (!w || (d.time || 0) * 1000 < w.at - 5000) return;
+  if (t.err) { w.done({ status: 'fail', err: String(t.err).slice(0, 120) }); return; }
+  if (t.key || t.bpm) {
+    const hit = tbParse({ key: t.key, bpm: t.bpm, camelot: t.camelot });
+    w.done(hit ? { status: 'ok', hit } : { status: 'none' });
+    return;
+  }
+  if (t.s === 'loading' || t.s === 'analyze') { w.wait(7 * 60e3); w.onState?.(t.s); }
+}
+async function tunebatAnalyze(item, onState) {
   const n = mfn();
   const id = ytIdOf(item);
+  if (id && !(n && nativeYt.tba) && pcTbaReady()) return pcTunebatAnalyze(id, onState);
   if (!n || !nativeYt.tba || !id) return { status: 'off' };
   try {
     const hit = tbParse(await n.tunebatAnalyze({ id }));
@@ -4324,9 +4357,13 @@ async function quickBpm(item) {
   haptic();
   bpmJob.id = item.id;
   syncTbUi();
+  const viaPc = !nativeYt.tba;
+  if (viaPc) toast('Ton PC télécharge la prod pour Tunebat Analyzer…');
   let r;
-  try { r = await tunebatAnalyze(item); } finally { bpmJob.id = null; syncTbUi(); }
-  if (r.status === 'ok') { toast(`Tunebat : ${bpmText(keepTunebat(item, r.hit))}`); return; }
+  try {
+    r = await tunebatAnalyze(item, (st) => { if (st === 'analyze') toast('Tunebat Analyzer écoute la prod sur ton PC…'); });
+  } finally { bpmJob.id = null; syncTbUi(); }
+  if (r.status === 'ok') { toast(`Tunebat${viaPc ? ' (PC)' : ''} : ${bpmText(keepTunebat(item, r.hit))}`); return; }
   if (r.status === 'cancel') return;
   haptic('warn');
   openBpmSheet(item, r.status === 'none' ? 'Tunebat n’a pas donné de résultat lisible.' : `Tunebat Analyzer : ${r.err || 'ça n’a pas marché'}`);
@@ -4340,11 +4377,13 @@ function openBpmSheet(item, note = '') {
     if (bpmJob.id) return;
     haptic();
     tbBtn.disabled = true;
-    say('Tunebat Analyzer s’ouvre : je lui donne la prod…');
+    say(nativeYt.tba ? 'Tunebat Analyzer s’ouvre : je lui donne la prod…' : 'Ton PC télécharge la prod pour Tunebat Analyzer…');
     bpmJob.id = item.id;
     syncTbUi();
     let r;
-    try { r = await tunebatAnalyze(item); } finally { bpmJob.id = null; syncTbUi(); tbBtn.disabled = false; }
+    try {
+      r = await tunebatAnalyze(item, (st) => { if (st === 'analyze') say('Tunebat Analyzer écoute la prod sur ton PC (petite fenêtre Tunebat)…'); });
+    } finally { bpmJob.id = null; syncTbUi(); tbBtn.disabled = false; }
     if (r.status === 'ok') { keepTunebat(item, r.hit); say(''); show(); return; }
     if (r.status === 'cancel') { say(''); return; }
     haptic('warn');
@@ -4387,7 +4426,11 @@ function openBpmSheet(item, note = '') {
   };
   openDrawer('BPM et clé', [
     h('h3', { class: 'd-title' }, displayTitle(item.title)),
-    nativeYt.tba ? h('div', { class: 'bpm-step' },
+    !nativeYt.tba && pcTbaReady() ? h('div', { class: 'bpm-step' },
+      h('b', {}, 'Tunebat Analyzer sur ton PC'),
+      h('span', {}, 'Melofinds PC télécharge la prod, la donne à Tunebat Analyzer dans une petite fenêtre Edge / Chrome, récupère la clé et le BPM, puis efface le fichier. Si Tunebat demande une vérification, fais-la sur le PC.'),
+      h('div', { class: 'd-actions' }, (tbBtn.textContent = 'Analyser sur mon PC', tbBtn)))
+    : nativeYt.tba ? h('div', { class: 'bpm-step' },
       h('b', {}, 'Tunebat Analyzer'),
       h('span', {}, 'Je télécharge la prod, je la donne à l’outil Analyzer de Tunebat (il l’analyse sur ton téléphone), je récupère la clé et le BPM, puis j’efface le fichier. Si Tunebat demande une vérification, fais-la.'),
       h('div', { class: 'd-actions' }, tbBtn))
@@ -4395,7 +4438,10 @@ function openBpmSheet(item, note = '') {
         h('b', {}, 'Tunebat Analyzer'),
         h('span', {}, isNative()
           ? 'Mets l’appli à jour : elle télécharge la prod et la donne à Tunebat Analyzer toute seule.'
-          : 'Un site ne peut pas télécharger la prod : l’appli Android le fait toute seule. Ici, ouvre Tunebat Analyzer avec un fichier de la prod, puis note le BPM et la clé ci-dessous.'),
+          : pc.info && pc.info.version && versionLt(pc.info.version, PC_TBA_MIN)
+            ? `Mets Melofinds PC à jour (tu as la ${pc.info.version}) : il donnera la prod à Tunebat Analyzer tout seul. Sinon, ouvre Tunebat Analyzer avec un fichier de la prod, puis note le BPM et la clé ci-dessous.`
+            : pc.info ? 'Allume ton PC (Melofinds PC en ligne) : il donnera la prod à Tunebat Analyzer tout seul. Sinon, ouvre Tunebat Analyzer avec un fichier de la prod, puis note le BPM et la clé ci-dessous.'
+              : 'Un site ne peut pas télécharger la prod : l’appli Android ou Melofinds PC le font tout seuls. Ici, ouvre Tunebat Analyzer avec un fichier de la prod, puis note le BPM et la clé ci-dessous.'),
         h('div', { class: 'd-actions' }, h('a', { class: 'primary', href: TB_ANALYZER, target: '_blank', rel: 'noopener noreferrer' }, 'Ouvrir Tunebat Analyzer', icon('ext')),
           isNative() && nativeYt.checked && !nativeYt.tba ? h('a', { class: 'ghost', href: APK_URL, rel: 'noopener' }, 'Mettre à jour l’appli') : null)),
     status,
@@ -8555,6 +8601,11 @@ function onPcViewMessage(d, m, fresh) {
   if (m.lib) { pcSeen(d); onPcLib(d, m); return true; }
   if (m.aud) { pcSeen(d); onPcAudio(d, m, fresh); return true; }
   if (m.desc) { pcSeen(d); onPcDesc(d); return true; }
+  if (m.tba) { pcSeen(d); onPcTba(d, m); return true; }
+  if (m.cmd === 'tba') {  // PC trop ancien
+    for (const w of tbaWait.values()) w.done({ status: 'fail', err: 'mets Melofinds PC à jour' });
+    return true;
+  }
   if (m.listen) { pcSeen(d); onPcListen(d, m); return true; }
   if (m.cmd === 'listen') {  // PC trop ancien : il ne sait pas encore jouer une prod
     if (fresh && phonePc.s) { phonePc.s = ''; renderPhonePcBar(); toast('Mets à jour Melofinds PC pour écouter sur ton PC', { label: 'Mettre à jour', run: phonePcUpdate, ms: 7000 }); }

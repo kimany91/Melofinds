@@ -201,8 +201,16 @@ Quand la description ne donne pas le BPM ou la clé, chaque prod a un petit bout
   le Camelot sont lus dans son tableau, puis **le fichier est effacé** et la fenêtre se ferme.
   Si Tunebat demande une vérification, c'est toi qui la fais. Code : `TunebatActivity.java`,
   `YtStream.java` (téléchargement), `AudioPcm.java` (WAV).
-- **Site web** : un site ne peut pas télécharger la prod ; « Ouvrir Tunebat Analyzer » avec un
-  fichier de la prod, puis « Je connais le BPM / la clé » pour les noter.
+- **Site web avec Melofinds PC** (1.20.6+, en ligne) : le même appui demande au PC (commande
+  `tba` via ntfy.sh) ; il télécharge la prod en .wav temporaire et la donne à Tunebat Analyzer
+  dans une petite fenêtre **Edge** (toujours sur Windows) ou Chrome, avec un profil à part,
+  pilotée en local par le protocole DevTools (`pc/mf_tunebat.py`, rien à installer). Le fichier
+  est choisi dans « Select Files » comme à la main ; clé et BPM reviennent à l'app.
+- **Prods reçues sur le PC** : si la clé ou le BPM ne sont ni dans la description ni trouvés
+  sur Tunebat, le .wav passe aussi par l'Analyzer avant d'être nommé (« (Finded) »).
+  Réglage « Tunebat Analyzer automatique » dans le panneau (activé par défaut).
+- **Site web sans PC** : un site ne peut pas télécharger la prod ; « Ouvrir Tunebat Analyzer »
+  avec un fichier de la prod, puis « Je connais le BPM / la clé » pour les noter.
 - Les valeurs s'affichent **en bleu** (« BPM · TB ») et partent au PC (« (Finded) » dans le
   nom) ; la description du beatmaker reste prioritaire.
 

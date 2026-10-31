@@ -22,6 +22,7 @@ import threading
 import mf_core as C
 import mf_flmake as FM
 import mf_library as L
+import mf_tunebat as T
 from mf_core import P, log
 
 
@@ -454,6 +455,92 @@ class Listen:
         self.thread.join(timeout=5)
 
 
+def tunebat_on(cfg):
+    """Tunebat Analyzer automatique (réglage du panneau, activé par défaut)."""
+    return cfg.get("tunebat_analyzer", True) is not False
+
+
+def download_analyzer(cfg):
+    """Pour les prods reçues : la clé / le BPM manquants sont demandés à Tunebat Analyzer."""
+    if not tunebat_on(cfg):
+        return None
+
+    def run(wav, vid, step):
+        try:
+            hit = T.analyze(wav, tag=vid, timeout=90)  # personne au PC pour une vérification : on n'attend pas trop
+            log(f"  Tunebat Analyzer : {hit['key']}, {hit['bpm']} BPM")
+            return hit
+        except T.TunebatError as e:
+            log(f"  Tunebat Analyzer : {e}")
+            return None
+    return run
+
+
+class Tba:
+    """« BPM » dans l'app web : le PC télécharge la prod (dossier temporaire, effacée ensuite),
+    la donne à Tunebat Analyzer et renvoie la clé et le BPM. Une analyse à la fois, dans l'ordre."""
+    PER_HOUR = 30
+    MAX_AGE_MS = 300_000
+
+    def __init__(self, fetch=None, analyze=None, reply=None):
+        self.fetch = fetch or C.download_listen
+        self.analyze = analyze or T.analyze
+        self.reply = reply or C.reply
+        self.q = queue.Queue()
+        self.waiting = set()
+        self.recent = []
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _say(self, code, body):
+        try:
+            self.reply(code, {"tba": body})
+        except Exception:
+            pass
+
+    def request(self, code, msg, cfg):
+        vid = str(msg.get("v") or "")
+        if not C.VIDEO_ID.match(vid):
+            return
+        ts = msg.get("ts")
+        if isinstance(ts, (int, float)) and time.time() * 1000 - ts > self.MAX_AGE_MS:
+            return  # demandée pendant que le PC était éteint : l'app a déjà abandonné
+        if not tunebat_on(cfg):
+            self._say(code, {"v": vid, "err": "Tunebat Analyzer est désactivé dans Melofinds PC (Réglages)"})
+            return
+        if (code, vid) in self.waiting:
+            return
+        now = time.time()
+        self.recent = [t for t in self.recent if t > now - 3600]
+        if len(self.recent) >= self.PER_HOUR:
+            self._say(code, {"v": vid, "err": "limite de 30 analyses par heure"})
+            return
+        self.recent.append(now)
+        self.waiting.add((code, vid))
+        self._say(code, {"v": vid, "s": "loading", "n": self.q.qsize()})
+        self.q.put((code, vid))
+
+    def _loop(self):
+        while True:
+            code, vid = self.q.get()
+            try:
+                with tempfile.TemporaryDirectory(prefix="melofinds-tba-") as tmp:
+                    path, err = self.fetch(vid, tmp)
+                    if not path:
+                        self._say(code, {"v": vid, "err": f"téléchargement impossible : {err}"[:200]})
+                        continue
+                    self._say(code, {"v": vid, "s": "analyze"})
+                    log(f"Tunebat Analyzer pour l'app : {vid}")
+                    hit = self.analyze(path, tag=vid)
+                    self._say(code, {"v": vid, "key": hit["key"], "bpm": hit["bpm"], "camelot": hit.get("camelot", "")})
+            except T.TunebatError as e:
+                self._say(code, {"v": vid, "err": str(e)[:200]})
+            except Exception as e:
+                log("Tunebat Analyzer :\n" + traceback.format_exc())
+                self._say(code, {"v": vid, "err": f"erreur inattendue : {e}"[:200]})
+            finally:
+                self.waiting.discard((code, vid))
+
+
 class Remote:
     """Écoute et gestion depuis l'app web : liste des projets, copies d'écoute, renommer,
     icône / couleur, favori. Tout reste dans le dossier des projets ; les limites de
@@ -475,6 +562,7 @@ class Remote:
         self.sig = {}            # appareil → empreinte de la dernière liste envoyée
         self.checked = 0.0
         self.listen = None       # écoute sur le PC (créée à la première demande)
+        self.tba = None          # Tunebat Analyzer pour l'app (créé à la première demande)
         # (heure, octets) envoyés en pièces jointes ces 3 dernières heures : gardé dans l'état,
         # pour ne pas l'oublier à un redémarrage ou une mise à jour (ntfy.sh, lui, s'en souvient)
         self.audio = [tuple(x) for x in (st.get("uploads") or []) if isinstance(x, (list, tuple)) and len(x) == 2]
@@ -591,6 +679,11 @@ class Remote:
         self.active[code] = time.time()
         if cmd == "desc":  # descriptions que YouTube cache à l'app (rien du PC n'est partagé)
             self.send_descriptions(code, msg.get("v"))
+            return
+        if cmd == "tba":  # bouton « BPM » de l'app web : Tunebat Analyzer sur le PC
+            if self.tba is None:
+                self.tba = Tba()
+            self.tba.request(code, msg, cfg)
             return
         if cmd == "listen":  # bouton PC de l'onglet Téléphone : jouer la prod sur le PC
             if self.listen is None:
@@ -794,7 +887,7 @@ def _handle(msg, code, d, root, cfg, st, recent, seen, done, left, remote=None):
     def progress(stage, pct):
         show_progress({"t": title, "stage": stage, "pct": pct, "queue": len(pending), "pending": pending[:20]})
     try:
-        ok, detail = C.download(vid, root, msg, got, progress)
+        ok, detail = C.download(vid, root, msg, got, progress, download_analyzer(cfg))
     except Exception as e:  # jamais d'arrêt du programme pour une prod
         log(traceback.format_exc())
         ok, detail = False, f"erreur inattendue : {e}"[:200]
