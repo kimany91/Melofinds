@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.20.6"
+VERSION = "1.20.7"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -580,15 +580,32 @@ def tag_groups(key=None, bpm=None, tb_key=False, tb_bpm=False):
     return " ".join(parts)
 
 
-def build_name(title, key=None, bpm=None, lic=None, limit=None, tb_key=False, tb_bpm=False):
+def shorten_title(t, n):
+    """Titre raccourci à n caractères : d'abord sans « (prod. X) », puis coupé entre deux mots."""
+    t = str(t)
+    if len(t) <= n:
+        return t
+    t = re.sub(r"\s*[(\[]\s*(?:prod|produced)\b[^)\]]*[)\]]?", "", t, flags=re.I).strip()
+    if len(t) <= n:
+        return t
+    cut = t[:n + 1].rsplit(" ", 1)[0] if " " in t[:n + 1] else t[:n]
+    cut = cut[:n].rstrip(" -,.'(\"[")
+    return cut if len(cut) >= n // 2 else t[:n].rstrip(" -,.'(\"[")
+
+
+def build_name(title, key=None, bpm=None, lic=None, limit=None, tb_key=False, tb_bpm=False, max_len=None):
     """« Titre [C# min, 150 BPM] [FFP] ». Ce qui a été trouvé par l'analyse du son va dans son
-    propre groupe : « Titre [C# min] [(Finded) 150 BPM] », « Titre [(Finded) Key C# minor, 150 BPM] »."""
+    propre groupe : « Titre [C# min] [(Finded) 150 BPM] », « Titre [(Finded) Key C# minor, 150 BPM] ».
+    max_len : nom raccourci (le titre, jamais la clé / le BPM / la licence) pour tenir dans Windows."""
     base = clean_title(title)[:110].rstrip(" -,.")
     tags = tag_groups(key, bpm, tb_key, tb_bpm)
-    name = f"{base} {tags}" if tags else base
     lt = licence_tag(lic, limit)
-    if lt:
-        name = f"{name} [{lt}]"
+    suffix = (f" {tags}" if tags else "") + (f" [{lt}]" if lt else "")
+    if max_len and len(base) + len(suffix) > max_len:
+        base = shorten_title(base, max(16, max_len - len(suffix)))
+    name = base + suffix
+    if max_len and len(name) > max_len:
+        name = name[:max_len].rstrip(" -,.[(")
     if re.fullmatch(r"(?i)(con|prn|aux|nul|com\d|lpt\d)(\s.*)?", name):
         name = f"Prod {name}"
     return name.rstrip(" .") or "Prod"
@@ -989,7 +1006,7 @@ def ensure_tools(progress=None):
         say = progress or (lambda s: None)
         say(f"Téléchargement de {name.replace('.exe', '')}…")
         log(f"Téléchargement de l'outil {name}")
-        with tempfile.TemporaryDirectory(prefix="melofinds-tool-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="melofinds-tool-", ignore_cleanup_errors=True) as tmp:
             dest = Path(tmp) / src["asset"]
             try:
                 got = download_file(src["url"], dest, say, name.replace(".exe", ""))
@@ -1081,6 +1098,30 @@ def inside(path, root):
         return True
     except ValueError:
         return False
+
+
+# Windows refuse par défaut les chemins de plus de 260 caractères (« [WinError 3/206] ») :
+# « dossier/Nom/Nom.wav » doit tenir dedans, même avec « (2) » et le .flp de FLmake.
+MAX_PATH = 250
+
+
+def name_budget(root):
+    """Longueur maximale du nom d'une prod pour que « root/Nom (n)/Nom (n).wav » tienne."""
+    try:
+        r = len(str(Path(root).resolve()))
+    except OSError:
+        r = len(str(root))
+    return max(30, min(160, (MAX_PATH - r - 2 - 4 - 10) // 2))
+
+
+def move_file(src, dst):
+    """Déplace vers ton dossier. Si l'original ne peut pas être effacé tout de suite
+    (antivirus qui l'examine…), la copie est gardée : ce n'est pas une erreur."""
+    try:
+        shutil.move(str(src), str(dst))
+    except PermissionError:
+        if not (Path(dst).exists() and Path(dst).stat().st_size == Path(src).stat().st_size):
+            raise
 
 
 def unique_project(root, name):
@@ -1221,7 +1262,7 @@ def download(video_id, root, info, out=None, progress=None, analyzer=None):
         out["lic"] = {"from": str(info.get("lic") or ""), "to": lic, "why": str(why or "")[:160]}
 
     # 2) Téléchargement + conversion dans un dossier temporaire, hors de ton dossier.
-    with tempfile.TemporaryDirectory(prefix="melofinds-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="melofinds-", ignore_cleanup_errors=True) as tmp:
         args = [ytdlp, "--no-playlist", "--no-warnings", "--progress", "--newline", "--no-mtime",
                 "--progress-template", "download:MFPCT %(progress._percent_str)s",
                 "-f", "bestaudio/best", "-x", "--audio-format", "wav",
@@ -1264,12 +1305,13 @@ def download(video_id, root, info, out=None, progress=None, analyzer=None):
             if not bpm and valid_bpm(hit.get("bpm")):
                 bpm, tb_b = valid_bpm(hit["bpm"]), True
         # Chaque prod arrive dans son propre dossier de projet : « Nom/Nom.wav »
-        final = unique_project(root, build_name(vt or info.get("t") or video_id, key, bpm, lic, limit, tb_k, tb_b))
+        final = unique_project(root, build_name(vt or info.get("t") or video_id, key, bpm, lic, limit, tb_k, tb_b,
+                                                max_len=name_budget(root)))
         if not inside(final, root) or final.suffix.lower() != ".wav" or final.parent.parent.resolve() != Path(root).resolve():
             return False, "nom de fichier refusé"
         # 3) Seul le .wav vérifié entre dans ton dossier.
         final.parent.mkdir(parents=True, exist_ok=False)
-        shutil.move(str(wavs[0]), str(final))
+        move_file(wavs[0], final)
     if not is_wav(final):
         final.unlink(missing_ok=True)
         try:
@@ -1296,7 +1338,7 @@ def download_listen(video_id, folder):
     folder.mkdir(parents=True, exist_ok=True)
     final = folder / f"{video_id}.wav"
     url = f"https://www.youtube.com/watch?v={video_id}"
-    with tempfile.TemporaryDirectory(prefix="melofinds-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="melofinds-", ignore_cleanup_errors=True) as tmp:
         args = [ytdlp, "--no-playlist", "--no-warnings", "--no-mtime",
                 "--match-filter", f"!is_live & duration <= {MAX_DURATION}",
                 "-f", "bestaudio/best", "-x", "--audio-format", "wav",

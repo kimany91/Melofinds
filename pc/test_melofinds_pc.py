@@ -1719,3 +1719,44 @@ class TunebatSurLePC(unittest.TestCase):
         self.assertTrue(ok, name)
         self.assertIn("tba", seen)
         self.assertEqual(name, "Luther Type Beat - TREE [(Finded) Key F# minor, 140 BPM] [FFP].wav")
+
+
+class CheminsWindows(unittest.TestCase):
+    """Windows refuse les chemins de plus de 260 caractères : « dossier/Nom/Nom.wav » doit tenir."""
+    LONG = "playboi carti x wlr x f1lthy type beat - 'Homicide' (prod. cgkbeatz)"
+
+    def test_nom_raccourci_sans_perdre_cle_bpm_licence(self):
+        base = Path(tempfile.gettempdir()).resolve()
+        for root in (base / "Melofinds" / "Projets", base.joinpath(*["Dossier tres long"] * 6)):
+            n = mpc.build_name(self.LONG, "F# min", 140, "ffp", None, True, True, max_len=mpc.name_budget(root))
+            self.assertLessEqual(len(str(root)) + 2 * (len(n) + 4) + 6, 250, n)  # même avec « (2) »
+            self.assertTrue(n.endswith("[(Finded) Key F# minor, 140 BPM] [FFP]"), n)
+            self.assertNotIn("(prod", n)
+        self.assertEqual(mpc.build_name("lucki type beat 'city lights'", "F# min", 148, "ffp", max_len=120),
+                         "lucki type beat 'city lights' [F# min, 148 BPM] [FFP]")  # court : inchangé
+
+    def test_titre_coupe_entre_deux_mots(self):
+        self.assertEqual(mpc.shorten_title("lucki x summrs type beat 'city lights' (prod. x)", 40), "lucki x summrs type beat 'city lights'")
+        self.assertEqual(mpc.shorten_title("lucki x summrs type beat city lights", 20), "lucki x summrs type")
+
+    def test_deplacement_si_l_original_reste_bloque(self):
+        d = Path(tempfile.mkdtemp(prefix="mf-mv-"))
+        src, dst = d / "a.wav", d / "b" / "b.wav"
+        src.write_bytes(b"RIFF" + b"\0" * 40)
+        dst.parent.mkdir()
+
+        def locked(a, b):  # copie faite, mais l'antivirus garde l'original
+            Path(b).write_bytes(Path(a).read_bytes())
+            raise PermissionError(32, "utilisé par un autre processus")
+        with mock.patch.object(mpc.shutil, "move", locked):
+            mpc.move_file(src, dst)  # pas d'erreur : la prod est bien arrivée
+        self.assertTrue(dst.exists())
+        with mock.patch.object(mpc.shutil, "move", lambda a, b: (_ for _ in ()).throw(PermissionError(5, "refusé"))):
+            with self.assertRaises(PermissionError):
+                mpc.move_file(src, d / "b" / "c.wav")  # rien de copié : vraie erreur
+
+    def test_explication_des_erreurs(self):
+        import mf_gui
+        self.assertIn("anti-robot", mf_gui.error_help("ERROR: [youtube] jhdt: Sign in to confirm you're not a bot"))
+        self.assertIn("trop long", mf_gui.error_help("erreur inattendue : [WinError 3] Le chemin d'accès spécifié est introuvable"))
+        self.assertIn("bloqué", mf_gui.error_help("erreur inattendue : [WinError 32] Le processus ne peut pas accéder au fichier"))

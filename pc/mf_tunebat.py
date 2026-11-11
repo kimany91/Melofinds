@@ -251,7 +251,7 @@ def analyze(wav, tag="prod", progress=None, timeout=TIMEOUT, url=ANALYZER, brows
     tag = re.sub(r"[^A-Za-z0-9_-]", "", str(tag))[:20] or "prod"
     name = f"Melofinds-{tag}.wav"
     step("open")
-    with tempfile.TemporaryDirectory(prefix="melofinds-tb-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="melofinds-tb-", ignore_cleanup_errors=True) as tmp:
         f = Path(tmp) / name
         shutil.copyfile(src, f)
         args = [browser, f"--user-data-dir={profile}", "--remote-debugging-port=0", "--no-first-run",

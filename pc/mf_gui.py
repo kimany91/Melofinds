@@ -121,6 +121,24 @@ def _hls(h, l, s):
     return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
 
 
+def error_help(detail):
+    """Ce qu'une erreur de téléchargement veut dire, et quoi faire."""
+    d = str(detail or "")
+    low = d.lower()
+    if "sign in to confirm" in low or "not a bot" in low:
+        return ("YouTube bloque pour l'instant les téléchargements depuis ce PC (vérification anti-robot). "
+                "Ce n'est pas la prod : réessaie plus tard. yt-dlp se met à jour tout seul.")
+    if re.search(r"winerror (3|206)\b", low) or "nom de fichier ou l'extension est trop long" in low:
+        return "Chemin trop long pour Windows : la version 1.20.7 raccourcit le nom tout seul. Renvoie la prod."
+    if "winerror 32" in low or "utilisé par un autre processus" in low or "used by another process" in low:
+        return "Un fichier était bloqué (antivirus ou autre programme) : la version 1.20.7 n'en fait plus une erreur. Renvoie la prod."
+    if "winerror 5" in low or "accès refusé" in low or "access is denied" in low:
+        return "Windows refuse d'écrire dans le dossier des projets : choisis-en un autre dans Réglages."
+    if "private video" in low or "video unavailable" in low or "vidéo indisponible" in low:
+        return "La vidéo est privée ou supprimée."
+    return "Le détail complet est aussi dans le journal (Réglages → Journal)."
+
+
 def listen_palette(color):
     """Couleurs de la barre d'écoute, tirées de la couleur de la prod [teinte, saturation %]
     (la même que sur le téléphone) ; violet Melofinds si elle n'en a pas."""
@@ -753,6 +771,14 @@ def manager_window(selftest=False):
     hist.tag_configure("err", foreground=RED)
     hist.tag_configure("ok", foreground=FG)
     hist.pack(fill="both", expand=True)
+    hist_rows = {}  # ligne → (titre, détail complet) : un clic sur une erreur l'affiche en entier
+
+    def hist_click(e):
+        row = hist.identify_row(e.y)
+        if row in hist_rows:
+            t, detail = hist_rows[row]
+            messagebox.showinfo("Erreur de téléchargement", f"{t}\n\n{detail}\n\n{error_help(detail)}")
+    hist.bind("<Button-1>", hist_click)
 
     fdir_var = tk.StringVar()
 
@@ -1948,10 +1974,13 @@ def manager_window(selftest=False):
         if h != last["hist"]:
             last["hist"] = h
             hist.delete(*hist.get_children())
+            hist_rows.clear()
             for ok, detail, t, at, flp in h:
                 fl = "   · projet FL ✓" if flp and not str(flp).startswith("FLmake") else ""
-                hist.insert("", "end", tags=("ok" if ok else "err",),
-                            values=("✓" if ok else "✗", f"{Path(detail).stem}{fl}" if ok else f"{t} — {detail}", _ago(at)))
+                row = hist.insert("", "end", tags=("ok" if ok else "err",),
+                                  values=("✓" if ok else "✗", f"{Path(detail).stem}{fl}" if ok else f"{t} — {detail}", _ago(at)))
+                if not ok:
+                    hist_rows[row] = (t, detail)
             if not h:
                 hist.insert("", "end", values=("", "Aucune prod reçue pour l'instant.", ""))
             if current["page"] == "prods":

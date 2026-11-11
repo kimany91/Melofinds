@@ -523,7 +523,7 @@ class Tba:
         while True:
             code, vid = self.q.get()
             try:
-                with tempfile.TemporaryDirectory(prefix="melofinds-tba-") as tmp:
+                with tempfile.TemporaryDirectory(prefix="melofinds-tba-", ignore_cleanup_errors=True) as tmp:
                     path, err = self.fetch(vid, tmp)
                     if not path:
                         self._say(code, {"v": vid, "err": f"téléchargement impossible : {err}"[:200]})
@@ -606,7 +606,7 @@ class Remote:
                 C.reply(code, {"aud": f["id"], "err": "limite d'envoi atteinte (ntfy.sh) : réessaie dans un moment"})
             return "budget"
         try:
-            with tempfile.TemporaryDirectory(prefix="melofinds-ecoute-") as tmp:
+            with tempfile.TemporaryDirectory(prefix="melofinds-ecoute-", ignore_cleanup_errors=True) as tmp:
                 data = C.make_preview(f["path"], Path(tmp) / "ecoute.m4a").read_bytes()
         except (OSError, C.subprocess.SubprocessError) as e:
             if not auto:

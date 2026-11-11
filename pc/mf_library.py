@@ -535,7 +535,13 @@ def rename_plan(item, new_title, suffix=None):
     title = clean_new_title(new_title)
     if not title:
         raise LibError("nom vide")
-    new = f"{title} {item.suffix if suffix is None else suffix}".strip()
+    sfx = (item.suffix if suffix is None else suffix) or ""
+    base = item.folder.parent if item.folder else item.wav.parent if item.wav else item.flp.parent if item.flp else None
+    if base is not None:  # « dossier/Nom/Nom.wav » doit tenir dans les 260 caractères de Windows
+        budget = C.name_budget(base)
+        if len(f"{title} {sfx}".strip()) > budget:
+            title = C.shorten_title(title, max(16, budget - len(sfx) - 1))
+    new = f"{title} {sfx}".strip()
     plan = {"new": new, "title": title, "wav": None, "folder": None, "files": [], "flp": None}
     if item.wav:
         plan["wav"] = (item.wav, item.wav.with_name(new + item.wav.suffix))
