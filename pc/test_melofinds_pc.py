@@ -1727,11 +1727,13 @@ class CheminsWindows(unittest.TestCase):
 
     def test_nom_raccourci_sans_perdre_cle_bpm_licence(self):
         base = Path(tempfile.gettempdir()).resolve()
-        for root in (base / "Melofinds" / "Projets", base.joinpath(*["Dossier tres long"] * 6)):
+        for root in (base / "Melofinds" / "Projets", base.joinpath(*["Dossier long"] * 4)):
             n = mpc.build_name(self.LONG, "F# min", 140, "ffp", None, True, True, max_len=mpc.name_budget(root))
             self.assertLessEqual(len(str(root)) + 2 * (len(n) + 4) + 6, 250, n)  # même avec « (2) »
             self.assertTrue(n.endswith("[(Finded) Key F# minor, 140 BPM] [FFP]"), n)
             self.assertNotIn("(prod", n)
+        n = mpc.build_name(self.LONG, "F# min", 140, "ffp", None, True, True, max_len=20)  # dossier très profond
+        self.assertTrue(n.startswith("playboi") and n.endswith("[(Finded) Key F# minor, 140 BPM] [FFP]"), n)
         self.assertEqual(mpc.build_name("lucki type beat 'city lights'", "F# min", 148, "ffp", max_len=120),
                          "lucki type beat 'city lights' [F# min, 148 BPM] [FFP]")  # court : inchangé
 

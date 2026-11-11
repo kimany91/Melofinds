@@ -602,10 +602,8 @@ def build_name(title, key=None, bpm=None, lic=None, limit=None, tb_key=False, tb
     lt = licence_tag(lic, limit)
     suffix = (f" {tags}" if tags else "") + (f" [{lt}]" if lt else "")
     if max_len and len(base) + len(suffix) > max_len:
-        base = shorten_title(base, max(16, max_len - len(suffix)))
+        base = shorten_title(base, max(12, max_len - len(suffix)))  # la clé, le BPM et la licence restent toujours
     name = base + suffix
-    if max_len and len(name) > max_len:
-        name = name[:max_len].rstrip(" -,.[(")
     if re.fullmatch(r"(?i)(con|prn|aux|nul|com\d|lpt\d)(\s.*)?", name):
         name = f"Prod {name}"
     return name.rstrip(" .") or "Prod"
