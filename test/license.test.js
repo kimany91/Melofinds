@@ -290,13 +290,34 @@ test('description lue en partie : « Free for profit » gardé quand le début l
     const L = c.desc.length <= 100 ? analyzeLicense(c.title, c.desc) : licenseWhenPartial(c.title, snip, analyzeLicense(c.title, snip));
     // jamais « Free for profit » pour une prod qui ne l'est pas
     if (c.cat !== 'ffp') assert.notEqual(L.category, 'ffp', `faux FFP : ${c.title}`);
-    if (L.category === c.cat) ok++;
+    // « À vérifier » tant que la suite n'est pas lue : prudent, jamais faux
+    if (L.category === c.cat || L.category === 'unknown') ok++;
   }
-  // les rares ratés : l'info n'est que dans la suite (« à vérifier » ou « payant », jamais FFP)
   assert.ok(ok >= REAL2.length - 3, `${ok}/${REAL2.length}`);
+  // le cas signalé : « FREE FOR PROFIT » au début, « only soundcloud et youtube » coupé par YouTube
+  const full = 'FREE FOR PROFIT 🔥\nFree for profit only soundcloud et youtube\nInsta: @x';
+  for (const cut of [18, 30, 45]) {
+    const snip = full.slice(0, cut);
+    const L = licenseWhenPartial('[FREE FOR PROFIT] Luther Type Beat', snip, analyzeLicense('[FREE FOR PROFIT] Luther Type Beat', snip));
+    assert.notEqual(L.category, 'ffp', snip);
+  }
+  // le début couvre clairement Spotify : gardé
+  const sp = 'Free for profit, you can upload it on Spotify and all platforms';
+  assert.equal(licenseWhenPartial('[FREE] x type beat', sp, analyzeLicense('[FREE] x type beat', sp)).category, 'ffp');
   // titre seul : à vérifier
   assert.equal(licenseWhenPartial('[FREE FOR PROFIT] Type Beat', '', analyzeLicense('[FREE FOR PROFIT] Type Beat', '')).category, 'unknown');
   // titre qui parle de Spotify : gardé
   assert.equal(licenseWhenPartial('[FREE FOR PROFIT & SPOTIFY] Type Beat', '', analyzeLicense('[FREE FOR PROFIT & SPOTIFY] Type Beat', '')).category, 'ffp');
 });
 
+
+test('free for profit seulement YouTube / SoundCloud → pas libre pour Spotify (liste partagée avec le PC)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const fx = JSON.parse(readFileSync(new URL('./fixtures/platform-only.json', import.meta.url), 'utf8'));
+  for (const d of fx.restricted) {
+    const r = analyzeLicense('[FREE FOR PROFIT] Luther Type Beat', `${d}\n\nprod by x`);
+    assert.equal(r.category, 'fnp', d);
+    assert.equal(r.spotify, 'non', d);
+  }
+  for (const d of fx.free) assert.equal(analyzeLicense('[FREE FOR PROFIT] Luther Type Beat', `${d}\n\nprod by x`).category, 'ffp', d);
+});

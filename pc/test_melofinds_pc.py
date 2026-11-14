@@ -1762,3 +1762,13 @@ class CheminsWindows(unittest.TestCase):
         self.assertIn("anti-robot", mf_gui.error_help("ERROR: [youtube] jhdt: Sign in to confirm you're not a bot"))
         self.assertIn("trop long", mf_gui.error_help("erreur inattendue : [WinError 3] Le chemin d'accès spécifié est introuvable"))
         self.assertIn("bloqué", mf_gui.error_help("erreur inattendue : [WinError 32] Le processus ne peut pas accéder au fichier"))
+
+
+class LicencePlateformes(unittest.TestCase):
+    def test_meme_liste_que_l_app(self):
+        """« Free for profit only soundcloud et youtube » : [F], jamais [FFP] (même liste que l'app web)."""
+        fx = json.loads((Path(__file__).parent.parent / "test" / "fixtures" / "platform-only.json").read_text(encoding="utf-8"))
+        for d in fx["restricted"]:
+            self.assertEqual(mpc.check_licence("[FREE FOR PROFIT] Luther Type Beat", d + "\n\nprod by x", "ffp")[0], "fnp", d)
+        for d in fx["free"]:
+            self.assertEqual(mpc.check_licence("[FREE FOR PROFIT] Luther Type Beat", d + "\n\nprod by x", "ffp")[0], "ffp", d)

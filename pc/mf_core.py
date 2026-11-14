@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.20.7"
+VERSION = "1.20.8"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -474,20 +474,26 @@ def _lic_norm(text):
     return re.sub(r"\b(etc|e\.g|i\.e|ex|vs)\.+", lambda m: m.group(0).replace(".", " "), t)
 
 
-_PLAT = r"(?:youtube|yt|soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod|sc|tiktok|tik\s*tok|instagram|insta|reels?|twitch|facebook|social\s*media)"
+_PLAT = r"(?:youtube|yt|soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod|sc|tiktok|tik\s*tok|instagram|insta|reels?|twitch|facebook|social\s*media|socials?\b|social\s*networks?|reseaux\s*sociaux)"
 _PLAT_LIST = rf"{_PLAT}(?:\s*(?:,|and|&|/|\+|or|et|ou|n)\s*{_PLAT})*"
 _FFP_RE = re.compile(r"(?:free|fr33|gratuit)\s*[-_]?\s*(?:to\s*use\s*)?(?:for|4|pour)?\s*[-_]?\s*(?:profit|commercial)\b|\bffp\b|\bf4p\b")
 _LIC_ONLY = [
     re.compile(rf"\b{_PLAT_LIST}\s*\(?\s*(?:(?:non[\s-]*moneti[sz]ed\s*)?(?:use|usage|videos?|uploads?|placements?|content|moneti[sz]\w*)\s*)?\)?\s*[\"']?\s*(?:only|uniquement|seulement)\b"),
-    re.compile(rf"(?:only|uniquement|seulement|exclusivement)\s*(?:be\s*)?(?:applies\s*to|apply\s*to|allowed\s*(?:on|for)|valid\s*(?:on|for)|use(?:\s*(?:it|this|the\s*beat))?(?:\s*for\s*profit)?\s*(?:on|for|in)|for|on|in|sur|pour|en)\s*(?:non[\s-]*moneti[sz]ed\s*)?{_PLAT_LIST}\b"),
+    # « only on youtube », « only soundcloud et youtube » (sans « on »), « uniquement youtube »
+    re.compile(rf"(?:only|uniquement|seulement|exclusivement)\s*(?:be\s*)?(?:(?:applies\s*to|apply\s*to|allowed\s*(?:on|for)|valid\s*(?:on|for)|use(?:\s*(?:it|this|the\s*beat))?(?:\s*for\s*profit)?\s*(?:on|for|in)|for|on|in|sur|pour|en)\s*)?(?:non[\s-]*moneti[sz]ed\s*)?{_PLAT_LIST}\b"),
+    # « free for profit just youtube and soundcloud »
+    re.compile(rf"(?:free\s*(?:for|4)?\s*profit|\bffp|\bf4p)\s*[-:–(]?\s*just\s*(?:on|for|in|sur|pour)?\s*{_PLAT_LIST}\b"),
+    # « free for non-streaming use »
+    re.compile(r"\bnon[\s-]*streaming\b"),
     re.compile(r"\bnot\s*(?:free\s*)?(?:for\s*profit\s*)?(?:for|on|to)\s*(?:all\s*plat\w*|spotify|streaming|apple\s*music|dsps?|other\s*plat\w*)"),
     re.compile(r"\b(?:not|n'?est\s*pas)\s*(?:free\s*for\s*profit|ffp)\b"),
     re.compile(r"(?:spotify|streaming|apple\s*music|dsps?|distribution|plateformes?)\s*[:\-=]?\s*(?:❌|✖|✗|⛔|\U0001f6ab|no\b|non\b|not\s*(?:allowed|permitted))"),
 ]
 _LIC_PLATFREE = re.compile(rf"(?:(?:free|gratuit\w*)\s*(?:for|4)?\s*(?:profit\s*)?(?:to\s*use\s*)?(?:use\s*)?(?:(?:on|for|in|sur|pour)\s*(?:the\s*)?|[(\[]\s*)){_PLAT_LIST}\b")
+_LIC_FOLLOW = re.compile(r"\bfollow|subscri|abonne|suis[\s-]*moi|suivez|check\s*(?:out\s*)?my\b")
 _LIC_NONPROFIT = re.compile(r"\bnon\s*-?\s*(?:profit|commercial\w*|commerciaux|lucrati\w*)\b")
 _LIC_BROAD = re.compile(r"spotify|apple\s*music|itunes|deezer|tidal|amazon\s*music|all\s*plat\w*|toutes?\s*les\s*plateformes|streaming|dsps?\b|distrib")
-_LIC_RESTRICT_WORDS = re.compile(r"\bonly\b|uniquement|seulement|\bnot\b|n't|\bno\b|\bpas\b|purchase|\bbuy|lease|licen[cs]e|\bneed|\bmust|\bpay|acheter|payer|sauf|except")
+_LIC_RESTRICT_WORDS = re.compile(r"\bonly\b|uniquement|seulement|\bnot\b|n't|\bno\b|\bpas\b|purchase|\bbuy|lease|licen[cs]e|\bneed|\bmust|\bpay|acheter|payer|sauf|except|\bdm\b|\bcontact|\bmessage|\bhmu\b|hit\s*me\s*up|e-?mail|ecris")
 _LIC_REQ = [
     re.compile(r"(?:licen[cs]e|lease|beat)\s*(?:must|has\s*to|have\s*to|needs?\s*to|should|is\s*to)\s*be\s*(?:purchased|bought|acquired|obtained|leased)"),
     re.compile(r"(?:licen[cs]e|lease)\s*(?:is\s*)?(?:required|needed|necessary|mandatory)"),
@@ -507,8 +513,12 @@ def licence_restriction(text):
     """Phrase de la description qui interdit Spotify & co sans payer, ou None."""
     t = _lic_norm(text)
     for rx in _LIC_ONLY:
-        m = rx.search(t)
-        if m and not re.search(r"\bnot\s*$", t[max(0, m.start() - 6):m.start()]):
+        for m in rx.finditer(t):
+            if re.search(r"\bnot\s*$", t[max(0, m.start() - 6):m.start()]):
+                continue
+            sent = next((s.group(0) for s in _LIC_SENT.finditer(t) if s.start() <= m.start() < s.end()), m.group(0))
+            if _LIC_FOLLOW.search(sent):  # « follow me on instagram & tiktok only » : pas une licence
+                continue
             return m.group(0)
     for m in _LIC_PLATFREE.finditer(t):
         sent = next((s.group(0) for s in _LIC_SENT.finditer(t) if s.start() <= m.start() < s.end()), m.group(0))

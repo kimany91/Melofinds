@@ -1171,7 +1171,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 31/10/2026 à 18:28</p>
+    <p class="build-stamp">Version du 14/11/2026 à 13:49</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -2428,7 +2428,7 @@ const SPOTIFY_NO = [
 // « soundcloud and youtube only », « youtube & sc only », « only for youtube »,
 // « uniquement youtube et soundcloud », « for non-monetized videos »…
 // SoundCloud, aussi mal écrit (« SoudCloud », « Souncloud »…)
-const PLAT = String.raw`(?:youtube|yt|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod)|tiktok|tik\s*tok|instagram|insta|reels?|twitch|facebook|social\s*media|reseaux\s*sociaux)`;
+const PLAT = String.raw`(?:youtube|yt|(?:soundcloud|soudcloud|souncloud|sondcloud|soundclound|soundclod)|tiktok|tik\s*tok|instagram|insta|reels?|twitch|facebook|social\s*media|socials?\b|social\s*networks?|reseaux\s*sociaux)`;
 const PLAT_LIST = String.raw`${PLAT}(?:\s*(?:,|and|&|\/|\+|-|or|et|ou|n|'n')\s*${PLAT})*`;
 const PLATFORM_ONLY = [
   // « soundcloud and youtube only », « youtube/soundcloud use only », « for youtube videos only »
@@ -2437,6 +2437,8 @@ const PLATFORM_ONLY = [
   new RegExp(String.raw`(?<!not\s{0,3})(?:only|uniquement|seulement|exclusivement)\s*(?:be\s*)?(?:allowed|permitted|authori[sz]ed|autorise|usable|used|use(?:\s*(?:it|this|the\s*beat))?(?:\s*(?:for\s*profit|commercially))?|upload\w*|post\w*|releas\w*|utilisable|valable|appl(?:y|ies)|valid|works?)?\s*(?:on|for|to|in|sur|pour|en)?\s*(?:non[\s-]*moneti[sz]ed\s*)?${PLAT_LIST}\b`, 'g'),
   // « free for non-monetized use », « in non monetized videos »
   /(?:for|in|on|pour|en)\s*(?:non|not|un)\s*-?\s*moneti[sz]ed\b/g,
+  // « free for non-streaming use »
+  /\bnon[\s-]*streaming\b/g,
   // « buy a lease for spotify » / « purchase a license to release on spotify »
   /(?:buy|purchase|grab|get)\s*(?:a|an|the|my)?\s*(?:lease|licen[cs]e|licence)\s*(?:for|to\s*(?:release|upload|put|drop|use)\s*(?:it\s*)?(?:on|to))\s*(?:spotify|apple\s*music|streaming|dsps?|all\s*platforms|distrokid)/g,
 ];
@@ -2445,9 +2447,12 @@ const PLATFORM_ONLY = [
 // gratuit, mais seulement cité pour YouTube / SoundCloud (gardé si la phrase ne cite pas
 // aussi Spotify & co sans restriction, voir platformFree()).
 // (aussi « free for use on SoundCloud and YouTube », « free to use on YT »)
+// « free for profit just youtube and soundcloud », « ffp - just yt »
+PLATFORM_ONLY.push(new RegExp(String.raw`(?:${FFP}|\bffp|\bf4p)\s*[-:–(]?\s*just\s*(?:on|for|in|sur|pour)?\s*${PLAT_LIST}\b`, 'g'));
 const PLATFORM_FREE = new RegExp(String.raw`(?:${FFP}|\bffp|\bf4p|\bfree|\bgratuit\w*)\s*(?:(?:to|for)\s*(?:use|usage)\s*)?(?:use\s*)?(?:(?:on|for|in|sur|pour)\s*(?:the\s*)?|[(\[]\s*)${PLAT_LIST}\b`, 'g');
+const FOLLOW = /\bfollow|subscri|abonne|suis[\s-]*moi|suivez|check\s*(?:out\s*)?my\b/;
 const BROAD = /spotify|apple\s*music|itunes|deezer|tidal|amazon\s*music|all\s*plat\w*|toutes?\s*les\s*plateformes|stream\w*\s*(?:services?|platforms?|sites?)|streaming|dsps?\b|distrib/;
-const RESTRICT_WORDS = /\bonly\b|uniquement|seulement|\bnot\b|n't|\bno\b|\bpas\b|purchase|\bbuy|lease|licen[cs]e|licence|\bneed|\bmust|\bpay|acheter|payer|sauf|except/;
+const RESTRICT_WORDS = /\bonly\b|uniquement|seulement|\bnot\b|n't|\bno\b|\bpas\b|purchase|\bbuy|lease|licen[cs]e|licence|\bneed|\bmust|\bpay|acheter|payer|sauf|except|\bdm\b|\bcontact|\bmessage|\bhmu\b|hit\s*me\s*up|e-?mail|ecris|écris/;
 
 // Achat obligatoire pour sortir le son / usage commercial, lu PHRASE PAR PHRASE :
 // « A License Must Be Purchased To Use For Profit (Streaming Services, SPOTIFY…) »,
@@ -2659,7 +2664,9 @@ function analyzeLicense(title = '', description = '') {
   const buyHits = findAll(BUY_REQUIRED, t).filter((h) => !noNeed(h));
   // « can't upload to Spotify without a lease » : la négation confirme la restriction.
   const spotifyNo = findAll(SPOTIFY_NO, t).filter((h) => /not|n't|cannot|forbidden|interdit|pas|❌|✖|✗|⛔|🚫/.test(h.match[0]) || !noNeed(h));
-  const platformOnly = [...findAll(PLATFORM_ONLY, t).filter((h) => !noNeed(h)), ...findPlatformFree(t)]
+  // « follow me on instagram & tiktok only for updates » : une invitation, pas une licence
+  const follow = (h) => FOLLOW.test(sentenceAt(t, h.start).text);
+  const platformOnly = [...findAll(PLATFORM_ONLY, t).filter((h) => !noNeed(h) && !follow(h)), ...findPlatformFree(t)]
     .sort((a, b) => a.start - b.start);
   const purchaseReq = findPurchaseRequired(t);
   const notFree = findAll(NOT_FREE, t);
@@ -2822,8 +2829,12 @@ function extractKeyLines(description = '', max = 8) {
 function licenseWhenPartial(title, visibleDesc, L) {
   if (!L || L.category !== 'ffp') return L;
   const desc = String(visibleDesc || '');
-  const clear = analyzeLicense('', desc).category === 'ffp'
-    || /spotify|all\s*plat|every\s*(?:streaming\s*)?platform|streaming|toutes\s*les\s*plateformes/i.test(String(title || ''));
+  // Le début de la description dit « free for profit », mais la suite (cachée) dit souvent
+  // « only soundcloud et youtube » : on ne conclut que si ce qu'on a lu couvre Spotify & co.
+  const broad = /spotify|apple\s*music|all\s*plat|every\s*(?:streaming\s*)?platform|streaming|toutes\s*les\s*plateformes|dsps?\b/i;
+  const read = analyzeLicense('', desc);
+  const clear = (read.category === 'ffp' && read.spotify === 'oui' && broad.test(desc))
+    || broad.test(String(title || ''));
   if (clear) {
     return { ...L, partialRead: true, reasons: [...L.reasons, { text: 'Description lue en partie (YouTube a bloqué la suite) : le début le dit clairement, mais jette un œil à la fin.', quote: '' }] };
   }
