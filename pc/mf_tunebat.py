@@ -231,17 +231,85 @@ def _page(port, seconds=20):
     raise TunebatError("la fenêtre Tunebat ne s'est pas ouverte")
 
 
-def analyze(wav, tag="prod", progress=None, timeout=TIMEOUT, url=ANALYZER, browser=None, extra_args=None):
+# Vérification Cloudflare (« Just a moment… », « je ne suis pas un robot ») : Cloudflare refuse
+# souvent une fenêtre pilotée. On n'essaie pas de le tromper : pendant la vérification, Melofinds
+# ne touche pas à la page ; si elle bloque, une fenêtre NORMALE (pas pilotée) s'ouvre, tu la
+# fais toi-même et tu fermes la fenêtre ; Tunebat s'en souvient et l'analyse reprend.
+CHALLENGE_TITLE = re.compile(r"just a moment|un instant|attention required|verify|v[ée]rif|checking your browser|captcha|cloudflare", re.I)
+CHALLENGE_GRACE = 12  # secondes de vérification automatique (souvent invisible) avant de demander
+
+
+class NeedsVerify(TunebatError):
+    pass
+
+
+VERIFY_MSG = ("Tunebat demande une vérification « je ne suis pas un robot ». Melofinds PC → Réglages → "
+              "« Vérifier Tunebat » : fais-la une fois dans la fenêtre, ferme-la, puis réessaie.")
+
+
+def profile_dir():
+    return C.P.base / "tunebat-profile"  # profil à part : rien de ton navigateur n'est touché
+
+
+def _targets(port):
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=3) as r:
+            return json.loads(r.read())
+    except (OSError, ValueError):
+        return []
+
+
+def _challenge(targets):
+    """Page de vérification Cloudflare (titre « Just a moment… ») ; cf : widget Cloudflare vu."""
+    page = next((t for t in targets if t.get("type") == "page"), None)
+    cf = any("challenges.cloudflare.com" in str(t.get("url") or "") for t in targets)
+    return bool(page and CHALLENGE_TITLE.search(str(page.get("title") or ""))), cf
+
+
+def verify_window(url=ANALYZER, browser=None, wait=300, extra_args=None):
+    """Fenêtre Tunebat NORMALE (pas pilotée, comme ton navigateur) : tu fais la vérification,
+    puis tu fermes la fenêtre. Le profil garde la preuve pour les analyses suivantes."""
+    browser = browser or find_browser()
+    if not browser:
+        raise TunebatError("Edge ou Chrome introuvable sur ce PC")
+    profile_dir().mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen([browser, f"--user-data-dir={profile_dir()}", "--no-first-run", "--no-default-browser-check",
+                             f"--app={url}", "--window-size=980,820", *(extra_args or [])],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        proc.wait(timeout=wait)
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+    time.sleep(1.0)
+
+
+def analyze(wav, tag="prod", progress=None, timeout=TIMEOUT, url=ANALYZER, browser=None, extra_args=None,
+            allow_verify=True, verifier=None):
     """Clé et BPM d'un .wav par Tunebat Analyzer → {"key": "F# min", "bpm": 140, "camelot": "11A"}.
-    Lève TunebatError (navigateur absent, pas de résultat, fenêtre fermée…)."""
+    Si Tunebat bloque sur sa vérification : fenêtre normale pour la faire (allow_verify), puis
+    l'analyse reprend. Lève TunebatError (navigateur absent, pas de résultat, fenêtre fermée…)."""
     step = progress or (lambda *_: None)
+    try:
+        return _run(wav, tag, step, timeout, url, browser, extra_args)
+    except NeedsVerify:
+        if not allow_verify:
+            raise TunebatError(VERIFY_MSG)
+        step("verify")
+        (verifier or (lambda: verify_window(url, browser)))()
+        try:
+            return _run(wav, tag, step, timeout, url, browser, extra_args)
+        except NeedsVerify:
+            raise TunebatError(VERIFY_MSG)
+
+
+def _run(wav, tag, step, timeout, url, browser, extra_args):
     src = Path(wav)
     if not C.is_wav(src):
         raise TunebatError("fichier non WAV")
     browser = browser or find_browser()
     if not browser:
         raise TunebatError("Edge ou Chrome introuvable sur ce PC")
-    profile = C.P.base / "tunebat-profile"  # profil à part : rien de ton navigateur n'est touché
+    profile = profile_dir()
     profile.mkdir(parents=True, exist_ok=True)
     port_file = profile / "DevToolsActivePort"
     try:
@@ -263,11 +331,23 @@ def analyze(wav, tag="prod", progress=None, timeout=TIMEOUT, url=ANALYZER, brows
         try:
             port, bpath = _wait_port(port_file, proc)
             browser_ws = f"ws://127.0.0.1:{port}{bpath}"
-            cdp = CDP(_page(port)["webSocketDebuggerUrl"])
+            page_ws = _page(port)["webSocketDebuggerUrl"]
             needle = json.dumps(Path(name).stem.lower())
             end = time.time() + timeout
-            injected_at, polls = None, 0
+            injected_at, polls, challenge_since, cf_seen = None, 0, None, False
             while time.time() < end:
+                blocked, cf = _challenge(_targets(port))
+                cf_seen = cf_seen or cf
+                if blocked:
+                    # vérification en cours : on ne touche à rien (lu de l'extérieur, sans la page)
+                    challenge_since = challenge_since or time.time()
+                    if time.time() - challenge_since > CHALLENGE_GRACE:
+                        raise NeedsVerify(VERIFY_MSG)
+                    time.sleep(1.0)
+                    continue
+                challenge_since = None
+                if cdp is None:
+                    cdp = CDP(page_ws)  # la page n'est pilotée qu'une fois sur l'Analyzer
                 try:
                     st = json.loads(cdp.eval("JSON.stringify({o:performance.timeOrigin,f:!!document.querySelector('input[type=file]'),"
                                              "i:!!window.__mfInjected})") or "{}")
@@ -294,6 +374,8 @@ def analyze(wav, tag="prod", progress=None, timeout=TIMEOUT, url=ANALYZER, brows
                     if hit:
                         return hit
                 time.sleep(1.2)
+            if cf_seen:  # un widget « je ne suis pas un robot » dans la page a bloqué l'analyse
+                raise NeedsVerify(VERIFY_MSG)
             raise TunebatError("Tunebat n'a pas donné de résultat")
         except (ConnectionError, OSError) as e:
             raise TunebatError("fenêtre Tunebat fermée" if isinstance(e, ConnectionError) else f"navigateur : {e}"[:120])

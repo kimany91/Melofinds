@@ -343,7 +343,7 @@ function onPcTba(d, m) {
     w.done(hit ? { status: 'ok', hit } : { status: 'none' });
     return;
   }
-  if (t.s === 'loading' || t.s === 'analyze') { w.wait(7 * 60e3); w.onState?.(t.s); }
+  if (t.s === 'loading' || t.s === 'analyze' || t.s === 'verify') { w.wait(t.s === 'verify' ? 12 * 60e3 : 7 * 60e3); w.onState?.(t.s); }
 }
 async function tunebatAnalyze(item, onState) {
   const n = mfn();
@@ -376,7 +376,10 @@ async function quickBpm(item) {
   if (viaPc) toast('Ton PC télécharge la prod pour Tunebat Analyzer…');
   let r;
   try {
-    r = await tunebatAnalyze(item, (st) => { if (st === 'analyze') toast('Tunebat Analyzer écoute la prod sur ton PC…'); });
+    r = await tunebatAnalyze(item, (st) => {
+      if (st === 'analyze') toast('Tunebat Analyzer écoute la prod sur ton PC…');
+      if (st === 'verify') toast('Tunebat demande « je ne suis pas un robot » : coche-le dans la fenêtre Tunebat sur ton PC, puis ferme-la', { ms: 12000 });
+    });
   } finally { bpmJob.id = null; syncTbUi(); }
   if (r.status === 'ok') { toast(`Tunebat${viaPc ? ' (PC)' : ''} : ${bpmText(keepTunebat(item, r.hit))}`); return; }
   if (r.status === 'cancel') return;
@@ -397,7 +400,10 @@ function openBpmSheet(item, note = '') {
     syncTbUi();
     let r;
     try {
-      r = await tunebatAnalyze(item, (st) => { if (st === 'analyze') say('Tunebat Analyzer écoute la prod sur ton PC (petite fenêtre Tunebat)…'); });
+      r = await tunebatAnalyze(item, (st) => {
+        if (st === 'analyze') say('Tunebat Analyzer écoute la prod sur ton PC (petite fenêtre Tunebat)…');
+        if (st === 'verify') say('Tunebat demande « je ne suis pas un robot » : coche-le dans la fenêtre Tunebat sur ton PC, puis ferme-la' + ' : l’analyse reprend toute seule ensuite.');
+      });
     } finally { bpmJob.id = null; syncTbUi(); tbBtn.disabled = false; }
     if (r.status === 'ok') { keepTunebat(item, r.hit); say(''); show(); return; }
     if (r.status === 'cancel') { say(''); return; }

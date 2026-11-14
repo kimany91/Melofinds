@@ -19,6 +19,7 @@ import mf_core as C
 import mf_flmake as FM
 import mf_install as I
 import mf_library as L
+import mf_tunebat as T
 import mf_ytlogin as Y
 from mf_core import P
 
@@ -129,6 +130,8 @@ def error_help(detail):
     if "sign in to confirm" in low or "not a bot" in low or "pas un robot" in low:
         return ("YouTube bloque les téléchargements depuis ce PC et demande de se connecter. Réglages → « Compte YouTube » → "
                 "Connecter YouTube (une fois), puis renvoie la prod depuis l'appli.")
+    if "vérification" in low and "tunebat" in low:
+        return "Réglages → « Vérifier Tunebat » : coche « je ne suis pas un robot » dans la fenêtre, ferme-la, puis réessaie."
     if re.search(r"winerror (3|206)\b", low) or "nom de fichier ou l'extension est trop long" in low:
         return "Chemin trop long pour Windows : la version 1.20.7 raccourcit le nom tout seul. Renvoie la prod."
     if "winerror 32" in low or "utilisé par un autre processus" in low or "used by another process" in low:
@@ -1853,6 +1856,21 @@ def manager_window(selftest=False):
                     "la prod est donnée à tunebat.com/Analyzer dans une petite fenêtre Edge / Chrome (profil à part), comme "
                     "dans l'appli Android. Aussi pour le bouton « BPM » de l'app web. Si Tunebat demande une vérification, fais-la.",
                 lambda p: Switch(p, C.load_config().get("tunebat_analyzer", True) is not False, set_tba))
+
+    def tb_verify():
+        def run():
+            try:
+                T.verify_window()
+                msg = "Vérification Tunebat gardée : l'analyse automatique peut reprendre"
+            except Exception as e:
+                msg = f"Tunebat : {e}"
+            root.after(0, lambda: toast(msg))
+        toast("Fais la vérification « je ne suis pas un robot » dans la fenêtre Tunebat, puis ferme-la", 8000)
+        threading.Thread(target=run, daemon=True).start()
+    tvr = tk.Frame(tc, bg=PANEL)
+    tvr.pack(fill="x", pady=(8, 0))
+    label(tvr, "Tunebat bloque sur « je ne suis pas un robot » ? Fais la vérification une fois ici.", 9, MUTED).pack(side="left")
+    Btn(tvr, "Vérifier Tunebat", tb_verify, padx=10, pady=4).pack(side="right")
     # Compte YouTube : quand YouTube bloque le PC (« confirme que tu n'es pas un robot »)
     yc = card(setp)
     yc.pack(fill="x", pady=(0, 14))

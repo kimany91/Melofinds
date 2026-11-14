@@ -1670,7 +1670,7 @@ class TunebatSurLePC(unittest.TestCase):
             p.write_bytes(WAV)
             return p, ""
 
-        def analyze(path, tag):
+        def analyze(path, tag, **kw):
             self.assertTrue(Path(path).exists())
             if tag == "dQw4w9WgXcQ":
                 raise T.TunebatError("Tunebat n'a pas donné de résultat")
@@ -1880,3 +1880,72 @@ class CompteYouTube(unittest.TestCase):
         self.assertEqual(Auth.refreshed, 1)
         self.assertTrue(all("--cookies" in a for a in calls))
         self.assertIn("malgré le compte relié", msg)
+
+
+class VerificationTunebat(unittest.TestCase):
+    """Cloudflare refuse les fenêtres pilotées : pendant la vérification Melofinds ne touche pas
+    la page ; si elle bloque, fenêtre normale (faite par toi), puis l'analyse reprend."""
+
+    def setUp(self):
+        import mf_tunebat as T
+        self.T = T
+        self.browser = T.find_browser()
+        if not self.browser:
+            self.skipTest("ni Edge ni Chrome sur cette machine")
+        self.wav = Path(tempfile.mkdtemp(prefix="mf-tbv-")) / "x.wav"
+        self.wav.write_bytes(b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 30)
+        self.extra = ["--headless=new"] + ([] if mpc.WINDOWS else ["--no-sandbox"])
+        self._grace = T.CHALLENGE_GRACE
+        T.CHALLENGE_GRACE = 2
+
+    def tearDown(self):
+        if hasattr(self, "_grace"):
+            self.T.CHALLENGE_GRACE = self._grace
+
+    def run_with(self, allow, verifier=None):
+        import http.server, socketserver
+        state = {"verified": False}
+        TOOL = FauxTunebat.TOOL
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = (f"<!doctype html><title>Analyzer</title><body>{TOOL}</body>" if state["verified"]
+                        else "<!doctype html><title>Just a moment...</title><body>Verifying you are human</body>").encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+        srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        url = f"http://127.0.0.1:{srv.server_address[1]}/Analyzer"
+        steps, page_cdp = [], []
+        real = self.T.CDP
+
+        class Spy(real):
+            def __init__(s, ws):
+                if "/devtools/page/" in ws:
+                    page_cdp.append(state["verified"])  # piloter la page : seulement une fois vérifiée
+                super().__init__(ws)
+        try:
+            with mock.patch.object(self.T, "CDP", Spy):
+                hit = self.T.analyze(self.wav, tag="jNQXAC9IVRw", progress=steps.append, timeout=40, url=url,
+                                     browser=self.browser, extra_args=self.extra, allow_verify=allow,
+                                     verifier=(lambda: state.update(verified=True)) if verifier else None)
+            return hit, steps, page_cdp
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_sans_personne_message_clair(self):
+        with self.assertRaises(self.T.TunebatError) as e:
+            self.run_with(allow=False)
+        self.assertIn("Vérifier Tunebat", str(e.exception))
+
+    def test_verification_puis_analyse(self):
+        hit, steps, page_cdp = self.run_with(allow=True, verifier=True)
+        self.assertEqual(hit, {"key": "F# min", "bpm": 140, "camelot": "11A"})
+        self.assertIn("verify", steps)
+        self.assertTrue(page_cdp and all(page_cdp))  # jamais pilotée pendant la vérification

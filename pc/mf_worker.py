@@ -468,7 +468,8 @@ def download_analyzer(cfg):
 
     def run(wav, vid, step):
         try:
-            hit = T.analyze(wav, tag=vid, timeout=90)  # personne au PC pour une vérification : on n'attend pas trop
+            # personne au PC pour une vérification Tunebat : on n'ouvre pas de fenêtre, on n'attend pas trop
+            hit = T.analyze(wav, tag=vid, timeout=90, allow_verify=False)
             log(f"  Tunebat Analyzer : {hit['key']}, {hit['bpm']} BPM")
             return hit
         except T.TunebatError as e:
@@ -531,7 +532,8 @@ class Tba:
                         continue
                     self._say(code, {"v": vid, "s": "analyze"})
                     log(f"Tunebat Analyzer pour l'app : {vid}")
-                    hit = self.analyze(path, tag=vid)
+                    # « verify » : la fenêtre de vérification Tunebat s'ouvre sur le PC (l'app le dit)
+                    hit = self.analyze(path, tag=vid, progress=lambda st: st == "verify" and self._say(code, {"v": vid, "s": "verify"}))
                     self._say(code, {"v": vid, "key": hit["key"], "bpm": hit["bpm"], "camelot": hit.get("camelot", "")})
             except T.TunebatError as e:
                 self._say(code, {"v": vid, "err": str(e)[:200]})
