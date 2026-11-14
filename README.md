@@ -209,6 +209,11 @@ Quand la description ne donne pas le BPM ou la clé, chaque prod a un petit bout
 - **Prods reçues sur le PC** : si la clé ou le BPM ne sont ni dans la description ni trouvés
   sur Tunebat, le .wav passe aussi par l'Analyzer avant d'être nommé (« (Finded) »).
   Réglage « Tunebat Analyzer automatique » dans le panneau (activé par défaut).
+- **YouTube bloque le PC** (« Sign in to confirm you're not a bot ») : le PC met yt-dlp à jour
+  et réessaie une fois ; sinon l'app affiche quoi faire. Réglages → « Compte YouTube » :
+  connexion une fois à un compte (compte secondaire conseillé) dans une fenêtre Edge / Chrome
+  à part ; les cookies YouTube / Google de ce profil sont donnés à yt-dlp (`--cookies`, fichier
+  privé), relus avant de réessayer. « Déconnecter » efface tout (`pc/mf_ytlogin.py`).
 - **Site web sans PC** : un site ne peut pas télécharger la prod ; « Ouvrir Tunebat Analyzer »
   avec un fichier de la prod, puis « Je connais le BPM / la clé » pour les noter.
 - Les valeurs s'affichent **en bleu** (« BPM · TB ») et partent au PC (« (Finded) » dans le

@@ -19,6 +19,7 @@ import mf_core as C
 import mf_flmake as FM
 import mf_install as I
 import mf_library as L
+import mf_ytlogin as Y
 from mf_core import P
 
 # Couleurs de Melofinds Web (artifact/style.css)
@@ -125,9 +126,9 @@ def error_help(detail):
     """Ce qu'une erreur de téléchargement veut dire, et quoi faire."""
     d = str(detail or "")
     low = d.lower()
-    if "sign in to confirm" in low or "not a bot" in low:
-        return ("YouTube bloque pour l'instant les téléchargements depuis ce PC (vérification anti-robot). "
-                "Ce n'est pas la prod : réessaie plus tard. yt-dlp se met à jour tout seul.")
+    if "sign in to confirm" in low or "not a bot" in low or "pas un robot" in low:
+        return ("YouTube bloque les téléchargements depuis ce PC et demande de se connecter. Réglages → « Compte YouTube » → "
+                "Connecter YouTube (une fois), puis renvoie la prod depuis l'appli.")
     if re.search(r"winerror (3|206)\b", low) or "nom de fichier ou l'extension est trop long" in low:
         return "Chemin trop long pour Windows : la version 1.20.7 raccourcit le nom tout seul. Renvoie la prod."
     if "winerror 32" in low or "utilisé par un autre processus" in low or "used by another process" in low:
@@ -1852,6 +1853,48 @@ def manager_window(selftest=False):
                     "la prod est donnée à tunebat.com/Analyzer dans une petite fenêtre Edge / Chrome (profil à part), comme "
                     "dans l'appli Android. Aussi pour le bouton « BPM » de l'app web. Si Tunebat demande une vérification, fais-la.",
                 lambda p: Switch(p, C.load_config().get("tunebat_analyzer", True) is not False, set_tba))
+    # Compte YouTube : quand YouTube bloque le PC (« confirme que tu n'es pas un robot »)
+    yc = card(setp)
+    yc.pack(fill="x", pady=(0, 14))
+    yr = tk.Frame(yc, bg=PANEL)
+    yr.pack(fill="x")
+    yx = tk.Frame(yr, bg=PANEL)
+    yx.pack(side="left", fill="x", expand=True)
+    label(yx, "Compte YouTube", 11, bold=True).pack(anchor="w")
+    label(yx, "Seulement si YouTube bloque les téléchargements (« Sign in to confirm you're not a bot »). Connecte-toi "
+              "une fois dans la fenêtre qui s'ouvre (profil à part, ton navigateur n'est pas touché), puis ferme-la. "
+              "Un compte secondaire est conseillé.", 9, MUTED, wrap=520).pack(anchor="w")
+    yt_state = label(yx, "", 9, FAINT, bold=True)
+    yt_state.pack(anchor="w", pady=(4, 0))
+    yt_btn = Btn(yr, "Connecter YouTube", kind="primary")
+    yt_btn.pack(side="right")
+
+    def yt_refresh():
+        on = Y.connected()
+        yt_state.configure(text="✓ Compte relié : les téléchargements l'utilisent" if on else "Aucun compte relié", fg=GREEN if on else FAINT)
+        yt_btn.set(text="Déconnecter" if on else "Connecter YouTube", kind="ghost" if on else "primary", enabled=True)
+
+    def yt_click():
+        if Y.connected():
+            if messagebox.askyesno("Compte YouTube", "Déconnecter le compte YouTube de Melofinds PC ?"):
+                Y.disconnect()
+                toast("Compte YouTube déconnecté")
+            yt_refresh()
+            return
+        yt_btn.set(text="Connexion en cours…", enabled=False)
+        yt_state.configure(text="Connecte-toi dans la fenêtre YouTube, puis ferme-la.", fg=AMBER)
+
+        def run():
+            try:
+                Y.connect()
+                msg = "Compte YouTube relié : renvoie la prod depuis l'appli"
+            except Exception as e:  # fenêtre fermée sans connexion, navigateur absent…
+                msg = f"Compte YouTube : {e}"
+            root.after(0, lambda: (toast(msg), yt_refresh()))
+        threading.Thread(target=run, daemon=True).start()
+    yt_btn.command = yt_click
+    yt_refresh()
+
     pc_ = card(setp)
     pc_.pack(fill="x", pady=(0, 14))
     label(pc_, "Emplacement du programme", 11, bold=True).pack(anchor="w")

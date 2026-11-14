@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.20.8"
+VERSION = "1.20.9"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -1088,6 +1088,42 @@ def update_ytdlp():
             log(f"Mise à jour de yt-dlp impossible : {e}")
 
 
+# YouTube qui demande de se connecter (« Sign in to confirm you're not a bot ») : yt-dlp est
+# d'abord mis à jour (au plus une fois par heure), puis le compte relié (Réglages) est relu.
+_BOT = re.compile(r"sign\s*in\s*to\s*confirm|not\s*a\s*bot", re.I)
+_last_bot_update = [0.0]
+BOT_MSG = ("YouTube bloque ce PC (« confirme que tu n'es pas un robot »). Dans Melofinds PC → Réglages → "
+           "« Compte YouTube », connecte un compte une fois, puis Renvoie la prod.")
+BOT_MSG_LINKED = ("YouTube bloque encore ce PC malgré le compte relié : réessaie dans un moment, "
+                  "ou reconnecte le compte (Melofinds PC → Réglages → « Compte YouTube »).")
+
+
+def is_bot_block(text):
+    return bool(_BOT.search(str(text or "")))
+
+
+def bot_retry(auth):
+    """Après un blocage : True si ça vaut la peine de réessayer tout de suite."""
+    if auth is not None and auth.connected() and auth.refresh():
+        return True
+    if time.time() - _last_bot_update[0] > 3600:
+        _last_bot_update[0] = time.time()
+        update_ytdlp()
+        return True
+    return False
+
+
+def bot_message(auth):
+    return BOT_MSG_LINKED if auth is not None and auth.connected() else BOT_MSG
+
+
+def _yt_extra(auth):
+    try:
+        return list(auth.ytdlp_args()) if auth is not None else []
+    except Exception:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Téléchargement d'une prod : WAV seulement, dans TON dossier seulement
 
@@ -1226,7 +1262,7 @@ def wav_link(path):
     return vid
 
 
-def download(video_id, root, info, out=None, progress=None, analyzer=None):
+def download(video_id, root, info, out=None, progress=None, analyzer=None, auth=None):
     """Télécharge la prod en .wav dans root. progress(étape, pourcentage) : « info »,
     « download » (0-100), « convert », « tba ». analyzer(wav, id, progress) → {key, bpm} :
     Tunebat Analyzer sur le .wav quand la clé ou le BPM manquent encore."""
@@ -1241,12 +1277,18 @@ def download(video_id, root, info, out=None, progress=None, analyzer=None):
     step("info", None)
 
     # 1) Infos : on refuse les vidéos trop longues et les directs.
-    try:
-        r = run_tool([ytdlp, "-J", "--no-playlist", "--no-warnings", url], 180)
-    except (OSError, subprocess.SubprocessError) as e:
-        return False, f"yt-dlp : {e}"
-    if r.returncode != 0:
-        return False, last_line(r.stderr)
+    for attempt in (1, 2):
+        try:
+            r = run_tool([ytdlp, "-J", "--no-playlist", "--no-warnings", *_yt_extra(auth), url], 180)
+        except (OSError, subprocess.SubprocessError) as e:
+            return False, f"yt-dlp : {e}"
+        if r.returncode == 0:
+            break
+        err = last_line(r.stderr)
+        if not is_bot_block(err):
+            return False, err
+        if attempt == 2 or not bot_retry(auth):
+            return False, bot_message(auth)
     try:
         meta = json.loads(decode(r.stdout))
     except ValueError:
@@ -1276,7 +1318,7 @@ def download(video_id, root, info, out=None, progress=None, analyzer=None):
                 "-f", "bestaudio/best", "-x", "--audio-format", "wav",
                 "--ffmpeg-location", str(Path(ffmpeg).parent),
                 "--max-filesize", "200M", "-P", f"home:{tmp}", "-P", f"temp:{tmp}",
-                "-o", "audio.%(ext)s", url]
+                *_yt_extra(auth), "-o", "audio.%(ext)s", url]
         step("download", 0)
 
         def on_line(line):
@@ -1291,7 +1333,8 @@ def download(video_id, root, info, out=None, progress=None, analyzer=None):
             return False, f"yt-dlp : {e}"
         if code != 0:
             errs = [l for l in tail if "ERROR" in l]
-            return False, ((errs or tail or ["erreur inconnue"])[-1])[:200]
+            err = ((errs or tail or ["erreur inconnue"])[-1])[:200]
+            return False, bot_message(auth) if is_bot_block(err) else err
         step("convert", None)
         wavs = [p for p in Path(tmp).iterdir() if p.suffix.lower() == ".wav" and is_wav(p)]
         if not wavs:
@@ -1333,7 +1376,7 @@ def download(video_id, root, info, out=None, progress=None, analyzer=None):
     return True, final.name
 
 
-def download_listen(video_id, folder):
+def download_listen(video_id, folder, auth=None):
     """Écouter sur le PC (bouton PC de l'onglet Téléphone) : la prod en .wav dans le dossier
     d'écoute temporaire, jamais dans ton dossier de prods. Renvoie (chemin, "") ou (None, erreur)."""
     if not VIDEO_ID.match(str(video_id or "")):
@@ -1352,13 +1395,19 @@ def download_listen(video_id, folder):
                 "-f", "bestaudio/best", "-x", "--audio-format", "wav",
                 "--ffmpeg-location", str(Path(ffmpeg).parent),
                 "--max-filesize", "200M", "-P", f"home:{tmp}", "-P", f"temp:{tmp}",
-                "-o", "audio.%(ext)s", url]
-        try:
-            r = run_tool(args, 600)
-        except (OSError, subprocess.SubprocessError) as e:
-            return None, f"yt-dlp : {e}"[:200]
-        if r.returncode != 0:
-            return None, last_line(r.stderr)[:200]
+                *_yt_extra(auth), "-o", "audio.%(ext)s", url]
+        for attempt in (1, 2):
+            try:
+                r = run_tool(args, 600)
+            except (OSError, subprocess.SubprocessError) as e:
+                return None, f"yt-dlp : {e}"[:200]
+            if r.returncode == 0:
+                break
+            err = last_line(r.stderr)
+            if not is_bot_block(err):
+                return None, err[:200]
+            if attempt == 2 or not bot_retry(auth):
+                return None, bot_message(auth)
         wavs = [p for p in Path(tmp).iterdir() if p.suffix.lower() == ".wav" and is_wav(p)]
         if not wavs:
             return None, "vidéo trop longue (15 min max), en direct, ou conversion impossible"

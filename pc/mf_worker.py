@@ -23,6 +23,7 @@ import mf_core as C
 import mf_flmake as FM
 import mf_library as L
 import mf_tunebat as T
+import mf_ytlogin as Y
 from mf_core import P, log
 
 
@@ -220,7 +221,7 @@ class Listen:
     def __init__(self, folder=None, player=None, fetch=None, reply=None, art=None):
         self.dir = Path(folder or Path(tempfile.gettempdir()) / "melofinds-ecoute-pc")
         self.player = player or Mci()
-        self.fetch = fetch or C.download_listen
+        self.fetch = fetch or (lambda vid, folder: C.download_listen(vid, folder, Y))
         self.art_fetch = art or fetch_art
         self.reply = reply or C.reply
         self.gen = 0
@@ -483,7 +484,7 @@ class Tba:
     MAX_AGE_MS = 300_000
 
     def __init__(self, fetch=None, analyze=None, reply=None):
-        self.fetch = fetch or C.download_listen
+        self.fetch = fetch or (lambda vid, folder: C.download_listen(vid, folder, Y))
         self.analyze = analyze or T.analyze
         self.reply = reply or C.reply
         self.q = queue.Queue()
@@ -887,7 +888,7 @@ def _handle(msg, code, d, root, cfg, st, recent, seen, done, left, remote=None):
     def progress(stage, pct):
         show_progress({"t": title, "stage": stage, "pct": pct, "queue": len(pending), "pending": pending[:20]})
     try:
-        ok, detail = C.download(vid, root, msg, got, progress, download_analyzer(cfg))
+        ok, detail = C.download(vid, root, msg, got, progress, download_analyzer(cfg), Y)
     except Exception as e:  # jamais d'arrêt du programme pour une prod
         log(traceback.format_exc())
         ok, detail = False, f"erreur inattendue : {e}"[:200]

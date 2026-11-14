@@ -1759,7 +1759,7 @@ class CheminsWindows(unittest.TestCase):
 
     def test_explication_des_erreurs(self):
         import mf_gui
-        self.assertIn("anti-robot", mf_gui.error_help("ERROR: [youtube] jhdt: Sign in to confirm you're not a bot"))
+        self.assertIn("Compte YouTube", mf_gui.error_help("ERROR: [youtube] jhdt: Sign in to confirm you're not a bot"))
         self.assertIn("trop long", mf_gui.error_help("erreur inattendue : [WinError 3] Le chemin d'accès spécifié est introuvable"))
         self.assertIn("bloqué", mf_gui.error_help("erreur inattendue : [WinError 32] Le processus ne peut pas accéder au fichier"))
 
@@ -1772,3 +1772,111 @@ class LicencePlateformes(unittest.TestCase):
             self.assertEqual(mpc.check_licence("[FREE FOR PROFIT] Luther Type Beat", d + "\n\nprod by x", "ffp")[0], "fnp", d)
         for d in fx["free"]:
             self.assertEqual(mpc.check_licence("[FREE FOR PROFIT] Luther Type Beat", d + "\n\nprod by x", "ffp")[0], "ffp", d)
+
+
+import subprocess as sp
+
+
+class CompteYouTube(unittest.TestCase):
+    """YouTube demande de se connecter : yt-dlp mis à jour, puis compte relié (cookies) relu."""
+
+    def tearDown(self):
+        import mf_ytlogin as Y
+        Y.disconnect()
+
+    def test_fichier_cookies(self):
+        import mf_ytlogin as Y
+        text, n = Y._netscape([
+            {"domain": ".youtube.com", "name": "LOGIN_INFO", "value": "abc", "path": "/", "secure": True, "expires": 1999999999},
+            {"domain": "accounts.google.com", "name": "SID", "value": "x", "path": "/", "secure": True, "expires": -1},
+            {"domain": ".exemple.com", "name": "pub", "value": "x"},  # autre site : jamais gardé
+            {"domain": ".youtube.com", "name": "bad", "value": "a\tb"},
+        ])
+        self.assertEqual(n, 2)
+        self.assertIn(".youtube.com\tTRUE\t/\tTRUE\t1999999999\tLOGIN_INFO\tabc", text)
+        self.assertIn("accounts.google.com\tFALSE\t/\tTRUE\t0\tSID\tx", text)
+        self.assertNotIn("exemple", text)
+        self.assertFalse(Y.connected())
+        Y.cookies_file().write_text(text, encoding="utf-8")
+        self.assertTrue(Y.connected())
+        self.assertEqual(Y.ytdlp_args(), ["--cookies", str(Y.cookies_file())])
+        Y.disconnect()
+        self.assertFalse(Y.connected())
+        self.assertEqual(Y.ytdlp_args(), [])
+
+    def test_cookies_relus_dans_un_vrai_navigateur(self):
+        import http.server, socketserver
+        import mf_tunebat as T
+        import mf_ytlogin as Y
+        browser = T.find_browser()
+        if not browser:
+            self.skipTest("ni Edge ni Chrome sur cette machine")
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Set-Cookie", "LOGIN_INFO=secret123; Max-Age=3600; Path=/")
+                self.end_headers()
+                self.wfile.write(b"ok")
+
+            def log_message(self, *a):
+                pass
+        srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        extra = [] if mpc.WINDOWS else ["--no-sandbox"]
+        try:
+            # « connexion » : la page pose un cookie dans le profil Melofinds, puis la fenêtre est
+            # fermée normalement (comme quand tu la fermes : le navigateur enregistre tout)
+            Y.disconnect()
+            Y.profile_dir().mkdir(parents=True, exist_ok=True)
+            pf = Y.profile_dir() / "DevToolsActivePort"
+            p = sp.Popen([browser, f"--user-data-dir={Y.profile_dir()}", "--remote-debugging-port=0", "--headless=new",
+                          "--no-first-run", *extra, f"http://127.0.0.1:{srv.server_address[1]}/"], stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+            port, bpath = T._wait_port(pf, p)
+            time.sleep(3)
+            c = T.CDP(f"ws://127.0.0.1:{port}{bpath}")
+            c.ws.send(json.dumps({"id": 1, "method": "Browser.close"}))
+            p.wait(20)
+            c.close()
+            time.sleep(1)
+            ok = Y.export_cookies(browser, extra, domains=("127.0.0.1",))
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        self.assertTrue(ok)
+        self.assertIn("LOGIN_INFO\tsecret123", Y.cookies_file().read_text(encoding="utf-8"))
+
+    def test_blocage_youtube_mise_a_jour_puis_message_clair(self):
+        calls, updates = [], []
+        bot = sp.CompletedProcess([], 1, b"", b"ERROR: [youtube] x: Sign in to confirm you're not a bot. Use --cookies")
+
+        def run(args, timeout):
+            calls.append(args)
+            return bot
+        with mock.patch.object(mpc, "tool_path", lambda n: "/bin/true"), mock.patch.object(mpc, "run_tool", run), \
+                mock.patch.object(mpc, "update_ytdlp", lambda: updates.append(1)):
+            mpc._last_bot_update[0] = 0
+            ok, msg = mpc.download("jNQXAC9IVRw", tempfile.mkdtemp(), {}, {}, None)
+        self.assertFalse(ok)
+        self.assertEqual(len(calls), 2)  # réessayé une fois, après la mise à jour de yt-dlp
+        self.assertEqual(updates, [1])
+        self.assertIn("Compte YouTube", msg)
+
+        class Auth:  # compte relié : cookies passés à yt-dlp et relus avant de réessayer
+            refreshed = 0
+
+            def connected(self):
+                return True
+
+            def ytdlp_args(self):
+                return ["--cookies", "c.txt"]
+
+            def refresh(self):
+                Auth.refreshed += 1
+                return True
+        calls.clear()
+        with mock.patch.object(mpc, "tool_path", lambda n: "/bin/true"), mock.patch.object(mpc, "run_tool", run):
+            ok, msg = mpc.download("jNQXAC9IVRw", tempfile.mkdtemp(), {}, {}, None, None, Auth())
+        self.assertEqual(Auth.refreshed, 1)
+        self.assertTrue(all("--cookies" in a for a in calls))
+        self.assertIn("malgré le compte relié", msg)
