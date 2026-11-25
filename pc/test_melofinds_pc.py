@@ -2035,6 +2035,59 @@ class AnalyseSurLePC(unittest.TestCase):
             self.assertEqual((hit["key"], hit["bpm"]), (key, bpm), name)
 
 
+class RechercheDansLeLogiciel(unittest.TestCase):
+    """Page Rechercher : le vrai site Melofinds rangé dans la fenêtre du logiciel."""
+
+    def setUp(self):
+        import mf_embed as E
+        self.E = E
+        cfg = mpc.load_config()
+        cfg.pop("panel_paired", None)
+        cfg.pop("pc_window", None)
+        cfg["devices"] = [d for d in cfg["devices"] if d.get("name") != E.WW.DEVICE_NAME]
+        mpc.save_config(cfg)
+
+    def test_barre_de_titre_mesuree(self):
+        E = self.E
+        # 100 % : barre de titre de 32 px, pas de bord
+        self.assertEqual(E.title_offset({"ow": 1000, "oh": 700, "iw": 1000, "ih": 668}, 1000), 32)
+        # échelle différente entre le site et Tk : convertie par le rapport des largeurs
+        self.assertEqual(E.title_offset({"ow": 800, "oh": 560, "iw": 800, "ih": 534}, 1000), 32)
+        # mesures absurdes : rien de caché
+        self.assertEqual(E.title_offset({}, 1000), 0)
+        self.assertEqual(E.title_offset({"ow": 0, "oh": 1, "iw": 0, "ih": 1}, 1000), 0)
+        self.assertLessEqual(E.title_offset({"ow": 1000, "oh": 5000, "iw": 1000, "ih": 10}, 1000), 120)
+
+    def test_reliee_une_seule_fois(self):
+        E = self.E
+        with mock.patch.object(E.I, "go_online", lambda: None):
+            u1 = E.start_url()
+        self.assertRegex(u1, r"#pair=melofinds-[a-f0-9]{32}\.[a-f0-9]{64}&pcwin=1$")
+        cfg = mpc.load_config()
+        cfg["panel_paired"] = True
+        mpc.save_config(cfg)
+        self.assertNotIn("#pair=", E.start_url())
+        self.assertEqual(sum(1 for d in mpc.load_config()["devices"] if d["name"] == E.WW.DEVICE_NAME), 1)
+
+    def test_lancement(self):
+        E = self.E
+        a = E.launch_args("/x/msedge.exe", "https://kimany91.github.io/Melofinds/", 100, 80, 900, 600)
+        self.assertIn(f"--user-data-dir={E.profile_dir()}", a)
+        self.assertIn("--app=https://kimany91.github.io/Melofinds/", a)
+        self.assertIn("--window-position=100,80", a)
+        self.assertIn("--window-size=900,600", a)
+        self.assertIn("--remote-debugging-port=0", a)
+
+    def test_hors_windows_erreur_propre(self):
+        E = self.E
+        seen = []
+        p = E.Panel(on_state=lambda st, d: seen.append(st))
+        with mock.patch.object(E, "WINDOWS", False):
+            p._start(0, (0, 0), (800, 600), "/x/msedge.exe", "https://x")
+        self.assertEqual(p.state, "error")
+        self.assertFalse(p.alive())
+
+
 class FenetreMelofinds(unittest.TestCase):
     """Moteur de recherche dans l'app PC : fenêtre Melofinds reliée à ce PC, liens collés."""
 

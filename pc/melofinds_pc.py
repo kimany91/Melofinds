@@ -159,11 +159,16 @@ def main(argv=None):
     ap.add_argument("--dossier", help="dossier des prods")
     ap.add_argument("--une-fois", action="store_true", help="vérifier une fois puis quitter (test)")
     ap.add_argument("--selftest", metavar="FICHIER", help="vérification automatique")
+    ap.add_argument("--embedtest", metavar="FICHIER", help=argparse.SUPPRESS)  # test : site dans la page Rechercher
     args = ap.parse_args(argv)
     P.set(C.resolve_install_dir())
 
     if args.selftest:
         return selftest(args.selftest)
+    if args.embedtest:
+        import mf_gui as G
+        G.manager_window(selftest=True, embedtest=args.embedtest)
+        return 0
     if args.stop:
         I.stop_worker()
         return 0

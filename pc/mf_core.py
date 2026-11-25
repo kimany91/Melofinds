@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.23.0"
+VERSION = "1.24.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"

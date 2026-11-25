@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 import mf_core as C
+import mf_embed as E
 import mf_flmake as FM
 import mf_install as I
 import mf_library as L
@@ -163,6 +164,59 @@ def ease(a, b, t):
     """Mouvement doux (fin ralentie) entre a et b, t de 0 à 1."""
     t = max(0.0, min(1.0, t))
     return a + (b - a) * (1 - (1 - t) ** 3)
+
+
+def _rgb_ok(c):
+    return isinstance(c, str) and len(c) == 7 and c.startswith("#")
+
+
+def fade(widgets, end, ms=140, attr="bg"):
+    """Transition de couleur (survol, clic) : de la couleur actuelle vers `end`, en douceur.
+    Seulement en réponse à la souris : rien ne bouge tout seul."""
+    widgets = [w for w in widgets if w is not None]
+    if not widgets or not _rgb_ok(end):
+        return
+    w0 = widgets[0]
+    try:
+        start = w0.cget(attr)
+    except Exception:
+        return
+    job = getattr(w0, "_mf_fade", None)
+    if job:
+        try:
+            w0.after_cancel(job)
+        except Exception:
+            pass
+    if not _rgb_ok(start) or start == end:
+        for w in widgets:
+            try:
+                w.configure(**{attr: end})
+            except Exception:
+                pass
+        w0._mf_fade = None
+        return
+    t0 = time.time()
+
+    def step():
+        k = min(1.0, (time.time() - t0) * 1000 / ms)
+        c = blend(end, start, ease(0.0, 1.0, k))
+        for w in widgets:
+            try:
+                w.configure(**{attr: c})
+            except Exception:
+                return
+        w0._mf_fade = w0.after(12, step) if k < 1 else None
+    step()
+
+
+def pulse(widget, color, back=None, ms=260, attr="bg"):
+    """Petit flash au clic (bouton play…), puis retour à la couleur d'origine."""
+    try:
+        back = back or widget.cget(attr)
+        widget.configure(**{attr: color})
+    except Exception:
+        return
+    widget.after(40, lambda: fade([widget], back, ms, attr))
 
 
 def listen_palette(color):
@@ -318,9 +372,26 @@ def _ui():
             super().__init__(parent, text=text, bg=bg or self.bg_parent, fg=fg, font=(FONT, size, "bold"),
                              padx=padx, pady=pady, cursor="hand2", **kw)
             self.kind, self.command, self.enabled = kind, command, True
-            self.bind("<Enter>", lambda e: self.enabled and self.configure(bg=hover or self.bg_parent, fg=FG if kind == "subtle" else fg))
-            self.bind("<Leave>", lambda e: self.restyle())
-            self.bind("<Button-1>", lambda e: self.enabled and self.command and self.command())
+            self.bind("<Enter>", lambda e: self.enabled and self.hover(True))
+            self.bind("<Leave>", lambda e: self.hover(False))
+            self.bind("<Button-1>", lambda e: self.click())
+
+        def hover(self, on):
+            bg, fg, hov = self.KINDS[self.kind]
+            if on and self.enabled:
+                self.configure(fg=FG if self.kind == "subtle" else fg)
+                fade([self], hov or self.bg_parent, 120)
+            else:
+                self.configure(fg=fg if self.enabled else FAINT)
+                fade([self], bg or self.bg_parent, 180)
+
+        def click(self):
+            if not (self.enabled and self.command):
+                return
+            bg, _, hov = self.KINDS[self.kind]
+            if bg:  # flash au clic
+                pulse(self, blend("#ffffff", hov or bg, 0.22), hov or bg, 240)
+            self.command()
 
         def restyle(self):
             bg, fg, _ = self.KINDS[self.kind]
@@ -479,13 +550,50 @@ def _icon(root):
         pass
 
 
+def run_embedtest(root, show, panel, out):
+    """Test automatique (GitHub, Windows) : la page Rechercher doit montrer le site Melofinds
+    rangé dans la fenêtre. Écrit le résultat (et les mesures) puis ferme après la capture."""
+    t0 = time.time()
+    res = {"version": C.VERSION}
+    panel.online = False
+    root.geometry("1040x700+40+40")
+    root.after(800, lambda: show("search"))
+
+    def check():
+        st = panel.state
+        if st in ("ready", "error") or time.time() - t0 > 60:
+            res.update(state=st, detail=panel.detail, top=panel.top, size=panel.size, alive=panel.alive())
+            if st == "ready":
+                try:
+                    import mf_embed as E
+                    r = panel._eval("JSON.stringify({t: document.title, iw: innerWidth, ih: innerHeight, "
+                                    "q: !!document.querySelector('input,textarea'), n: document.body.innerText.length})")
+                    res["page"] = json.loads(r) if isinstance(r, str) else r
+                    if E.WINDOWS:
+                        import ctypes
+                        res["parent_ok"] = bool(ctypes.windll.user32.GetParent(panel.hwnd))
+                except Exception as e:
+                    res["page"] = f"erreur {e}"
+            try:
+                res["log"] = [x for x in C.P.log.read_text(encoding="utf-8", errors="replace").splitlines() if "[recherche]" in x][-12:]
+            except OSError:
+                res["log"] = []
+            with open(out, "w", encoding="utf-8") as f:
+                json.dump(res, f, ensure_ascii=False, indent=2)
+            root.after(12000, lambda: (panel.close(), root.destroy()))  # le temps de la capture d'écran
+            return
+        root.after(500, check)
+    root.after(1500, check)
+
+
 # ---------------------------------------------------------------------------
 # Panneau de gestion
 
-def manager_window(selftest=False):
+def manager_window(selftest=False, embedtest=None):
     from tkinter import filedialog, messagebox, simpledialog
     tk, ttk, Btn, Switch, Bar, card, label, entry, scroll_area = _ui()
 
+    E.allow_mixed_dpi()  # avant la fenêtre : la page Rechercher peut y ranger le site
     root = tk.Tk()
     root.title("Melofinds PC")
     root.geometry("1040x700")
@@ -493,18 +601,15 @@ def manager_window(selftest=False):
     _style(root)
     _icon(root)
 
-    # ----- Mise en page : un rail d'icônes à gauche (68 px) ; au survol, la barre s'ouvre
-    # par-dessus la page (animation), sans pousser le contenu.
-    RAIL, WIDE = 68, 236
-    rail_space = tk.Frame(root, bg=BG2, width=RAIL)
-    rail_space.pack(side="left", fill="y")
-    tk.Frame(root, bg=LINE, width=1).pack(side="left", fill="y")
+    # ----- Mise en page : barre fixe à gauche (icône + nom toujours visibles), page à droite
+    RAIL, WIDE = 56, 236  # RAIL : colonne des icônes dans la barre
+    side = tk.Frame(root, bg=BG2, width=WIDE, highlightthickness=0)
+    side.pack(side="left", fill="y")
+    side.pack_propagate(False)
+    side_line = tk.Frame(root, bg=LINE, width=1)
+    side_line.pack(side="left", fill="y")
     main = tk.Frame(root, bg=BG)
     main.pack(side="left", fill="both", expand=True)
-    side = tk.Frame(root, bg=BG2, width=RAIL, highlightthickness=0)
-    side.place(x=0, y=0, width=RAIL, relheight=1)
-    side.pack_propagate(False)
-    side_edge = tk.Frame(root, bg=LINE2, width=1)  # bord de la barre ouverte
 
     # ----- Barre d'écoute (en bas, sur toutes les pages) : la prod jouée ici depuis le téléphone
     lb = {"v": None, "img": None, "photo": None, "sig": None, "drag": None, "st": None}
@@ -555,9 +660,9 @@ def manager_window(selftest=False):
     lb_bgs = [lbar, lb_in, lb_meta, lb_srow, lb_vu, lb_state, lb_title, lb_chips, lb_ch, lb_play, lb_ctl, lb_toggle, lb_stop,
               lb_seekrow, lb_pos, lb_seek, lb_len]
 
-    def lb_draw_buttons(pal, playing, busy):
+    def lb_draw_buttons(pal, playing, busy, inset=2):
         lb_toggle.delete("all")
-        lb_toggle.create_oval(2, 2, 42, 42, fill="#ffffff" if not busy else pal["chip"], outline="")
+        lb_toggle.create_oval(inset, inset, 44 - inset, 44 - inset, fill="#ffffff" if not busy else pal["chip"], outline="")
         dark = pal["bg"]
         if busy:
             lb_toggle.create_text(22, 22, text="…", fill="#ffffff", font=(FONT, 14, "bold"))
@@ -608,6 +713,22 @@ def manager_window(selftest=False):
             listen_command("toggle")
             st["s"] = "paused" if st["s"] == "playing" else "playing"  # tout de suite à l'écran
             lb["sig"] = None
+            press_anim(st)
+
+    def press_anim(st):
+        """Le bouton s'enfonce puis revient (animation du clic sur play / pause)."""
+        t0 = time.time()
+
+        def step():
+            k = min(1.0, (time.time() - t0) / 0.24)
+            inset = 2 + 5 * (1 - k) if k > 0.25 else 2 + 5 * (k / 0.25)
+            try:
+                lb_draw_buttons(listen_palette(st["color"]), st["s"] == "playing", False, inset)
+            except Exception:
+                return
+            if k < 1:
+                root.after(12, step)
+        step()
     lb_toggle.bind("<Button-1>", lb_toggle_click)
     lb_stop.bind("<Button-1>", lambda e: (listen_command("stop"), lbar.pack_forget()))
 
@@ -646,7 +767,7 @@ def manager_window(selftest=False):
     mark.place(relx=0.5, rely=0.5, anchor="center")
     mark.create_rectangle(0, 0, 34, 34, fill=ACCENT2, outline="")
     eq_bars = [mark.create_rectangle(8 + i * 5, 10, 10 + i * 5, 26, fill=ON_ACCENT, outline="") for i in range(4)]
-    eq = {"h": [0.4, 0.7, 0.5, 0.8], "t": [0.4, 0.7, 0.5, 0.8], "n": 0}
+    eq = {"h": [0.67, 0.67, 0.67, 0.67], "t": [0.45, 0.75, 0.55, 0.85], "vu": False}
     tl = tk.Frame(logo, bg=BG2)
     tl.pack(side="left", padx=(2, 0))
     label(tl, "Melofinds", 14, bold=True).pack(anchor="w")
@@ -681,8 +802,7 @@ def manager_window(selftest=False):
         row, bar, g, t, badge = nav_items[key]
         on = current["page"] == key
         bg = PANEL2 if on else (PANEL if hover else BG2)
-        for w in (row, g, t, badge):
-            w.configure(bg=bg)
+        fade([row, g, t, badge], bg, 110 if hover else 200)
         t.configure(fg=FG if (on or hover) else MUTED)
         g.configure(image=ico(NAV_ICONS.get(key, "circle-dot"), 20, "accent" if on else "fg" if hover else "muted"))
 
@@ -737,78 +857,35 @@ def manager_window(selftest=False):
     lt = tk.Label(lrow, text="Ouvrir Melofinds", bg=BG2, fg=MUTED, font=(FONT, 9, "bold"), anchor="w")
     lt.pack(side="left")
     for w in (lrow, lg, lt):
-        w.bind("<Button-1>", lambda e: WW.open_search(""))
+        w.bind("<Button-1>", lambda e: show("search"))
     vrow = tk.Frame(foot, bg=BG2)
     vrow.pack(fill="x", pady=(6, 0))
     tk.Frame(vrow, bg=BG2, width=RAIL, height=1).pack(side="left")
     label(vrow, f"version {C.VERSION}", 8, FAINT, mono=True).pack(side="left")
 
-    # Ouverture de la barre au survol (par-dessus la page), refermée quand la souris part
-    sb = {"w": RAIL, "target": RAIL, "job": None, "t0": 0.0, "from": RAIL, "pending": None}
-
-    def side_anim(target):
-        if sb["target"] == target and (sb["job"] or sb["w"] == target):
-            return
-        sb.update(target=target, t0=time.time(), **{"from": sb["w"]})
-        if sb["job"]:
-            return
-
-        def step():
-            k = min(1.0, (time.time() - sb["t0"]) / 0.18)
-            w = ease(sb["from"], sb["target"], k)
-            sb["w"] = w
-            side.place_configure(width=int(w))
-            side.lift()
-            if w > RAIL + 2:
-                side_edge.place(x=int(w), y=0, width=1, relheight=1, height=side.winfo_height() - root.winfo_height() if lbar.winfo_ismapped() else 0)
-                side_edge.lift()
-            else:
-                side_edge.place_forget()
-            nav_ind.lift()
-            sb["job"] = root.after(12, step) if k < 1 else None
-        step()
-
-    def side_hover(e=None):
-        try:
-            x, y = root.winfo_pointerxy()
-            sx, sy = side.winfo_rootx(), side.winfo_rooty()
-            inside = sx <= x < sx + max(RAIL, int(sb["w"])) and sy <= y < sy + side.winfo_height()
-        except Exception:
-            return
-        want = WIDE if inside else RAIL
-        if want != sb["target"]:
-            if sb["pending"]:
-                root.after_cancel(sb["pending"])
-            # un petit délai : la barre ne s'ouvre pas quand la souris ne fait que passer
-            sb["pending"] = root.after(90 if inside else 160, lambda: (sb.update(pending=None), side_anim(want if want == WIDE and inside_now() else RAIL if not inside_now() else WIDE)))
-
-    def inside_now():
-        try:
-            x, y = root.winfo_pointerxy()
-            sx, sy = side.winfo_rootx(), side.winfo_rooty()
-            return sx <= x < sx + max(RAIL, int(sb["w"])) and sy <= y < sy + side.winfo_height()
-        except Exception:
-            return False
-    root.bind_all("<Motion>", side_hover, add="+")
-    root.bind("<Leave>", lambda e: side_hover())
-
     def eq_tick():
-        """Logo : les barres bougent vite quand un son joue, respirent doucement sinon."""
+        """Logo : les barres dansent seulement quand un son joue (immobiles sinon)."""
         import random
         playing = bool(PLAYER.path and PLAYER.mode() == "playing") or bool(lb.get("st") and lb["st"].get("s") == "playing")
-        eq["n"] += 1
-        if playing or eq["n"] % 6 == 0:
-            eq["t"] = [random.uniform(0.25, 1.0) if playing else random.uniform(0.35, 0.6) for _ in range(4)]
+        rest = [0.45, 0.75, 0.55, 0.85]
+        eq["t"] = [random.uniform(0.25, 1.0) for _ in range(4)] if playing else rest
+        moved = False
         for i, r in enumerate(eq_bars):
-            eq["h"][i] += (eq["t"][i] - eq["h"][i]) * (0.45 if playing else 0.15)
-            h = 4 + 18 * eq["h"][i]
-            mark.coords(r, 8 + i * 5, 27 - h, 10 + i * 5, 27)
+            d = (eq["t"][i] - eq["h"][i]) * (0.45 if playing else 0.3)
+            if abs(d) > 0.002:
+                eq["h"][i] += d
+                moved = True
+                h = 4 + 18 * eq["h"][i]
+                mark.coords(r, 8 + i * 5, 27 - h, 10 + i * 5, 27)
         if lbar.winfo_ismapped():  # vu-mètre de la barre d'écoute
             live = bool(lb.get("st") and lb["st"].get("s") == "playing")
-            for i, r in enumerate(lb_vu_bars):
-                h = 2 + (random.uniform(2, 10) if live else 1)
-                lb_vu.coords(r, i * 5, 12 - h, i * 5 + 3, 12)
-        root.after(70 if playing else 140, eq_tick)
+            if live or eq.get("vu"):
+                for i, r in enumerate(lb_vu_bars):
+                    h = 2 + (random.uniform(2, 10) if live else 1)
+                    lb_vu.coords(r, i * 5, 12 - h, i * 5 + 3, 12)
+                eq["vu"] = live
+        # au repos : on vérifie juste de temps en temps si un son démarre (rien ne bouge)
+        root.after(70 if (playing or moved) else 400, eq_tick)
 
     # En-tête de page + zone de message
     head = tk.Frame(main, bg=BG, padx=30, pady=22)
@@ -863,6 +940,10 @@ def manager_window(selftest=False):
             if k != key:
                 f.place_forget()
         f, t, s = pages[key]
+        if key == "search":
+            head.pack_forget()
+        elif not head.winfo_ismapped():
+            head.pack(fill="x", before=body)
         page_title.configure(text=t)
         page_sub.configure(text=s)
         page_icon.configure(image=ico(NAV_ICONS.get(key, "circle-dot"), 24, "accent"))
@@ -874,7 +955,7 @@ def manager_window(selftest=False):
         if slide["job"]:
             root.after_cancel(slide["job"])
             slide["job"] = None
-        t0, start = time.time(), (0 if same else 28)
+        t0, start = time.time(), (0 if same or key == "search" else 28)
 
         def step():
             k = min(1.0, (time.time() - t0) / 0.18)
@@ -884,98 +965,69 @@ def manager_window(selftest=False):
         if key in on_show:
             on_show[key]()
 
-    # ================= Rechercher : le moteur de prods Melofinds (fenêtre Melofinds reliée à ce PC)
-    srch = page("search", "Rechercher des prods", "Décris la prod que tu veux, ou colle le lien d'une prod ou d'une playlist "
-                                                 "YouTube : licence, BPM et clé vérifiés, « Sur mon PC » la télécharge ici.")
-    sc_card = card(srch, padx=20, pady=18)
-    sc_card.pack(fill="x", pady=(0, 14))
-    q_var = tk.StringVar()
-    q_row = tk.Frame(sc_card, bg=PANEL)
-    q_row.pack(fill="x")
-    q_entry = tk.Entry(q_row, textvariable=q_var, bg=PANEL2, fg=FG, insertbackground=FG, relief="flat", font=(FONT, 13),
-                       highlightthickness=1, highlightbackground=LINE2, highlightcolor=ACCENT)
-    q_entry.pack(side="left", fill="x", expand=True, ipady=10, padx=(0, 10))
-    q_hint = "Prod à la Luther, boom bap 90 BPM, lien YouTube…"
-    q_state = {"hint": True}
+    # ================= Rechercher : le VRAI site Melofinds, rangé dans le logiciel (Windows)
+    s_outer = tk.Frame(body, bg=BG)
+    pages["search"] = (s_outer, "Rechercher des prods", "")
+    web_host = tk.Frame(s_outer, bg=BG, highlightthickness=0)  # la fenêtre du site vient se ranger ici
+    web_host.pack(fill="both", expand=True)
+    web_msg = tk.Frame(web_host, bg=BG)
+    web_ic = tk.Label(web_msg, image=ico("search", 24, "accent"), bg=BG)
+    web_ic.pack(pady=(0, 12))
+    web_title = label(web_msg, "Chargement du moteur Melofinds…", 15, bold=True)
+    web_title.pack()
+    web_sub = tk.Label(web_msg, text="", bg=BG, fg=MUTED, font=(FONT, 10), wraplength=520, justify="center")
+    web_sub.pack(pady=(6, 14))
+    web_btns = tk.Frame(web_msg, bg=BG)
+    web_btns.pack()
+    panel = E.Panel()
+    web = {"seen": None, "preload": None}
 
-    def q_set_hint(on):
-        q_state["hint"] = on
-        if on:
-            q_var.set(q_hint)
-            q_entry.configure(fg=FAINT)
+    def web_start(force=False):
+        if not E.WINDOWS:
+            web_show_msg("error", "la recherche intégrée marche sur Windows")
+            return
+        if panel.alive() or panel.state == "loading":
+            return
+        root.update_idletasks()
+        w, h = max(200, body.winfo_width()), max(200, body.winfo_height())
+        x, y = body.winfo_rootx(), body.winfo_rooty()
+        panel.start(web_host.winfo_id(), (x, y), (w, h))
+        web_show_msg("loading")
+
+    def web_show_msg(state, detail=""):
+        for c in web_btns.winfo_children():
+            c.destroy()
+        if state == "ready":
+            web_msg.place_forget()
+            return
+        if state == "loading":
+            web_title.configure(text="Chargement du moteur Melofinds…")
+            web_sub.configure(text="Le site Melofinds s'ouvre ici, dans le logiciel.")
         else:
-            if q_var.get() == q_hint:
-                q_var.set("")
-            q_entry.configure(fg=FG)
-    q_entry.bind("<FocusIn>", lambda e: q_state["hint"] and q_set_hint(False))
-    q_entry.bind("<FocusOut>", lambda e: not q_var.get().strip() and q_set_hint(True))
-    q_set_hint(True)
+            web_title.configure(text="La recherche n'a pas pu s'ouvrir ici")
+            web_sub.configure(text=(f"Raison : {detail}. " if detail else "") + "Tu peux réessayer, ou l'ouvrir dans une fenêtre à part.")
+            if E.WINDOWS:
+                Btn(web_btns, "Réessayer", lambda: web_start(True), kind="primary").pack(side="left", padx=4)
+            Btn(web_btns, "Ouvrir dans une fenêtre", lambda: (WW.open_search(""), toast("Fenêtre Melofinds ouverte"))).pack(side="left", padx=4)
+        web_msg.place(relx=0.5, rely=0.42, anchor="center")
+        web_msg.lift()
 
-    def do_search(q=None):
-        q = (q if q is not None else ("" if q_state["hint"] else q_var.get())).strip()
-        if not q:
-            q_entry.focus_set()
-            return
-        try:
-            WW.open_search(q)
-            toast("La recherche s'ouvre dans la fenêtre Melofinds…")
-        except Exception as e:
-            toast(f"Ouverture impossible : {e}")
-        fill_recent()
-    q_entry.bind("<Return>", lambda e: do_search())
-    Btn(q_row, "Rechercher", do_search, kind="primary", padx=20, pady=11).pack(side="left")
-    label(sc_card, "Le lien d'une prod ouvre directement sa fiche ; celui d'une playlist, toutes ses prods.", 9, MUTED).pack(anchor="w", pady=(10, 0))
-    clip_row = tk.Frame(sc_card, bg=PANEL)
-    clip_lbl = label(clip_row, "", 9, FG)
-    clip_lbl.pack(side="left")
-    clip_btn = Btn(clip_row, "Chercher ce lien", kind="ghost", padx=10, pady=4)
-    clip_btn.pack(side="right")
+    def web_poll():
+        st = panel.state
+        if st == "ready" and not panel.alive():  # navigateur fermé : on le relance à la prochaine visite
+            panel.state = "idle"
+            st = "idle"
+            if current["page"] == "search":
+                web_start()
+        if (st, panel.detail) != web["seen"]:
+            web["seen"] = (st, panel.detail)
+            if st in ("ready", "error", "loading"):
+                web_show_msg(st, panel.detail)
+        root.after(300, web_poll)
 
-    def check_clip():
-        try:
-            link = WW.link_in(root.clipboard_get())
-        except Exception:
-            link = None
-        if link:
-            clip_lbl.configure(text=f"Lien copié : {link[:70]}{'…' if len(link) > 70 else ''}")
-            clip_btn.command = lambda: do_search(link)
-            if not clip_row.winfo_ismapped():
-                clip_row.pack(fill="x", pady=(10, 0))
-        elif clip_row.winfo_ismapped():
-            clip_row.pack_forget()
-
-    ideas = card(srch, padx=20, pady=14)
-    ideas.pack(fill="x", pady=(0, 14))
-    label(ideas, "IDÉES", 8, FAINT, bold=True).pack(anchor="w")
-    ideas_row = tk.Frame(ideas, bg=PANEL)
-    ideas_row.pack(fill="x", pady=(8, 0))
-    for idea in ("prod à la Luther", "La Fève type beat", "boom bap 90 BPM", "drill UK", "pluggnb"):
-        Btn(ideas_row, idea, lambda q=idea: do_search(q), padx=10, pady=5, size=9).pack(side="left", padx=(0, 6))
-    rec_card = card(srch, padx=20, pady=14)
-    rec_card.pack(fill="x")
-    rec_head = tk.Frame(rec_card, bg=PANEL)
-    rec_head.pack(fill="x")
-    label(rec_head, "RECHERCHES RÉCENTES", 8, FAINT, bold=True).pack(side="left")
-    Btn(rec_head, "Ouvrir Melofinds", lambda: (WW.open_search(""), toast("Fenêtre Melofinds ouverte")), kind="subtle", padx=0, pady=0).pack(side="right")
-    rec_box = tk.Frame(rec_card, bg=PANEL)
-    rec_box.pack(fill="x", pady=(6, 0))
-
-    def fill_recent():
-        for w in rec_box.winfo_children():
-            w.destroy()
-        rec = [x for x in C.load_config().get("recent_searches", []) if isinstance(x, str)]
-        if not rec:
-            label(rec_box, "Tes recherches apparaîtront ici.", 9, MUTED).pack(anchor="w", pady=4)
-            return
-        for q in rec:
-            r = tk.Label(rec_box, text=("↪  " if WW.link_in(q) else "⌕  ") + q[:90], bg=PANEL, fg=FG, font=(FONT, 10),
-                         anchor="w", cursor="hand2", padx=4, pady=5)
-            r.pack(fill="x")
-            r.bind("<Button-1>", lambda e, q=q: do_search(q))
-            r.bind("<Enter>", lambda e, w=r: w.configure(bg=PANEL2))
-            r.bind("<Leave>", lambda e, w=r: w.configure(bg=PANEL))
-    fill_recent()
-    on_show["search"] = lambda: (fill_recent(), check_clip())
+    web_host.bind("<Configure>", lambda e: panel.resize(e.width, e.height))
+    on_show["search"] = lambda: (web_start(), root.after(200, panel.focus))
+    web_poll()
 
     # ================= Accueil
     home = page("home", "File d'attente", "Les prods envoyées depuis Melofinds Web : celle qui arrive, celles qui attendent, "
@@ -1297,6 +1349,8 @@ def manager_window(selftest=False):
         row.pack(fill="x")
         btn = tk.Label(row, text="▶", bg=color, fg=BG, font=(SYMB, 9, "bold"), width=3, cursor="hand2")
         btn.pack(side="left")
+        btn.bind("<Enter>", lambda e: fade([btn], blend("#ffffff", color, 0.25), 110))
+        btn.bind("<Leave>", lambda e: fade([btn], color, 180))
         tag = "INSTRU" if cur["instru"] else cur["label"].upper() if cur["label"] else "MIX"
         tk.Label(row, text=tag, bg=PANEL2, fg=GREEN if cur["instru"] else ACCENT if cur["label"] else MUTED,
                  font=(MONO, 7, "bold")).pack(side="left", padx=(7, 4))
@@ -1341,6 +1395,7 @@ def manager_window(selftest=False):
                 PLAYER.toggle()
             else:
                 PLAYER.play(path)
+            pulse(btn, "#ffffff", color, 320)
             refresh_players()
             return "break"
 
@@ -1419,7 +1474,7 @@ def manager_window(selftest=False):
 
         def hov(on):  # la bordure s'allume au survol, dans la couleur du projet
             if c.winfo_exists():
-                c.configure(highlightbackground=color if on or sel["id"] == it.id else blend(color, PANEL, 0.55))
+                fade([c], color if on or sel["id"] == it.id else blend(color, PANEL, 0.55), 130 if on else 220, "highlightbackground")
 
         def leave(e):
             try:
@@ -2423,8 +2478,7 @@ def manager_window(selftest=False):
                 lb_draw_seek(listen_palette(st["color"]), st["pos"], st["len"])
             lb_len.configure(text=_mmss(st["len"] / 1000) if st["len"] else "")
             if not lbar.winfo_ismapped():
-                lbar.pack(side="bottom", fill="x", before=rail_space)
-                side.place_configure(height=-104)
+                lbar.pack(side="bottom", fill="x", before=side)
                 # un peu plus haute pendant l'écoute : le menu de gauche garde toute sa place
                 root.minsize(880, 690)
                 if root.winfo_height() < 690:
@@ -2433,7 +2487,6 @@ def manager_window(selftest=False):
             lb["st"], lb["sig"] = None, None
             if lbar.winfo_ismapped():
                 lbar.pack_forget()
-                side.place_configure(height=0)
                 root.minsize(880, 580)
         root.after(250, tick_listen)
 
@@ -2444,6 +2497,15 @@ def manager_window(selftest=False):
     root.after(350, lambda: current["page"] in nav_items and move_indicator(current["page"], instant=True))
     root.bind("<Configure>", lambda e: e.widget is root and current["page"] in nav_items and move_indicator(current["page"], instant=True), add="+")
     tick_player()
+    def quit_all():
+        panel.close()
+        root.destroy()
+    root.protocol("WM_DELETE_WINDOW", quit_all)
+    root.bind("<Destroy>", lambda e: e.widget is root and threading.Thread(target=panel.close, daemon=True).start(), add="+")
+    if embedtest:
+        run_embedtest(root, show, panel, embedtest)
+        root.mainloop()
+        return
     if selftest:
         for k in ("home", "prods", "flmake", "devices", "settings"):
             show(k)

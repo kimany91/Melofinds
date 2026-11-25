@@ -191,12 +191,17 @@ ouvre le site dans Chrome) :
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
-### Panneau PC : rail, icônes, animations
+### Panneau PC : barre, icônes, animations, recherche
 
-- Barre latérale en **rail d'icônes** (68 px) ; au survol elle s'ouvre **par-dessus la page**
-  (animation de largeur), l'indicateur de la page **glisse**, les pages arrivent en glissant,
-  les messages montent. Logo **égaliseur animé** (il danse quand un son joue), vu-mètre dans
-  la barre d'écoute, bordure des projets qui s'allume au survol.
+- Barre latérale **fixe** (icône + nom toujours visibles). Les animations répondent à la
+  souris seulement : couleurs en fondu au survol (menu, boutons, cartes), flash au clic sur
+  play, bouton de la barre d'écoute qui s'enfonce, indicateur de page qui glisse. Le logo
+  **égaliseur** ne bouge que quand un son joue.
+- **Rechercher** : le vrai site Melofinds est rangé **dans** la page (Windows : fenêtre Edge /
+  Chrome en mode application, profil `web-panel`, barre de titre cachée, elle suit la taille
+  du logiciel ; `pc/mf_embed.py`). Reliée à ce PC la première fois (« Sur mon PC »). Si ça
+  échoue : la raison s'affiche, avec « Réessayer » et « Ouvrir dans une fenêtre ». Vérifié à
+  chaque construction (capture d'écran dans le journal de la CI).
 - Icônes **Lucide** (licence ISC, texte dans `pc/mf_icons.py` et `pc/assets/LICENSE-lucide.txt`),
   rendues en PNG aux couleurs du logiciel et intégrées (`pc/mf_icons.py`).
 - **Mes projets FL** : liste lue en arrière-plan, seulement quand le dossier change (plus de

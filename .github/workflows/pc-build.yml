@@ -66,7 +66,7 @@ jobs:
         run: |
           pyinstaller --noconfirm --onedir --noconsole --noupx --name MelofindsPC `
             --icon pc/assets/melofinds.ico --version-file build/version_info.txt `
-            --paths pc --hidden-import mf_gui --hidden-import mf_flmake --hidden-import mf_library --hidden-import mf_tunebat --hidden-import mf_ytlogin --hidden-import mf_keybpm --hidden-import mf_webwin --hidden-import mf_icons --hidden-import segno pc/melofinds_pc.py
+            --paths pc --hidden-import mf_gui --hidden-import mf_flmake --hidden-import mf_library --hidden-import mf_tunebat --hidden-import mf_ytlogin --hidden-import mf_keybpm --hidden-import mf_webwin --hidden-import mf_icons --hidden-import mf_embed --hidden-import segno pc/melofinds_pc.py
           Get-ChildItem dist\MelofindsPC | Select-Object Name, Length
 
       - name: Outils inclus (yt-dlp, ffmpeg, Deno), empreintes vérifiées
@@ -90,6 +90,33 @@ jobs:
           Write-Host "Analyse sur le PC : $($kb | ConvertTo-Json -Compress)"
           if (-not $kb.key) { Write-Error "Analyse clé / BPM sur le PC ratée"; exit 1 }
           if ($p.ExitCode -ne 0) { Write-Error "Auto-test raté (code $($p.ExitCode))"; exit 1 }
+
+      - name: Recherche dans le logiciel (site Melofinds rangé dans la page Rechercher)
+        shell: pwsh
+        timeout-minutes: 4
+        run: |
+          $out = "$PWD\embed.json"
+          $p = Start-Process -FilePath test\MelofindsPC\MelofindsPC.exe -ArgumentList '--embedtest', $out -PassThru
+          $t = 0
+          while (-not (Test-Path $out) -and $t -lt 90) { Start-Sleep 1; $t++ }
+          Start-Sleep 5
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 1040, 700
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen(40, 40, 0, 0, $bmp.Size)
+          $small = New-Object System.Drawing.Bitmap $bmp, 624, 420
+          $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+          $ep = New-Object System.Drawing.Imaging.EncoderParameters 1
+          $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), 55L
+          $small.Save("$PWD\embed.jpg", $codec, $ep)
+          $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("$PWD\embed.jpg"))
+          Write-Host "CAPTURE-DEBUT"
+          for ($i = 0; $i -lt $b64.Length; $i += 4000) { Write-Host $b64.Substring($i, [Math]::Min(4000, $b64.Length - $i)) }
+          Write-Host "CAPTURE-FIN"
+          $p | Wait-Process -Timeout 30 -ErrorAction SilentlyContinue
+          if (Test-Path $out) { Get-Content $out } else { Write-Host "embed.json absent" }
+          $r = Get-Content $out -Raw | ConvertFrom-Json
+          if ($r.state -ne 'ready' -or -not $r.parent_ok) { Write-Error "Le site ne s'est pas rangé dans la page Rechercher"; exit 1 }
 
       - name: Construire l'installateur (Inno Setup)
         shell: pwsh
