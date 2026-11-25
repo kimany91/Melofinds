@@ -37,7 +37,12 @@ jobs:
           python-version: '3.12'
 
       - name: Tests
-        run: python -m unittest pc/test_melofinds_pc.py -v
+        shell: pwsh
+        run: |
+          # moteur d'analyse (Essentia) pour le test dans un vrai Edge
+          python -c "import sys; sys.path.insert(0, 'pc'); import mf_core as C; e = C.ensure_essentia(print, 'build/essentia-test'); print(e); sys.exit(1 if e else 0)"
+          $env:MELOFINDS_ESSENTIA = "$PWD\build\essentia-test"
+          python -m unittest pc/test_melofinds_pc.py -v
 
       - name: Version
         shell: pwsh
@@ -61,7 +66,7 @@ jobs:
         run: |
           pyinstaller --noconfirm --onedir --noconsole --noupx --name MelofindsPC `
             --icon pc/assets/melofinds.ico --version-file build/version_info.txt `
-            --paths pc --hidden-import mf_gui --hidden-import mf_flmake --hidden-import mf_library --hidden-import mf_tunebat --hidden-import mf_ytlogin --hidden-import segno pc/melofinds_pc.py
+            --paths pc --hidden-import mf_gui --hidden-import mf_flmake --hidden-import mf_library --hidden-import mf_tunebat --hidden-import mf_ytlogin --hidden-import mf_keybpm --hidden-import segno pc/melofinds_pc.py
           Get-ChildItem dist\MelofindsPC | Select-Object Name, Length
 
       - name: Outils inclus (yt-dlp, ffmpeg, Deno), empreintes vérifiées
@@ -81,6 +86,9 @@ jobs:
           Copy-Item -Recurse build\tools test\MelofindsPC\tools
           $p = Start-Process -FilePath test\MelofindsPC\MelofindsPC.exe -ArgumentList '--selftest', "$PWD\selftest.json" -Wait -PassThru
           if (Test-Path selftest.json) { Get-Content selftest.json } else { Write-Host "selftest.json absent" }
+          $kb = (Get-Content selftest.json -Raw | ConvertFrom-Json).keybpm
+          Write-Host "Analyse sur le PC : $($kb | ConvertTo-Json -Compress)"
+          if (-not $kb.key) { Write-Error "Analyse clé / BPM sur le PC ratée"; exit 1 }
           if ($p.ExitCode -ne 0) { Write-Error "Auto-test raté (code $($p.ExitCode))"; exit 1 }
 
       - name: Construire l'installateur (Inno Setup)

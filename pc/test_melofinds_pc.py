@@ -1689,7 +1689,7 @@ class TunebatSurLePC(unittest.TestCase):
         t.request("c", {"cmd": "tba", "v": "dQw4w9WgXcQ", "ts": now}, cfg)
         t.request("c", {"cmd": "tba", "v": "aaaaaaaaaaa", "ts": now - 10 * 60_000}, cfg)  # trop ancienne
         self.assertTrue(done.wait(5))
-        self.assertIn({"v": "jNQXAC9IVRw", "key": "F# min", "bpm": 140, "camelot": "11A"}, replies)
+        self.assertIn({"v": "jNQXAC9IVRw", "key": "F# min", "bpm": 140, "camelot": "11A", "src": "tunebat"}, replies)
         self.assertIn({"v": "dQw4w9WgXcQ", "err": "Tunebat n'a pas donné de résultat"}, replies)
         self.assertEqual(sum(1 for r in replies if r.get("s") == "loading"), 2)
         self.assertFalse(any(r["v"] == "aaaaaaaaaaa" for r in replies))
@@ -1949,3 +1949,87 @@ class VerificationTunebat(unittest.TestCase):
         self.assertEqual(hit, {"key": "F# min", "bpm": 140, "camelot": "11A"})
         self.assertIn("verify", steps)
         self.assertTrue(page_cdp and all(page_cdp))  # jamais pilotée pendant la vérification
+
+
+def _prod_wav(path, root=9, minor=True, bpm=140, secs=30):
+    """Prod de test : accords dans une clé connue (i-iv-V-i) + kick / snare / hats à un BPM connu."""
+    import math, random, struct, wave
+    sr = 22050
+    random.seed(1)
+    n = sr * secs
+    x = [0.0] * n
+    prog = [[0, 3, 7], [5, 8, 12], [7, 11, 14], [0, 3, 7]] if minor else [[0, 4, 7], [5, 9, 12], [7, 11, 14], [0, 4, 7]]
+    bar = 60 / bpm * 4
+    f = lambda m: 440 * 2 ** ((m - 69) / 12)
+    for i in range(n):
+        t = i / sr
+        ch = prog[int(t / bar) % 4]
+        x[i] = 0.07 * (sum(math.sin(2 * math.pi * f(root + 60 + iv) * t) for iv in ch) + 0.7 * math.sin(2 * math.pi * f(root + 36 + ch[0]) * t))
+    bl, k = 60 / bpm, 0
+    while k * bl < secs:
+        st = int(k * bl * sr)
+        for j in range(int(sr * 0.2)):
+            if st + j >= n:
+                break
+            t = j / sr
+            x[st + j] += (0.9 * math.sin(2 * math.pi * (50 + 110 * math.exp(-t * 30)) * t) * math.exp(-t * 10) if k % 2 == 0
+                          else 0.45 * (random.random() * 2 - 1) * math.exp(-t * 22))
+        for h in (0.25, 0.5, 0.75):
+            hs = int((k + h) * bl * sr)
+            for j in range(int(sr * 0.03)):
+                if hs + j < n:
+                    x[hs + j] += 0.12 * (random.random() * 2 - 1) * math.exp(-j / sr * 140)
+        k += 1
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(b"".join(struct.pack("<h", max(-32767, min(32767, int(v * 20000)))) for v in x))
+
+
+class AnalyseSurLePC(unittest.TestCase):
+    """Clé / BPM calculés sur le PC (Essentia), sans Tunebat.com ni vérification humaine."""
+
+    def test_conversion_du_resultat(self):
+        import mf_keybpm as K
+        self.assertEqual(K.to_result({"key": "F#", "scale": "minor", "bpm": 70.2}), {"key": "F# min", "bpm": 140, "camelot": ""})
+        self.assertEqual(K.to_result({"key": "Eb", "scale": "major", "bpm": 92.4}), {"key": "Eb maj", "bpm": 92, "camelot": ""})
+        self.assertEqual(K.to_result({"key": "C", "scale": "minor", "bpm": 340}), {"key": "C min", "bpm": 170, "camelot": ""})
+        for bad in ({"err": "boum"}, {"key": "", "scale": "", "bpm": 0}, None):
+            with self.assertRaises(K.KeyBpmError):
+                K.to_result(bad)
+
+    def test_pc_d_abord_tunebat_en_secours(self):
+        import mf_keybpm as K
+        import mf_tunebat as T
+        import mf_worker as W
+        cfg = mpc.load_config()
+        with mock.patch.object(K, "available", lambda *a: True), \
+                mock.patch.object(K, "analyze", lambda wav, progress=None: {"key": "A min", "bpm": 140, "camelot": ""}), \
+                mock.patch.object(T, "analyze", lambda *a, **k: self.fail("Tunebat ne doit pas être appelé")):
+            self.assertEqual(W.key_bpm("x.wav", "v", cfg)["src"], "essentia")
+
+        def local_fail(wav, progress=None):
+            raise K.KeyBpmError("son illisible")
+        with mock.patch.object(K, "available", lambda *a: True), mock.patch.object(K, "analyze", local_fail), \
+                mock.patch.object(T, "analyze", lambda *a, **k: {"key": "B min", "bpm": 150, "camelot": "10A"}):
+            self.assertEqual(W.key_bpm("x.wav", "v", cfg), {"key": "B min", "bpm": 150, "camelot": "10A", "src": "tunebat"})
+        with mock.patch.object(K, "available", lambda *a: True), \
+                mock.patch.object(K, "analyze", lambda *a, **k: self.fail("analyse locale coupée dans les réglages")), \
+                mock.patch.object(T, "analyze", lambda *a, **k: {"key": "B min", "bpm": 150, "camelot": ""}):
+            self.assertEqual(W.key_bpm("x.wav", "v", {**cfg, "analyse_locale": False})["src"], "tunebat")
+
+    def test_dans_un_vrai_navigateur(self):
+        import mf_keybpm as K
+        import mf_tunebat as T
+        browser = T.find_browser()
+        ess = os.environ.get("MELOFINDS_ESSENTIA") or str(mpc.P.tools)
+        ffmpeg = mpc.tool_path("ffmpeg.exe")
+        if not browser or not K.available(ess) or not ffmpeg:
+            self.skipTest("navigateur, Essentia ou ffmpeg absent")
+        d = Path(tempfile.mkdtemp(prefix="mf-kb-"))
+        cases = [("am140.wav", 9, True, 140, "A min"), ("cmaj90.wav", 0, False, 90, "C maj"), ("bm145.wav", 11, True, 145, "B min")]
+        for name, root, minor, bpm, key in cases:
+            _prod_wav(d / name, root, minor, bpm)
+            hit = K.analyze(d / name, browser=browser, folder=ess, ffmpeg=ffmpeg, extra_args=[] if mpc.WINDOWS else ["--no-sandbox"])
+            self.assertEqual((hit["key"], hit["bpm"]), (key, bpm), name)

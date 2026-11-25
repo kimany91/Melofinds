@@ -69,6 +69,33 @@ def selftest(out):
             ok, detail = C.download(vid, d, {}, None, lambda st, pct: seen.update({st: max(seen.get(st) or 0, pct or 0)}))
             res["download"] = {"ok": ok, "detail": detail, "progress": seen,
                                "files": [str(x.relative_to(d)) for x in Path(d).rglob("*")]}
+    # Clé / BPM sur le PC (Essentia dans Edge invisible) : prod de test en la mineur à 140 BPM
+    try:
+        import math
+        import struct
+        import wave
+        import mf_keybpm as K
+        with tempfile.TemporaryDirectory(prefix="melofinds-kb-test-") as d:
+            wav = Path(d) / "test.wav"
+            sr, n = 22050, 22050 * 24
+            f = lambda m: 440 * 2 ** ((m - 69) / 12)
+            prog = [[0, 3, 7], [5, 8, 12], [7, 11, 14], [0, 3, 7]]
+            data = []
+            for i in range(n):
+                t = i / sr
+                ch = prog[int(t / (60 / 140 * 4)) % 4]
+                v = 0.07 * (sum(math.sin(2 * math.pi * f(69 + iv) * t) for iv in ch) + 0.7 * math.sin(2 * math.pi * f(45 + ch[0]) * t))
+                b = (t % (60 / 140))
+                v += 0.9 * math.sin(2 * math.pi * (50 + 110 * math.exp(-b * 30)) * b) * math.exp(-b * 10) if int(t / (60 / 140)) % 2 == 0 else 0
+                data.append(struct.pack("<h", max(-32767, min(32767, int(v * 20000)))))
+            with wave.open(str(wav), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(sr)
+                w.writeframes(b"".join(data))
+            res["keybpm"] = K.analyze(wav)
+    except Exception as e:
+        res["keybpm"] = f"erreur : {e}"[:200]
     # Copie d'écoute pour l'app web (vrai ffmpeg) : un son de 3 min doit tenir en 2 pièces jointes ntfy
     try:
         import math

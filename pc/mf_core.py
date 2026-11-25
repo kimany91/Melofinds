@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.20.10"
+VERSION = "1.21.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -1040,7 +1040,48 @@ def ensure_tools(progress=None):
                 shutil.copyfile(dest, P.tools / name)
         if not (P.tools / name).exists():
             errors.append(f"{name} : introuvable après installation")
+    errors += ensure_essentia(progress)
     return errors
+
+
+# Essentia (essentia.js, UPF / MTG, AGPL-3.0) : clé et BPM calculés sur le PC (mf_keybpm).
+# Paquet officiel npm, version figée, empreinte SHA-256 vérifiée.
+ESSENTIA = {
+    "url": "https://registry.npmjs.org/essentia.js/-/essentia.js-0.1.3.tgz",
+    "sha256": "161c53527a45b5de6ca21199084f7d92d6a2a5551cbd031e23ae8e461686bfdf",
+    "files": {"package/dist/essentia-wasm.web.js": "essentia-wasm.web.js",
+              "package/dist/essentia-wasm.web.wasm": "essentia-wasm.web.wasm",
+              "package/dist/essentia.js-core.js": "essentia.js-core.js",
+              "package/LICENSE": "essentia-LICENSE.txt"},
+}
+
+
+def ensure_essentia(progress=None, folder=None):
+    """Installe les fichiers d'Essentia dans le dossier des outils. Renvoie la liste des erreurs."""
+    import tarfile
+    folder = Path(folder or P.tools)
+    if all((folder / n).exists() for n in ESSENTIA["files"].values()):
+        return []
+    folder.mkdir(parents=True, exist_ok=True)
+    (progress or (lambda s: None))("Téléchargement du moteur d'analyse (Essentia)…")
+    with tempfile.TemporaryDirectory(prefix="melofinds-tool-", ignore_cleanup_errors=True) as tmp:
+        dest = Path(tmp) / "essentia.tgz"
+        try:
+            got = download_file(ESSENTIA["url"], dest, progress, "essentia")
+        except (urllib.error.URLError, OSError) as e:
+            return [f"essentia : téléchargement impossible ({e})"]
+        if got != ESSENTIA["sha256"]:
+            return ["essentia : empreinte SHA-256 incorrecte, fichier rejeté"]
+        try:
+            with tarfile.open(dest, "r:gz") as t:
+                for member, out in ESSENTIA["files"].items():  # seulement ces fichiers, jamais un chemin de l'archive
+                    f = t.extractfile(member)
+                    if f is None:
+                        return [f"essentia : {member} absent de l'archive"]
+                    (folder / out).write_bytes(f.read())
+        except (tarfile.TarError, OSError) as e:
+            return [f"essentia : archive abîmée ({e})"]
+    return []
 
 
 def tool_env():

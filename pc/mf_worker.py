@@ -22,6 +22,7 @@ import threading
 import mf_core as C
 import mf_flmake as FM
 import mf_library as L
+import mf_keybpm as K
 import mf_tunebat as T
 import mf_ytlogin as Y
 from mf_core import P, log
@@ -461,19 +462,43 @@ def tunebat_on(cfg):
     return cfg.get("tunebat_analyzer", True) is not False
 
 
+def local_on(cfg):
+    """Clé / BPM calculés sur le PC (Essentia) avant Tunebat.com (réglage, activé par défaut)."""
+    return cfg.get("analyse_locale", True) is not False
+
+
+def key_bpm(wav, vid, cfg, progress=None, allow_verify=False):
+    """Clé et BPM d'un .wav : d'abord sur le PC (Essentia, rapide, sans fenêtre ni vérification),
+    sinon Tunebat Analyzer. → {key, bpm, camelot, src: "essentia" | "tunebat"}. Lève T.TunebatError."""
+    step = progress or (lambda *_: None)
+    errors = []
+    if local_on(cfg) and K.available():
+        try:
+            hit = K.analyze(wav, progress=step)
+            log(f"  Analyse sur le PC (Essentia) : {hit['key']}, {hit['bpm']} BPM")
+            return {**hit, "src": "essentia"}
+        except K.KeyBpmError as e:
+            log(f"  Analyse sur le PC : {e}")
+            errors.append(str(e))
+    try:
+        hit = T.analyze(wav, tag=vid, progress=step, timeout=90 if not allow_verify else T.TIMEOUT, allow_verify=allow_verify)
+        log(f"  Tunebat Analyzer : {hit['key']}, {hit['bpm']} BPM")
+        return {**hit, "src": "tunebat"}
+    except T.TunebatError as e:
+        log(f"  Tunebat Analyzer : {e}")
+        raise T.TunebatError(str(e) if not errors else f"{errors[0]} ; Tunebat : {e}")
+
+
 def download_analyzer(cfg):
-    """Pour les prods reçues : la clé / le BPM manquants sont demandés à Tunebat Analyzer."""
+    """Pour les prods reçues : la clé / le BPM manquants sont calculés (PC, sinon Tunebat)."""
     if not tunebat_on(cfg):
         return None
 
     def run(wav, vid, step):
         try:
-            # personne au PC pour une vérification Tunebat : on n'ouvre pas de fenêtre, on n'attend pas trop
-            hit = T.analyze(wav, tag=vid, timeout=90, allow_verify=False)
-            log(f"  Tunebat Analyzer : {hit['key']}, {hit['bpm']} BPM")
-            return hit
-        except T.TunebatError as e:
-            log(f"  Tunebat Analyzer : {e}")
+            # personne au PC : jamais de fenêtre de vérification Tunebat pendant un téléchargement
+            return key_bpm(wav, vid, cfg, allow_verify=False)
+        except T.TunebatError:
             return None
     return run
 
@@ -486,7 +511,7 @@ class Tba:
 
     def __init__(self, fetch=None, analyze=None, reply=None):
         self.fetch = fetch or (lambda vid, folder: C.download_listen(vid, folder, Y))
-        self.analyze = analyze or T.analyze
+        self.analyze = analyze or (lambda path, tag, progress=None: key_bpm(path, tag, C.load_config(), progress, allow_verify=True))
         self.reply = reply or C.reply
         self.q = queue.Queue()
         self.waiting = set()
@@ -534,7 +559,8 @@ class Tba:
                     log(f"Tunebat Analyzer pour l'app : {vid}")
                     # « verify » : la fenêtre de vérification Tunebat s'ouvre sur le PC (l'app le dit)
                     hit = self.analyze(path, tag=vid, progress=lambda st: st == "verify" and self._say(code, {"v": vid, "s": "verify"}))
-                    self._say(code, {"v": vid, "key": hit["key"], "bpm": hit["bpm"], "camelot": hit.get("camelot", "")})
+                    self._say(code, {"v": vid, "key": hit["key"], "bpm": hit["bpm"], "camelot": hit.get("camelot", ""),
+                                     "src": hit.get("src", "tunebat")})
             except T.TunebatError as e:
                 self._say(code, {"v": vid, "err": str(e)[:200]})
             except Exception as e:

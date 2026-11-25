@@ -1852,10 +1852,19 @@ def manager_window(selftest=False):
         cfg["tunebat_analyzer"] = bool(v)
         C.save_config(cfg)
         toast("Tunebat Analyzer automatique " + ("activé" if v else "désactivé"))
-    setting_row(tc, "Tunebat Analyzer automatique", "Quand la clé ou le BPM ne sont ni dans la description ni trouvés sur Tunebat, "
-                    "la prod est donnée à tunebat.com/Analyzer dans une petite fenêtre Edge / Chrome (profil à part), comme "
-                    "dans l'appli Android. Aussi pour le bouton « BPM » de l'app web. Si Tunebat demande une vérification, fais-la.",
+    setting_row(tc, "Clé et BPM automatiques", "Quand la clé ou le BPM ne sont ni dans la description ni trouvés sur Tunebat, "
+                    "la prod est analysée (aussi pour le bouton « BPM » de l'app web).",
                 lambda p: Switch(p, C.load_config().get("tunebat_analyzer", True) is not False, set_tba))
+
+    def set_local(v):
+        cfg = C.load_config()
+        cfg["analyse_locale"] = bool(v)
+        C.save_config(cfg)
+        toast("Analyse sur le PC " + ("activée" if v else "désactivée : Tunebat.com sera utilisé"))
+    setting_row(tc, "Analyser sur ce PC (Essentia)", "Rapide, invisible, sans vérification « je ne suis pas un robot » : le moteur "
+                    "Essentia (UPF), la technologie que Tunebat utilise dans le navigateur, tourne sur ton PC. "
+                    "Coupé : tunebat.com/Analyzer dans une petite fenêtre.",
+                lambda p: Switch(p, C.load_config().get("analyse_locale", True) is not False, set_local))
 
     def tb_verify():
         def run():

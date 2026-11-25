@@ -1171,7 +1171,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 14/11/2026 à 15:15</p>
+    <p class="build-stamp">Version du 25/11/2026 à 18:11</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -4319,6 +4319,7 @@ function onPcTba(d, m) {
   if (t.err) { w.done({ status: 'fail', err: String(t.err).slice(0, 120) }); return; }
   if (t.key || t.bpm) {
     const hit = tbParse({ key: t.key, bpm: t.bpm, camelot: t.camelot });
+    if (hit) hit.src = t.src === 'essentia' ? 'essentia' : 'tunebat';
     w.done(hit ? { status: 'ok', hit } : { status: 'none' });
     return;
   }
@@ -4337,7 +4338,7 @@ async function tunebatAnalyze(item, onState) {
   }
 }
 function keepTunebat(item, hit) {
-  const t = { bpm: hit.bpm, key: hit.key, camelot: hit.camelot || '', src: 'tunebat', how: 'analyzer', at: Date.now() };
+  const t = { bpm: hit.bpm, key: hit.key, camelot: hit.camelot || '', src: 'tunebat', how: hit.src === 'essentia' ? 'pc' : 'analyzer', at: Date.now() };
   tbStore(item.id, t);
   syncTbUi();
   refreshItem(item);
@@ -4352,15 +4353,15 @@ async function quickBpm(item) {
   bpmJob.id = item.id;
   syncTbUi();
   const viaPc = !nativeYt.tba;
-  if (viaPc) toast('Ton PC télécharge la prod pour Tunebat Analyzer…');
+  if (viaPc) toast('Ton PC télécharge la prod pour l’analyser…');
   let r;
   try {
     r = await tunebatAnalyze(item, (st) => {
-      if (st === 'analyze') toast('Tunebat Analyzer écoute la prod sur ton PC…');
+      if (st === 'analyze') toast('Ton PC analyse la prod (clé et BPM)…');
       if (st === 'verify') toast('Tunebat demande « je ne suis pas un robot » : coche-le dans la fenêtre Tunebat sur ton PC, puis ferme-la', { ms: 12000 });
     });
   } finally { bpmJob.id = null; syncTbUi(); }
-  if (r.status === 'ok') { toast(`Tunebat${viaPc ? ' (PC)' : ''} : ${bpmText(keepTunebat(item, r.hit))}`); return; }
+  if (r.status === 'ok') { toast(`${r.hit.src === 'essentia' ? 'Analysé sur ton PC' : `Tunebat${viaPc ? ' (PC)' : ''}`} : ${bpmText(keepTunebat(item, r.hit))}`); return; }
   if (r.status === 'cancel') return;
   haptic('warn');
   openBpmSheet(item, r.status === 'none' ? 'Tunebat n’a pas donné de résultat lisible.' : `Tunebat Analyzer : ${r.err || 'ça n’a pas marché'}`);
@@ -4420,7 +4421,7 @@ function openBpmSheet(item, note = '') {
     out.replaceChildren(...[
       cur ? h('div', { class: 'bpm-res' }, h('b', { class: mine ? null : 'tb' }, bpmText(cur))) : null,
       cur ? h('p', { class: 'hint' }, mine ? 'Donné par toi : c’est ce qui s’affiche sur la prod.'
-        : `Trouvé par Tunebat${cur.how === 'analyzer' ? ' Analyzer (la prod analysée)' : cur.name ? ` : « ${cur.name} »` : ''}${cur.camelot ? ` · Camelot ${cur.camelot}` : ''}, en bleu sur la prod. Si la description du beatmaker donne le BPM ou la clé, c’est elle qui compte.`) : null,
+        : `${cur.how === 'pc' ? 'Analysé sur ton PC (moteur Essentia, la technologie de Tunebat)' : `Trouvé par Tunebat${cur.how === 'analyzer' ? ' Analyzer (la prod analysée)' : cur.name ? ` : « ${cur.name} »` : ''}`}${cur.camelot ? ` · Camelot ${cur.camelot}` : ''}, en bleu sur la prod. Si la description du beatmaker donne le BPM ou la clé, c’est elle qui compte.`) : null,
       fixForm(cur),
     ].filter(Boolean));
   };
@@ -4428,7 +4429,7 @@ function openBpmSheet(item, note = '') {
     h('h3', { class: 'd-title' }, displayTitle(item.title)),
     !nativeYt.tba && pcTbaReady() ? h('div', { class: 'bpm-step' },
       h('b', {}, 'Tunebat Analyzer sur ton PC'),
-      h('span', {}, 'Melofinds PC télécharge la prod, la donne à Tunebat Analyzer dans une petite fenêtre Edge / Chrome, récupère la clé et le BPM, puis efface le fichier. Si Tunebat demande une vérification, fais-la sur le PC.'),
+      h('span', {}, 'Melofinds PC télécharge la prod et l’analyse lui-même (moteur Essentia, la technologie de Tunebat) : quelques secondes, sans vérification « je ne suis pas un robot ». Le fichier est effacé ensuite.'),
       h('div', { class: 'd-actions' }, (tbBtn.textContent = 'Analyser sur mon PC', tbBtn)))
     : nativeYt.tba ? h('div', { class: 'bpm-step' },
       h('b', {}, 'Tunebat Analyzer'),
