@@ -2033,3 +2033,51 @@ class AnalyseSurLePC(unittest.TestCase):
             _prod_wav(d / name, root, minor, bpm)
             hit = K.analyze(d / name, browser=browser, folder=ess, ffmpeg=ffmpeg, extra_args=[] if mpc.WINDOWS else ["--no-sandbox"])
             self.assertEqual((hit["key"], hit["bpm"]), (key, bpm), name)
+
+
+class FenetreMelofinds(unittest.TestCase):
+    """Moteur de recherche dans l'app PC : fenêtre Melofinds reliée à ce PC, liens collés."""
+
+    def setUp(self):
+        import mf_webwin as WW
+        self.WW = WW
+        cfg = mpc.load_config()
+        cfg.pop("pc_window", None)
+        cfg["recent_searches"] = []
+        cfg["devices"] = [d for d in cfg["devices"] if d.get("name") != WW.DEVICE_NAME]
+        mpc.save_config(cfg)
+        import shutil
+        shutil.rmtree(WW.profile_dir(), ignore_errors=True)
+
+    def test_premiere_fois_reliee_puis_plus(self):
+        WW = self.WW
+        calls = []
+        with mock.patch.object(WW.I, "go_online", lambda: None):
+            url = WW.open_search("prod à la Luther", browser="/x/msedge.exe", launch=lambda a, **k: calls.append(a))
+        self.assertIn("?q=prod+%C3%A0+la+Luther", url)
+        self.assertRegex(url, r"#pair=melofinds-[a-f0-9]{32}\.[a-f0-9]{64}&pcwin=1$")
+        self.assertIn(f"--user-data-dir={WW.profile_dir()}", calls[0])
+        self.assertTrue(any(a.startswith("--app=https://kimany91.github.io/Melofinds/") for a in calls[0]))
+        cfg = mpc.load_config()
+        self.assertEqual(sum(1 for d in cfg["devices"] if d["name"] == WW.DEVICE_NAME), 1)
+        WW.profile_dir().mkdir(parents=True, exist_ok=True)  # le profil existe : déjà reliée
+        with mock.patch.object(WW.I, "go_online", lambda: None):
+            url2 = WW.open_search("https://youtu.be/dQw4w9WgXcQ", browser="/x/msedge.exe", launch=lambda a, **k: calls.append(a))
+        self.assertNotIn("#pair=", url2)
+        self.assertEqual(mpc.load_config()["recent_searches"][:2], ["https://youtu.be/dQw4w9WgXcQ", "prod à la Luther"])
+        self.assertEqual(sum(1 for d in mpc.load_config()["devices"] if d["name"] == WW.DEVICE_NAME), 1)
+
+    def test_lien_copie(self):
+        WW = self.WW
+        self.assertEqual(WW.link_in("regarde ça https://youtu.be/dQw4w9WgXcQ?si=x trop lourd"), "https://youtu.be/dQw4w9WgXcQ?si=x")
+        self.assertEqual(WW.link_in("https://www.youtube.com/playlist?list=PL123"), "https://www.youtube.com/playlist?list=PL123")
+        self.assertIsNone(WW.link_in("luther type beat"))
+        self.assertIsNone(WW.link_in("https://soundcloud.com/x"))
+
+    def test_recentes_sans_doublon(self):
+        cfg = {"recent_searches": []}
+        for q in ["a", "b", "A", "c\x00d"] + [str(i) for i in range(10)]:
+            self.WW.remember(cfg, q)
+        self.assertEqual(len(cfg["recent_searches"]), self.WW.RECENT_MAX)
+        self.assertNotIn("b", cfg["recent_searches"][:1])
+        self.assertTrue(all("\x00" not in x for x in cfg["recent_searches"]))

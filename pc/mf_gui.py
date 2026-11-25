@@ -20,16 +20,18 @@ import mf_flmake as FM
 import mf_install as I
 import mf_library as L
 import mf_tunebat as T
+import mf_webwin as WW
 import mf_ytlogin as Y
 from mf_core import P
 
 # Couleurs de Melofinds Web (artifact/style.css)
-BG, BG2, PANEL, PANEL2, PANEL3 = "#0b0c10", "#101217", "#15171d", "#1b1e26", "#242833"
-LINE, LINE2 = "#23262f", "#323745"
-FG, MUTED, FAINT = "#f3f4f7", "#a0a6b6", "#6e7487"
+BG, BG2, PANEL, PANEL2, PANEL3 = "#0f1012", "#131417", "#17181b", "#1d1f23", "#272a30"
+LINE, LINE2 = "#26282d", "#33363d"
+FG, MUTED, FAINT = "#ececee", "#a1a3ab", "#6f727b"
 TB_BLUE = "#60a5fa"  # clé / BPM trouvés avec Tunebat (comme dans l'app web)
-ACCENT, ACCENT2, PINK = "#a78bfa", "#8b5cf6", "#ec4899"
-GREEN, AMBER, RED, BLUE = "#34d399", "#fbbf24", "#f87171", "#60a5fa"
+ACCENT, ACCENT2, PINK = "#f2a33a", "#f0952a", "#f0952a"  # un seul accent (ambre), comme l'app web
+ON_ACCENT = "#1b1204"
+GREEN, AMBER, RED, BLUE = "#43c38a", "#e5b84b", "#e36b6b", "#6aa3e8"
 FONT = "Segoe UI" if C.WINDOWS else "DejaVu Sans"
 SYMB = "Segoe UI Symbol" if C.WINDOWS else "DejaVu Sans"  # icônes ♪ ★ ⚡ …
 MONO = "Consolas" if C.WINDOWS else "DejaVu Sans Mono"
@@ -287,8 +289,8 @@ def _ui():
 
     class Btn(tk.Label):
         """Bouton plat : primary (violet), ghost (gris), danger, subtle (texte)."""
-        KINDS = {"primary": (ACCENT2, "#ffffff", "#7c3aed"), "ghost": (PANEL2, FG, PANEL3),
-                 "danger": (PANEL2, RED, PANEL3), "subtle": (None, MUTED, None), "online": (GREEN, BG, "#10b981")}
+        KINDS = {"primary": (ACCENT2, ON_ACCENT, ACCENT), "ghost": (PANEL2, FG, PANEL3),
+                 "danger": (PANEL2, RED, PANEL3), "subtle": (None, MUTED, None), "online": (GREEN, BG, "#3ab07c")}
 
         def __init__(self, parent, text, command=None, kind="ghost", size=10, padx=14, pady=7, **kw):
             self.bg_parent = parent.cget("bg")
@@ -448,9 +450,9 @@ def _icon(root):
         import tkinter as tk
         img = tk.PhotoImage(width=32, height=32)
         img.put(ACCENT2, to=(0, 0, 32, 32))
-        img.put("#ffffff", to=(8, 14, 11, 24))
-        img.put("#ffffff", to=(14, 9, 17, 24))
-        img.put("#ffffff", to=(20, 12, 23, 24))
+        img.put(ON_ACCENT, to=(8, 14, 11, 24))
+        img.put(ON_ACCENT, to=(14, 9, 17, 24))
+        img.put(ON_ACCENT, to=(20, 12, 23, 24))
         root.iconphoto(True, img)
         root._icon = img
     except Exception:
@@ -608,8 +610,9 @@ def manager_window(selftest=False):
     logo.pack(fill="x")
     mark = tk.Canvas(logo, width=30, height=30, bg=BG2, highlightthickness=0)
     mark.pack(side="left")
-    for i, (x, h, c) in enumerate(((5, 14, ACCENT2), (13, 22, "#b14fe0"), (21, 17, PINK))):
-        mark.create_rectangle(x, 30 - h - 4, x + 5, 26, fill=c, outline="")
+    mark.create_rectangle(0, 0, 30, 30, fill=ACCENT2, outline="")  # même logo que l'app : barres sur fond ambre
+    for x, h in ((7, 9), (12, 14), (17, 11), (22, 16)):
+        mark.create_rectangle(x, 23 - h, x + 2, 23, fill=ON_ACCENT, outline="")
     tl = tk.Frame(logo, bg=BG2)
     tl.pack(side="left", padx=10)
     label(tl, "Melofinds", 14, bold=True).pack(anchor="w")
@@ -647,7 +650,7 @@ def manager_window(selftest=False):
         t.configure(fg=FG if on else MUTED)
         g.configure(fg=ACCENT if on else FAINT)
 
-    for k, txt, gl in (("home", "File d'attente", ""), ("prods", "Mes projets FL", ""), ("flmake", "FLmake", ""),
+    for k, txt, gl in (("search", "Rechercher", ""), ("home", "File d'attente", ""), ("prods", "Mes projets FL", ""), ("flmake", "FLmake", ""),
                        ("devices", "Appareils", ""), ("settings", "Réglages", "")):
         nav_item(k, txt, gl)
 
@@ -667,7 +670,7 @@ def manager_window(selftest=False):
     status_sub.pack(anchor="w", pady=(4, 10))
     toggle = Btn(status_box, "Mettre en ligne", kind="online", pady=8)
     toggle.pack(fill="x")
-    Btn(foot, "Ouvrir Melofinds Web ↗", kind="subtle", command=open_site, padx=0, pady=10).pack(anchor="w")
+    Btn(foot, "Ouvrir Melofinds ↗", kind="subtle", command=lambda: WW.open_search(""), padx=0, pady=10).pack(anchor="w")
     label(foot, f"version {C.VERSION}", 8, FAINT, mono=True).pack(anchor="w")
 
     # En-tête de page + zone de message
@@ -715,6 +718,99 @@ def manager_window(selftest=False):
             paint(k)
         if key in on_show:
             on_show[key]()
+
+    # ================= Rechercher : le moteur de prods Melofinds (fenêtre Melofinds reliée à ce PC)
+    srch = page("search", "Rechercher des prods", "Décris la prod que tu veux, ou colle le lien d'une prod ou d'une playlist "
+                                                 "YouTube : licence, BPM et clé vérifiés, « Sur mon PC » la télécharge ici.")
+    sc_card = card(srch, padx=20, pady=18)
+    sc_card.pack(fill="x", pady=(0, 14))
+    q_var = tk.StringVar()
+    q_row = tk.Frame(sc_card, bg=PANEL)
+    q_row.pack(fill="x")
+    q_entry = tk.Entry(q_row, textvariable=q_var, bg=PANEL2, fg=FG, insertbackground=FG, relief="flat", font=(FONT, 13),
+                       highlightthickness=1, highlightbackground=LINE2, highlightcolor=ACCENT)
+    q_entry.pack(side="left", fill="x", expand=True, ipady=10, padx=(0, 10))
+    q_hint = "Prod à la Luther, boom bap 90 BPM, lien YouTube…"
+    q_state = {"hint": True}
+
+    def q_set_hint(on):
+        q_state["hint"] = on
+        if on:
+            q_var.set(q_hint)
+            q_entry.configure(fg=FAINT)
+        else:
+            if q_var.get() == q_hint:
+                q_var.set("")
+            q_entry.configure(fg=FG)
+    q_entry.bind("<FocusIn>", lambda e: q_state["hint"] and q_set_hint(False))
+    q_entry.bind("<FocusOut>", lambda e: not q_var.get().strip() and q_set_hint(True))
+    q_set_hint(True)
+
+    def do_search(q=None):
+        q = (q if q is not None else ("" if q_state["hint"] else q_var.get())).strip()
+        if not q:
+            q_entry.focus_set()
+            return
+        try:
+            WW.open_search(q)
+            toast("La recherche s'ouvre dans la fenêtre Melofinds…")
+        except Exception as e:
+            toast(f"Ouverture impossible : {e}")
+        fill_recent()
+    q_entry.bind("<Return>", lambda e: do_search())
+    Btn(q_row, "Rechercher", do_search, kind="primary", padx=20, pady=11).pack(side="left")
+    label(sc_card, "Le lien d'une prod ouvre directement sa fiche ; celui d'une playlist, toutes ses prods.", 9, MUTED).pack(anchor="w", pady=(10, 0))
+    clip_row = tk.Frame(sc_card, bg=PANEL)
+    clip_lbl = label(clip_row, "", 9, FG)
+    clip_lbl.pack(side="left")
+    clip_btn = Btn(clip_row, "Chercher ce lien", kind="ghost", padx=10, pady=4)
+    clip_btn.pack(side="right")
+
+    def check_clip():
+        try:
+            link = WW.link_in(root.clipboard_get())
+        except Exception:
+            link = None
+        if link:
+            clip_lbl.configure(text=f"Lien copié : {link[:70]}{'…' if len(link) > 70 else ''}")
+            clip_btn.command = lambda: do_search(link)
+            if not clip_row.winfo_ismapped():
+                clip_row.pack(fill="x", pady=(10, 0))
+        elif clip_row.winfo_ismapped():
+            clip_row.pack_forget()
+
+    ideas = card(srch, padx=20, pady=14)
+    ideas.pack(fill="x", pady=(0, 14))
+    label(ideas, "IDÉES", 8, FAINT, bold=True).pack(anchor="w")
+    ideas_row = tk.Frame(ideas, bg=PANEL)
+    ideas_row.pack(fill="x", pady=(8, 0))
+    for idea in ("prod à la Luther", "La Fève type beat", "boom bap 90 BPM", "drill UK", "pluggnb"):
+        Btn(ideas_row, idea, lambda q=idea: do_search(q), padx=10, pady=5, size=9).pack(side="left", padx=(0, 6))
+    rec_card = card(srch, padx=20, pady=14)
+    rec_card.pack(fill="x")
+    rec_head = tk.Frame(rec_card, bg=PANEL)
+    rec_head.pack(fill="x")
+    label(rec_head, "RECHERCHES RÉCENTES", 8, FAINT, bold=True).pack(side="left")
+    Btn(rec_head, "Ouvrir Melofinds", lambda: (WW.open_search(""), toast("Fenêtre Melofinds ouverte")), kind="subtle", padx=0, pady=0).pack(side="right")
+    rec_box = tk.Frame(rec_card, bg=PANEL)
+    rec_box.pack(fill="x", pady=(6, 0))
+
+    def fill_recent():
+        for w in rec_box.winfo_children():
+            w.destroy()
+        rec = [x for x in C.load_config().get("recent_searches", []) if isinstance(x, str)]
+        if not rec:
+            label(rec_box, "Tes recherches apparaîtront ici.", 9, MUTED).pack(anchor="w", pady=4)
+            return
+        for q in rec:
+            r = tk.Label(rec_box, text=("↪  " if WW.link_in(q) else "⌕  ") + q[:90], bg=PANEL, fg=FG, font=(FONT, 10),
+                         anchor="w", cursor="hand2", padx=4, pady=5)
+            r.pack(fill="x")
+            r.bind("<Button-1>", lambda e, q=q: do_search(q))
+            r.bind("<Enter>", lambda e, w=r: w.configure(bg=PANEL2))
+            r.bind("<Leave>", lambda e, w=r: w.configure(bg=PANEL))
+    fill_recent()
+    on_show["search"] = lambda: (fill_recent(), check_clip())
 
     # ================= Accueil
     home = page("home", "File d'attente", "Les prods envoyées depuis Melofinds Web : celle qui arrive, celles qui attendent, "
@@ -1479,7 +1575,7 @@ def manager_window(selftest=False):
         show_dialog(dlg)
 
     a_open.command, a_ren.command, a_style.command, a_dir.command, a_play.command = do_open, do_rename, do_style, do_dir, do_play
-    menu = tk.Menu(root, tearoff=0, bg=PANEL2, fg=FG, activebackground=ACCENT2, activeforeground="#ffffff", bd=0, font=(FONT, 10))
+    menu = tk.Menu(root, tearoff=0, bg=PANEL2, fg=FG, activebackground=ACCENT2, activeforeground=ON_ACCENT, bd=0, font=(FONT, 10))
     menu.add_command(label="Ouvrir dans FL", command=do_open)
     menu.add_command(label="Renommer…", command=do_rename)
     menu.add_command(label="Icône et couleur…", command=do_style)

@@ -2997,6 +2997,7 @@ async function pipedReadPending(pending) {
 async function channelFetch(add, before) {
   const ch = session.channel;
   if (ch.kind === 'playlist') return playlistFetch(add);
+  if (ch.kind === 'video') return videoFetch(add);
   setStatus(`Je récupère les vidéos de ${ch.name || 'la chaîne'}…`, 0.08);
   if (!ch.id) await resolveChannelId(ch);
   if (!ch.id) throw { code: 'channel', message: 'chaîne introuvable' };
@@ -3093,6 +3094,48 @@ function openChannel(item) {
 // Playlist collée dans la recherche (même non répertoriée) : toutes ses vidéos, vérifiées
 // comme une recherche. Avec ta clé YouTube : l'API (playlistItems) ; dans l'appli Android :
 // le téléphone la lit (NewPipe) ; sinon Piped ; version Claude : la page de la playlist.
+// Lien d'une prod collé dans la recherche : la prod seule, vérifiée comme les autres, et sa
+// fiche s'ouvre toute seule.
+function openVideoLink(id) {
+  if (searching) { toast('Attends la fin de la recherche en cours'); return; }
+  if (!session?.channel) beforeChannel = session ? { session, sort: $('#sort').value } : null;
+  session = { prompt: `prod ${id}`, plan: buildPlan('type beat', { licenses: searchPrefs.licenses, device, depth: 'rapide' }),
+    done: [], items: new Map(), at: new Date().toISOString(), channel: { kind: 'video', id, name: '', owner: '' } };
+  rendered = new Set();
+  $('#grid').replaceChildren();
+  showView('search');
+  closeDrawer();
+  renderChannelBar();
+  runSearch(true);
+}
+async function videoFetch(add) {
+  const ch = session.channel;
+  if (ch.end) return false;
+  ch.end = true;
+  setStatus('Je récupère la prod…', 0.1);
+  const watch = `https://www.youtube.com/watch?v=${ch.id}`;
+  let meta = null;
+  for (const u of [`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(watch)}`, `https://noembed.com/embed?url=${encodeURIComponent(watch)}`]) {
+    try {
+      const r = await fetch(u);
+      if (r.ok) { const j = await r.json(); if (j && typeof j.title === 'string' && j.title) { meta = j; break; } }
+    } catch { /* l'autre source, ou la lecture de la description */ }
+  }
+  add({ id: ch.id, title: String(meta?.title || '').slice(0, 200) }, `video:${ch.id}`, '');
+  const cur = session.items.get(ch.id);
+  if (cur && meta?.author_name) cur.channel ||= String(meta.author_name).slice(0, 80);
+  const pending = [...session.items.values()].filter((i) => i.status === 'pending');
+  if (pending.length) {
+    if (ytKey()) await apiReadPending(pending);
+    else if (nativeYt.desc) await nativeReadPending(pending);
+    else await pipedReadPending(pending);
+  }
+  ch.name = cur?.title || 'Prod';
+  ch.owner = cur?.channel || '';
+  renderChannelBar();
+  if (cur) setTimeout(() => openBeat(cur, session.plan), 0);
+  return true;
+}
 function openPlaylist(listId) {
   if (searching) { toast('Attends la fin de la recherche en cours'); return; }
   if (!session?.channel) beforeChannel = session ? { session, sort: $('#sort').value } : null;
@@ -3237,13 +3280,13 @@ function renderChannelBar() {
   bar.hidden = !ch;
   if (!ch) { bar.replaceChildren(); return; }
   const n = [...session.items.values()].filter((i) => i.status !== 'pending').length;
-  bar.replaceChildren(
-    chanAvatar(ch.avatar, ch.name, 'big'),
-    h('div', { class: 'chan-txt' }, h('span', {}, ch.kind === 'playlist' ? `Playlist${ch.owner ? ` · ${ch.owner}` : ''}` : 'Chaîne'), h('b', {}, ch.name || (ch.kind === 'playlist' ? 'Playlist' : 'Beatmaker')),
-      h('small', {}, `${n} vidéo${n > 1 ? 's' : ''}${ch.end ? ' · toutes chargées' : ' · « Plus de résultats » pour la suite'}`)),
+  bar.replaceChildren(...[
+    chanAvatar(ch.avatar, ch.kind === 'video' ? ch.owner || ch.name : ch.name, 'big'),
+    h('div', { class: 'chan-txt' }, h('span', {}, ch.kind === 'playlist' ? `Playlist${ch.owner ? ` · ${ch.owner}` : ''}` : ch.kind === 'video' ? `Lien collé${ch.owner ? ` · ${ch.owner}` : ''}` : 'Chaîne'), h('b', {}, ch.name || (ch.kind === 'playlist' ? 'Playlist' : ch.kind === 'video' ? 'Prod' : 'Beatmaker')),
+      h('small', {}, ch.kind === 'video' ? 'Prod vérifiée : licence, BPM, clé' : `${n} vidéo${n > 1 ? 's' : ''}${ch.end ? ' · toutes chargées' : ' · « Plus de résultats » pour la suite'}`)),
     ch.kind === 'playlist' && nativeYt.phone ? phonePlaylistBtn() : null,
-    h('a', { class: 'ghost sm', href: ch.kind === 'playlist' ? `https://www.youtube.com/playlist?list=${ch.id}` : ch.id ? `https://www.youtube.com/channel/${ch.id}/videos` : ytSearchUrl(ch.name), target: '_blank', rel: 'noopener' }, 'YouTube', icon('ext')),
-    h('button', { type: 'button', class: 'icon-btn', 'aria-label': ch.kind === 'playlist' ? 'Quitter la playlist' : 'Quitter la chaîne', title: 'Revenir à ta recherche', onclick: leaveChannel }, icon('x')));
+    h('a', { class: 'ghost sm', href: ch.kind === 'playlist' ? `https://www.youtube.com/playlist?list=${ch.id}` : ch.kind === 'video' ? `https://www.youtube.com/watch?v=${ch.id}` : ch.id ? `https://www.youtube.com/channel/${ch.id}/videos` : ytSearchUrl(ch.name), target: '_blank', rel: 'noopener' }, 'YouTube', icon('ext')),
+    h('button', { type: 'button', class: 'icon-btn', 'aria-label': ch.kind === 'playlist' ? 'Quitter la playlist' : ch.kind === 'video' ? 'Fermer la prod' : 'Quitter la chaîne', title: 'Revenir à ta recherche', onclick: leaveChannel }, icon('x'))].filter(Boolean));
 }
 // Logo rond de la chaîne (sinon son initiale sur une couleur tirée du nom)
 function chanAvatar(url, name, size = '') {
@@ -3515,6 +3558,9 @@ function startSearch() {
   if (!prompt) { promptEl.focus(); toast('Décris la prod que tu cherches'); return; }
   if (searching) return;
   promptEl.blur();
+  // lien d'une prod (vidéo YouTube) : sa fiche (licence, BPM, clé, déjà posé dessus…)
+  const vidId = videoIdOf(prompt);
+  if (vidId) { openVideoLink(vidId); return; }
   const listId = playlistIdOf(prompt);
   if (listId) { openPlaylist(listId); return; }
   const plan = buildPlan(prompt, { licenses: searchPrefs.licenses, device, depth: device === 'mobile' ? 'rapide' : 'normal' });
@@ -5188,7 +5234,7 @@ function pairFromText(t) {
   const p = raw.toLowerCase().match(PAIR_RE);
   return p ? { code: p[1], key: p[2] } : null;
 }
-async function pcPairWith(p) {
+async function pcPairWith(p, pcwin = false) {
   if (!WEB || !p) return;
   const same = p.code === pcCode() && p.key === pcKey();
   if (!same) {
@@ -5207,7 +5253,7 @@ async function pcPairWith(p) {
   // « Relié » seulement quand le PC a répondu (pcPairDone, appelé par listenPc)
   const job = { at: Date.now() };
   pc.pairing = job;
-  toast('QR code lu : je préviens ton PC…');
+  toast(pcwin ? 'Fenêtre Melofinds : je la relie à ce PC…' : 'QR code lu : je préviens ton PC…');
   syncPcUi();
   const ping = async () => { try { await ntfyPublish({ ping: 1 }); return true; } catch { return false; } };
   if (!(await ping())) {
@@ -5296,8 +5342,9 @@ async function scanPcQr() {
 setTimeout(() => {
   if (!/#pair=/.test(location.hash)) return;
   const p = pairFromText(location.hash);
+  const pcwin = /[&#]pcwin=1/.test(location.hash);  // fenêtre ouverte par Melofinds PC lui-même
   try { history.replaceState(null, '', location.pathname + location.search); } catch { /* rien */ }
-  if (p) pcPairWith(p); else toast('Ce lien d’appairage est incomplet : rescanne le QR code du PC');
+  if (p) pcPairWith(p, pcwin); else toast('Ce lien d’appairage est incomplet : rescanne le QR code du PC');
 }, 400);
 
 function cmdBlock(text) {
@@ -5412,6 +5459,16 @@ renderSavedSearches();
 updateDots();
 setSeg('prods');
 showView(location.hash.slice(1) || local.get('view', 'search'));
+// « ?q=… » (Melofinds PC, liens) : la recherche ou le lien de prod se lance à l'ouverture
+{
+  const q0 = String(new URLSearchParams(location.search).get('q') || '').trim().slice(0, 400);
+  if (q0) {
+    try { history.replaceState(null, '', location.pathname + location.hash); } catch { /* rien */ }
+    promptEl.value = q0;
+    showView('search');
+    setTimeout(startSearch, 300);
+  }
+}
 setupTarget();
 persist.init();
 window.claude?.use?.('sample').then((s) => { sampleFn = s || null; }).catch(() => {});

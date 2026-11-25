@@ -126,6 +126,16 @@ export function displayTitle(title) {
  * non répertoriées marchent pareil : il suffit du lien. Les « mix » automatiques (RD…) ne
  * sont pas des playlists : ignorés.
  */
+/** Lien d'une vidéo YouTube collé dans la recherche (watch, youtu.be, shorts, embed, live,
+ *  music.youtube.com…) → son identifiant (11 caractères), sinon null. */
+export function videoIdOf(text) {
+  const s = String(text || '').trim();
+  if (/\s/.test(s) && !/^https?:\/\//i.test(s)) return null;  // une phrase : pas un lien
+  const m = s.match(/(?:^|\/\/|\.)(?:youtube\.com|youtube-nocookie\.com)\/(?:[^\s]*?[?&]v=|shorts\/|embed\/|live\/|v\/)([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/i)
+    || s.match(/(?:^|\/\/)youtu\.be\/([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/i);
+  return m ? m[1] : null;
+}
+
 export function playlistIdOf(text) {
   const s = String(text || '').trim();
   let id = '';

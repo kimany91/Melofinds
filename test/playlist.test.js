@@ -33,3 +33,11 @@ test('page de playlist lue en markdown', () => {
     { id: 'bbbbbbbbbbb', title: 'Gazo Type Beat - Nuit' },
   ]);
 });
+
+test('lien d’une prod collé : son identifiant (et jamais une phrase ou une chaîne)', async () => {
+  const { videoIdOf } = await import('../src/core/ytparse.js');
+  for (const s of ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'youtube.com/watch?v=dQw4w9WgXcQ&list=PL1234567890abc', 'https://youtu.be/dQw4w9WgXcQ?si=abc',
+    'https://m.youtube.com/watch?feature=share&v=dQw4w9WgXcQ', 'https://www.youtube.com/shorts/dQw4w9WgXcQ', 'https://music.youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://youtube.com/live/dQw4w9WgXcQ?feature=share']) assert.equal(videoIdOf(s), 'dQw4w9WgXcQ', s);
+  for (const s of ['luther type beat', 'dQw4w9WgXcQ', 'https://www.youtube.com/@geesyn', 'https://www.youtube.com/playlist?list=PL1234567890abcdef', 'https://www.youtube.com/channel/UCgggggggggggggggggggggg']) assert.equal(videoIdOf(s), null, s);
+});
