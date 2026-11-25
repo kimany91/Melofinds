@@ -2081,3 +2081,38 @@ class FenetreMelofinds(unittest.TestCase):
         self.assertEqual(len(cfg["recent_searches"]), self.WW.RECENT_MAX)
         self.assertNotIn("b", cfg["recent_searches"][:1])
         self.assertTrue(all("\x00" not in x for x in cfg["recent_searches"]))
+
+
+class DossierFourreTout(unittest.TestCase):
+    """« FL STUDIO PROJECT » (toutes les chansons au même endroit) : une chanson = un projet."""
+
+    def test_une_chanson_par_projet(self):
+        import mf_library as L
+        root = Path(tempfile.mkdtemp(prefix="mf-fl-"))
+        fl = root / "FL STUDIO PROJECT"
+        fl.mkdir()
+        for n in ["AILES 0.1", "AILES 0.2", "AILES DE TITANE 0.2", "DANSE 0.1", "DANSE 0.2", "VERTIGE 0.8", "VERTIGE 0.7", "grele 0.1", "NSupernova 0.1"]:
+            (fl / f"{n}.flp").write_bytes(b"FLhd")
+        for n in ["AILES 0.2", "DANSE 0.1", "VERTIGE 0.8", "Basic 808 Clap"]:
+            (fl / f"{n}.wav").write_bytes(b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 24)
+        haze = root / "Haze [C# min, 150 BPM]"  # projet Melofinds normal : jamais découpé
+        haze.mkdir()
+        (haze / "Haze [C# min, 150 BPM].wav").write_bytes(b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 24)
+        (haze / "Haze [C# min, 150 BPM].flp").write_bytes(b"FLhd")
+        (haze / "Haze remix.flp").write_bytes(b"FLhd")
+        cfg = {**mpc.load_config(), "flmake": {"dossier": str(root)}}
+        items = L.scan_projects(cfg)
+        names = sorted(i.name for i in items)
+        self.assertEqual(names, sorted(["AILES", "AILES DE TITANE", "DANSE", "VERTIGE", "grele", "NSupernova", "Haze [C# min, 150 BPM]"]))
+        vert = next(i for i in items if i.name == "VERTIGE")
+        self.assertEqual(vert.flp.name, "VERTIGE 0.8.flp")  # la dernière version
+        self.assertEqual(vert.extra["files"], 3)
+        ailes = next(i for i in items if i.name == "AILES")
+        self.assertEqual([f["name"] for f in L.audio_files(ailes)], ["AILES 0.2"])  # pas les sons d'AILES DE TITANE ni le clap
+        with self.assertRaises(L.LibError):
+            L.rename_plan(ailes, "Nouveau nom")  # rangé avec d'autres : on ne casse rien
+        self.assertNotEqual(L.folder_sig(cfg), None)
+        sig1 = L.folder_sig(cfg)
+        time.sleep(1.1)
+        (fl / "AILES 0.3.flp").write_bytes(b"FLhd")
+        self.assertNotEqual(L.folder_sig(cfg), sig1)  # un nouveau fichier : la liste sera relue

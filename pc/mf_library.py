@@ -231,6 +231,48 @@ def set_style(item, color=None, icon=None, cfg=None):
     item.extra["color"], item.extra["icon"], item.extra["styled"] = style_of(item, cfg)
 
 
+def _direct(folder):
+    try:
+        return [p for p in folder.iterdir() if p.is_file()]
+    except OSError:
+        return []
+
+
+def _shallow_files(folder):
+    """Fichiers du dossier et de ses sous-dossiers directs (pas les sauvegardes de FL en profondeur)."""
+    out = _direct(folder)
+    try:
+        for d in folder.iterdir():
+            if d.is_dir() and not d.name.startswith("."):
+                out += _direct(d)
+    except OSError:
+        pass
+    return out
+
+
+def folder_sig(cfg=None):
+    """Empreinte légère du dossier des projets (noms et dates des dossiers) : la liste n'est
+    relue que si quelque chose a changé."""
+    cfg = cfg if cfg is not None else C.load_config()
+    folder = Path(FM.settings(cfg)["dossier"])
+    sig = [str(folder)]
+    try:
+        with os.scandir(folder) as it:
+            for e in it:
+                try:
+                    st = e.stat()
+                    sig.append((e.name, int(st.st_mtime), e.is_dir()))
+                    if e.is_dir():
+                        with os.scandir(e.path) as sub:
+                            sig.append(max((int(x.stat().st_mtime) for x in sub), default=0))
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    sig.append((len(cfg.get("fav_projects") or []), len(cfg.get("project_order") or []), len(cfg.get("project_style") or {})))
+    return hash(tuple(sorted(map(str, sig))))
+
+
 def _has_audio(folder, depth=2):
     """Un dossier avec des sons (même seulement des .mp3 ou dans un sous-dossier) est un projet."""
     try:
@@ -255,9 +297,17 @@ def scan_projects(cfg=None):
         entries = list(folder.iterdir())
     except OSError:
         entries = []
+    groups = []  # dossiers qui contiennent plusieurs chansons (« FL Studio Projects » de FL)
     for e in entries:
         try:
             if e.is_dir():
+                songs = {}
+                for f in e.glob("*.flp"):
+                    songs.setdefault(song_of(f.stem).lower(), []).append(f)
+                # plusieurs chansons, et aucune ne porte le nom du dossier : un dossier « fourre-tout »
+                if len(songs) >= 2 and song_of(e.name).lower() not in songs:
+                    groups.append((e, songs))
+                    continue
                 flps = sorted(e.glob("*.flp"), key=lambda p: (p.stem != e.name, -p.stat().st_mtime))
                 wavs = sorted(e.glob("*.wav"), key=lambda p: p.stem != e.name)
                 if not flps and not wavs and not _has_audio(e):
@@ -272,8 +322,8 @@ def scan_projects(cfg=None):
         title, suffix, key, bpm, lic, tb = parse_name_tb(name)
         it = Prod(id=f"p:{name.lower()}", name=name, title=title or name, suffix=suffix, key=key, bpm=bpm, lic=lic,
                   flp=flp, folder=sub, kind="project", extra={"tb": tb} if tb else {})
-        try:
-            files = [p for p in sub.rglob("*") if p.is_file()] if sub else [flp]
+        try:  # date et nombre de fichiers : le dossier lui-même et ses sous-dossiers directs (léger)
+            files = _shallow_files(sub) if sub else [flp]
             it.date = max((p.stat().st_mtime for p in files), default=0.0)
             it.extra["files"] = len(files)
         except OSError:
@@ -296,6 +346,24 @@ def scan_projects(cfg=None):
             if d:
                 it.extra["dur"] = d
         out.append(it)
+    for e, songs in groups:
+        audio = [p for p in _direct(e) if p.suffix.lower() in AUDIO_EXT]
+        for key, flps in songs.items():
+            flps.sort(key=_ver_key)
+            flp = flps[-1]  # la dernière version de la chanson
+            name = song_of(flp.stem)
+            title, suffix, k, bpm, lic, tb = parse_name_tb(name)
+            it = Prod(id=f"p:{e.name.lower()}/{key}", name=name, title=title or name, suffix=suffix, key=k, bpm=bpm, lic=lic,
+                      flp=flp, folder=None, kind="project", extra={"group_dir": e, "group": key, **({"tb": tb} if tb else {})})
+            mine = [*flps, *(a for a in audio if song_of(a.stem).lower() == key)]
+            try:
+                it.date = max((p.stat().st_mtime for p in mine), default=0.0)
+            except OSError:
+                it.date = 0.0
+            it.extra["files"] = len(mine)
+            it.fav = it.id in favs
+            it.extra["color"], it.extra["icon"], it.extra["styled"] = style_of(it, cfg)
+            out.append(it)
     # Lien de la vidéo : écrit dans le .wav de la prod, sinon gardé dans les réglages
     # (à la réception, ou envoyé par le téléphone), sinon retrouvé par le chemin reçu.
     videos = _videos(cfg)
@@ -532,6 +600,8 @@ def rewrite_flp(flp, mapping, old_title, new_title):
 
 def rename_plan(item, new_title, suffix=None):
     """Ce que le renommage va faire (affiché avant de confirmer)."""
+    if item.extra.get("group_dir"):
+        raise LibError(f"ce projet est rangé avec d'autres dans « {item.extra['group_dir'].name} » : renomme-le dans FL Studio")
     title = clean_new_title(new_title)
     if not title:
         raise LibError("nom vide")
@@ -713,6 +783,22 @@ def version_of(name):
     return None
 
 
+_SONG_VER = re.compile(r"(?i)(?:[\s_\-]+v?(?:er(?:sion)?\s?)?\d{1,3}(?:\.\d{1,3}){1,3}|[\s_\-]+v\d{1,3}|_\d{1,3})\s*$")
+
+
+def song_of(name):
+    """« AILES 0.1 », « AILES_v2 », « AILES_3 » → « AILES » (la chanson, sans sa version)."""
+    rest = parse_name(str(name or ""))[0].strip()
+    rest = re.sub(r"(?i)\s*(?:\(\d{1,3}\)|-\s*(?:copy|copie))\s*$", "", rest)
+    for _ in range(2):
+        rest = _SONG_VER.sub("", rest).strip(" -_.")
+    return rest or str(name or "")
+
+
+def _ver_key(p):
+    return (version_of(p.stem) or (), p.stat().st_mtime if p.exists() else 0)
+
+
 def file_id(path):
     """Identifiant court et stable d'un fichier (pour l'app web)."""
     try:
@@ -751,7 +837,12 @@ def audio_files(item, limit=60):
     l'instru, sinon ton export le plus récent)."""
     instru = item.wav or item.extra.get("instru_path")
     found = []
-    if item.folder:
+    gdir = item.extra.get("group_dir")
+    if gdir:
+        song = item.extra.get("group", "")
+        found = [p for p in _shallow_files(gdir) if p.suffix.lower() in AUDIO_EXT and not p.name.startswith(".")
+                 and song_of(p.stem).lower() == song][:400]
+    elif item.folder:
         try:
             base = len(item.folder.parts)
             for p in item.folder.rglob("*"):

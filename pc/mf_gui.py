@@ -145,6 +145,26 @@ def error_help(detail):
     return "Le détail complet est aussi dans le journal (Réglages → Journal)."
 
 
+_ICON_CACHE = {}
+
+
+def ico(name, size=20, color="muted"):
+    """Icône Lucide (mf_icons) en PhotoImage, gardée en mémoire (Tk l'efface sinon)."""
+    k = (name, size, color)
+    if k not in _ICON_CACHE:
+        import tkinter as tk
+        import mf_icons
+        data = mf_icons.DATA.get(f"{name}|{size}|{color}")
+        _ICON_CACHE[k] = tk.PhotoImage(data=data) if data else None
+    return _ICON_CACHE[k]
+
+
+def ease(a, b, t):
+    """Mouvement doux (fin ralentie) entre a et b, t de 0 à 1."""
+    t = max(0.0, min(1.0, t))
+    return a + (b - a) * (1 - (1 - t) ** 3)
+
+
 def listen_palette(color):
     """Couleurs de la barre d'écoute, tirées de la couleur de la prod [teinte, saturation %]
     (la même que sur le téléphone) ; violet Melofinds si elle n'en a pas."""
@@ -473,13 +493,18 @@ def manager_window(selftest=False):
     _style(root)
     _icon(root)
 
-    # ----- Mise en page : menu à gauche, page à droite
-    side = tk.Frame(root, bg=BG2, width=230, highlightthickness=0)
-    side.pack(side="left", fill="y")
-    side.pack_propagate(False)
+    # ----- Mise en page : un rail d'icônes à gauche (68 px) ; au survol, la barre s'ouvre
+    # par-dessus la page (animation), sans pousser le contenu.
+    RAIL, WIDE = 68, 236
+    rail_space = tk.Frame(root, bg=BG2, width=RAIL)
+    rail_space.pack(side="left", fill="y")
     tk.Frame(root, bg=LINE, width=1).pack(side="left", fill="y")
     main = tk.Frame(root, bg=BG)
     main.pack(side="left", fill="both", expand=True)
+    side = tk.Frame(root, bg=BG2, width=RAIL, highlightthickness=0)
+    side.place(x=0, y=0, width=RAIL, relheight=1)
+    side.pack_propagate(False)
+    side_edge = tk.Frame(root, bg=LINE2, width=1)  # bord de la barre ouverte
 
     # ----- Barre d'écoute (en bas, sur toutes les pages) : la prod jouée ici depuis le téléphone
     lb = {"v": None, "img": None, "photo": None, "sig": None, "drag": None, "st": None}
@@ -498,8 +523,13 @@ def manager_window(selftest=False):
     lb_art.pack(fill="both", expand=True)
     lb_meta = tk.Frame(lb_in, bg=PANEL)
     lb_meta.grid(row=0, column=1, rowspan=2, sticky="nsew")
-    lb_state = tk.Label(lb_meta, bg=PANEL, fg=FAINT, font=(FONT, 8, "bold"), anchor="w")
-    lb_state.pack(anchor="w", fill="x")
+    lb_srow = tk.Frame(lb_meta, bg=PANEL)
+    lb_srow.pack(anchor="w", fill="x")
+    lb_vu = tk.Canvas(lb_srow, width=22, height=12, bg=PANEL, highlightthickness=0)  # vu-mètre qui bouge pendant la lecture
+    lb_vu.pack(side="left", padx=(0, 6))
+    lb_vu_bars = [lb_vu.create_rectangle(i * 5, 6, i * 5 + 3, 12, fill=ACCENT, outline="") for i in range(5)]
+    lb_state = tk.Label(lb_srow, bg=PANEL, fg=FAINT, font=(FONT, 8, "bold"), anchor="w")
+    lb_state.pack(side="left", fill="x", expand=True)
     lb_title = tk.Label(lb_meta, bg=PANEL, fg=FG, font=(FONT, 12, "bold"), anchor="w")
     lb_title.pack(anchor="w", fill="x")
     lb_chips = tk.Frame(lb_meta, bg=PANEL)
@@ -522,7 +552,7 @@ def manager_window(selftest=False):
     lb_seek.pack(side="left", fill="x", expand=True, padx=8)
     lb_len = tk.Label(lb_seekrow, bg=PANEL, fg=MUTED, font=(MONO, 9), width=5, anchor="w")
     lb_len.pack(side="left")
-    lb_bgs = [lbar, lb_in, lb_meta, lb_state, lb_title, lb_chips, lb_ch, lb_play, lb_ctl, lb_toggle, lb_stop,
+    lb_bgs = [lbar, lb_in, lb_meta, lb_srow, lb_vu, lb_state, lb_title, lb_chips, lb_ch, lb_play, lb_ctl, lb_toggle, lb_stop,
               lb_seekrow, lb_pos, lb_seek, lb_len]
 
     def lb_draw_buttons(pal, playing, busy):
@@ -606,34 +636,41 @@ def manager_window(selftest=False):
         lb_artbox.configure(bg=pal["bg2"])
         lb_draw_buttons(pal, st["s"] == "playing", st["s"] == "loading")
 
-    logo = tk.Frame(side, bg=BG2, padx=20, pady=22)
+    # Logo : égaliseur animé (il danse quand un son joue)
+    logo = tk.Frame(side, bg=BG2, pady=18)
     logo.pack(fill="x")
-    mark = tk.Canvas(logo, width=30, height=30, bg=BG2, highlightthickness=0)
-    mark.pack(side="left")
-    mark.create_rectangle(0, 0, 30, 30, fill=ACCENT2, outline="")  # même logo que l'app : barres sur fond ambre
-    for x, h in ((7, 9), (12, 14), (17, 11), (22, 16)):
-        mark.create_rectangle(x, 23 - h, x + 2, 23, fill=ON_ACCENT, outline="")
+    mark_box = tk.Frame(logo, bg=BG2, width=RAIL, height=36)
+    mark_box.pack(side="left")
+    mark_box.pack_propagate(False)
+    mark = tk.Canvas(mark_box, width=34, height=34, bg=BG2, highlightthickness=0)
+    mark.place(relx=0.5, rely=0.5, anchor="center")
+    mark.create_rectangle(0, 0, 34, 34, fill=ACCENT2, outline="")
+    eq_bars = [mark.create_rectangle(8 + i * 5, 10, 10 + i * 5, 26, fill=ON_ACCENT, outline="") for i in range(4)]
+    eq = {"h": [0.4, 0.7, 0.5, 0.8], "t": [0.4, 0.7, 0.5, 0.8], "n": 0}
     tl = tk.Frame(logo, bg=BG2)
-    tl.pack(side="left", padx=10)
+    tl.pack(side="left", padx=(2, 0))
     label(tl, "Melofinds", 14, bold=True).pack(anchor="w")
-    label(tl, "PC", 8, FAINT, bold=True).pack(anchor="w")
+    label(tl, "STUDIO · PC", 7, ACCENT, bold=True).pack(anchor="w")
 
-    nav = tk.Frame(side, bg=BG2, padx=10)
-    nav.pack(fill="x", pady=(6, 0))
+    nav = tk.Frame(side, bg=BG2)
+    nav.pack(fill="x", pady=(10, 0))
+    nav_ind = tk.Frame(side, bg=ACCENT2, width=3, height=24)  # indicateur de la page, il glisse
     pages, nav_items = {}, {}
     current = {"page": None}
+    NAV_ICONS = {"search": "search", "home": "list-music", "prods": "folder-open", "flmake": "file-music",
+                 "devices": "smartphone", "settings": "settings"}
 
     def nav_item(key, text, glyph):
-        row = tk.Frame(nav, bg=BG2, cursor="hand2")
-        row.pack(fill="x", pady=1)
-        bar = tk.Frame(row, bg=BG2, width=3)
-        bar.pack(side="left", fill="y")
-        g = tk.Label(row, text=glyph, bg=BG2, fg=FAINT, font=(FONT, 11))
-        g.pack(side="left", padx=(12, 0), pady=9)
-        t = tk.Label(row, text=text, bg=BG2, fg=MUTED, font=(FONT, 10, "bold"))
-        t.pack(side="left", pady=9)
+        row = tk.Frame(nav, bg=BG2, cursor="hand2", height=44)
+        row.pack(fill="x", pady=2)
+        row.pack_propagate(False)
+        bar = tk.Frame(row, bg=BG2, width=0)
+        g = tk.Label(row, image=ico(NAV_ICONS.get(key, "circle-dot"), 20, "muted"), bg=BG2, width=RAIL - 4)
+        g.pack(side="left")
+        t = tk.Label(row, text=text, bg=BG2, fg=MUTED, font=(FONT, 10, "bold"), anchor="w")
+        t.pack(side="left", fill="x", expand=True)
         badge = tk.Label(row, text="", bg=BG2, fg=ACCENT, font=(MONO, 9, "bold"))
-        badge.pack(side="right", padx=10)
+        badge.pack(side="right", padx=14)
         nav_items[key] = (row, bar, g, t, badge)
         for w in (row, g, t, badge):
             w.bind("<Button-1>", lambda e, k=key: show(k))
@@ -646,38 +683,142 @@ def manager_window(selftest=False):
         bg = PANEL2 if on else (PANEL if hover else BG2)
         for w in (row, g, t, badge):
             w.configure(bg=bg)
-        bar.configure(bg=ACCENT2 if on else bg)
-        t.configure(fg=FG if on else MUTED)
-        g.configure(fg=ACCENT if on else FAINT)
+        t.configure(fg=FG if (on or hover) else MUTED)
+        g.configure(image=ico(NAV_ICONS.get(key, "circle-dot"), 20, "accent" if on else "fg" if hover else "muted"))
 
     for k, txt, gl in (("search", "Rechercher", ""), ("home", "File d'attente", ""), ("prods", "Mes projets FL", ""), ("flmake", "FLmake", ""),
                        ("devices", "Appareils", ""), ("settings", "Réglages", "")):
         nav_item(k, txt, gl)
 
-    # Bas du menu : état + mise en ligne
-    foot = tk.Frame(side, bg=BG2, padx=14, pady=16)
+    ind = {"y": None, "job": None}
+
+    def move_indicator(key, instant=False):
+        row = nav_items[key][0]
+        root.update_idletasks()
+        target = row.winfo_rooty() - side.winfo_rooty() + 10
+        if ind["job"]:
+            root.after_cancel(ind["job"])
+            ind["job"] = None
+        start, t0 = (ind["y"] if ind["y"] is not None and not instant else target), time.time()
+
+        def step():
+            k = min(1.0, (time.time() - t0) / 0.22)
+            y = ease(start, target, k)
+            ind["y"] = y
+            nav_ind.place(x=0, y=int(y), width=3, height=24)
+            nav_ind.lift()
+            ind["job"] = root.after(12, step) if k < 1 else None
+        step()
+
+    # Bas de la barre : état (point) et, barre ouverte, le détail + mise en ligne
+    foot = tk.Frame(side, bg=BG2, pady=14)
     foot.pack(side="bottom", fill="x")
-    status_box = tk.Frame(foot, bg=PANEL, highlightthickness=1, highlightbackground=LINE, padx=12, pady=12)
-    status_box.pack(fill="x")
-    srow = tk.Frame(status_box, bg=PANEL)
+    srow = tk.Frame(foot, bg=BG2)
     srow.pack(fill="x")
-    dot = tk.Canvas(srow, width=12, height=12, bg=PANEL, highlightthickness=0)
-    dot.pack(side="left", padx=(0, 8))
-    dot_id = dot.create_oval(1, 1, 11, 11, fill=MUTED, outline="")
-    status_lbl = label(srow, "…", 11, bold=True)
-    status_lbl.pack(side="left")
-    status_sub = label(status_box, "", 9, MUTED, wrap=180)
-    status_sub.pack(anchor="w", pady=(4, 10))
-    toggle = Btn(status_box, "Mettre en ligne", kind="online", pady=8)
+    dot_col = tk.Frame(srow, bg=BG2, width=RAIL, height=26)
+    dot_col.pack(side="left", anchor="n")
+    dot_col.pack_propagate(False)
+    dot = tk.Canvas(dot_col, width=14, height=14, bg=BG2, highlightthickness=0)
+    dot.place(relx=0.5, rely=0.5, anchor="center")
+    dot_ring = dot.create_oval(1, 1, 13, 13, outline=MUTED, width=1)
+    dot_id = dot.create_oval(4, 4, 10, 10, fill=MUTED, outline="")
+    status_box = tk.Frame(srow, bg=BG2)
+    status_box.pack(side="left", fill="x", expand=True, padx=(0, 16))
+    status_lbl = label(status_box, "…", 11, bold=True)
+    status_lbl.pack(anchor="w")
+    status_sub = label(status_box, "", 9, MUTED, wrap=150)
+    status_sub.pack(anchor="w", pady=(2, 8))
+    toggle = Btn(status_box, "Mettre en ligne", kind="online", pady=7)
     toggle.pack(fill="x")
-    Btn(foot, "Ouvrir Melofinds ↗", kind="subtle", command=lambda: WW.open_search(""), padx=0, pady=10).pack(anchor="w")
-    label(foot, f"version {C.VERSION}", 8, FAINT, mono=True).pack(anchor="w")
+    lrow = tk.Frame(foot, bg=BG2, cursor="hand2")
+    lrow.pack(fill="x", pady=(12, 0))
+    lg = tk.Label(lrow, image=ico("external-link", 16, "muted"), bg=BG2, width=RAIL - 4)
+    lg.pack(side="left")
+    lt = tk.Label(lrow, text="Ouvrir Melofinds", bg=BG2, fg=MUTED, font=(FONT, 9, "bold"), anchor="w")
+    lt.pack(side="left")
+    for w in (lrow, lg, lt):
+        w.bind("<Button-1>", lambda e: WW.open_search(""))
+    vrow = tk.Frame(foot, bg=BG2)
+    vrow.pack(fill="x", pady=(6, 0))
+    tk.Frame(vrow, bg=BG2, width=RAIL, height=1).pack(side="left")
+    label(vrow, f"version {C.VERSION}", 8, FAINT, mono=True).pack(side="left")
+
+    # Ouverture de la barre au survol (par-dessus la page), refermée quand la souris part
+    sb = {"w": RAIL, "target": RAIL, "job": None, "t0": 0.0, "from": RAIL, "pending": None}
+
+    def side_anim(target):
+        if sb["target"] == target and (sb["job"] or sb["w"] == target):
+            return
+        sb.update(target=target, t0=time.time(), **{"from": sb["w"]})
+        if sb["job"]:
+            return
+
+        def step():
+            k = min(1.0, (time.time() - sb["t0"]) / 0.18)
+            w = ease(sb["from"], sb["target"], k)
+            sb["w"] = w
+            side.place_configure(width=int(w))
+            side.lift()
+            if w > RAIL + 2:
+                side_edge.place(x=int(w), y=0, width=1, relheight=1, height=side.winfo_height() - root.winfo_height() if lbar.winfo_ismapped() else 0)
+                side_edge.lift()
+            else:
+                side_edge.place_forget()
+            nav_ind.lift()
+            sb["job"] = root.after(12, step) if k < 1 else None
+        step()
+
+    def side_hover(e=None):
+        try:
+            x, y = root.winfo_pointerxy()
+            sx, sy = side.winfo_rootx(), side.winfo_rooty()
+            inside = sx <= x < sx + max(RAIL, int(sb["w"])) and sy <= y < sy + side.winfo_height()
+        except Exception:
+            return
+        want = WIDE if inside else RAIL
+        if want != sb["target"]:
+            if sb["pending"]:
+                root.after_cancel(sb["pending"])
+            # un petit délai : la barre ne s'ouvre pas quand la souris ne fait que passer
+            sb["pending"] = root.after(90 if inside else 160, lambda: (sb.update(pending=None), side_anim(want if want == WIDE and inside_now() else RAIL if not inside_now() else WIDE)))
+
+    def inside_now():
+        try:
+            x, y = root.winfo_pointerxy()
+            sx, sy = side.winfo_rootx(), side.winfo_rooty()
+            return sx <= x < sx + max(RAIL, int(sb["w"])) and sy <= y < sy + side.winfo_height()
+        except Exception:
+            return False
+    root.bind_all("<Motion>", side_hover, add="+")
+    root.bind("<Leave>", lambda e: side_hover())
+
+    def eq_tick():
+        """Logo : les barres bougent vite quand un son joue, respirent doucement sinon."""
+        import random
+        playing = bool(PLAYER.path and PLAYER.mode() == "playing") or bool(lb.get("st") and lb["st"].get("s") == "playing")
+        eq["n"] += 1
+        if playing or eq["n"] % 6 == 0:
+            eq["t"] = [random.uniform(0.25, 1.0) if playing else random.uniform(0.35, 0.6) for _ in range(4)]
+        for i, r in enumerate(eq_bars):
+            eq["h"][i] += (eq["t"][i] - eq["h"][i]) * (0.45 if playing else 0.15)
+            h = 4 + 18 * eq["h"][i]
+            mark.coords(r, 8 + i * 5, 27 - h, 10 + i * 5, 27)
+        if lbar.winfo_ismapped():  # vu-mètre de la barre d'écoute
+            live = bool(lb.get("st") and lb["st"].get("s") == "playing")
+            for i, r in enumerate(lb_vu_bars):
+                h = 2 + (random.uniform(2, 10) if live else 1)
+                lb_vu.coords(r, i * 5, 12 - h, i * 5 + 3, 12)
+        root.after(70 if playing else 140, eq_tick)
 
     # En-tête de page + zone de message
     head = tk.Frame(main, bg=BG, padx=30, pady=22)
     head.pack(fill="x")
-    page_title = label(head, "", 20, bold=True)
-    page_title.pack(anchor="w")
+    head_row = tk.Frame(head, bg=BG)
+    head_row.pack(anchor="w")
+    page_icon = tk.Label(head_row, bg=BG)
+    page_icon.pack(side="left", padx=(0, 10))
+    page_title = label(head_row, "", 20, bold=True)
+    page_title.pack(side="left")
     page_sub = label(head, "", 10, MUTED, wrap=720)
     page_sub.pack(anchor="w", pady=(2, 0))
     toast_lbl = tk.Label(main, text="", bg=PANEL3, fg=FG, font=(FONT, 10), padx=14, pady=9)
@@ -687,8 +828,15 @@ def manager_window(selftest=False):
         if not msg:
             return
         toast_lbl.configure(text=msg)
-        toast_lbl.place(relx=0.5, rely=1.0, y=-18, anchor="s")
-        toast_lbl.lift()
+        t0 = time.time()
+
+        def rise():
+            k = min(1.0, (time.time() - t0) / 0.2)
+            toast_lbl.place(relx=0.5, rely=1.0, y=int(ease(24, -18, k)), anchor="s")
+            toast_lbl.lift()
+            if k < 1:
+                root.after(12, rise)
+        rise()
         if toast_state["after"]:
             root.after_cancel(toast_state["after"])
         toast_state["after"] = root.after(ms, toast_lbl.place_forget)
@@ -706,16 +854,33 @@ def manager_window(selftest=False):
 
     on_show = {}
 
+    slide = {"job": None}
+
     def show(key):
+        same = current["page"] == key
         current["page"] = key
         for k, (f, _, _) in pages.items():
-            f.pack_forget()
+            if k != key:
+                f.place_forget()
         f, t, s = pages[key]
         page_title.configure(text=t)
         page_sub.configure(text=s)
-        f.pack(fill="both", expand=True)
+        page_icon.configure(image=ico(NAV_ICONS.get(key, "circle-dot"), 24, "accent"))
         for k in nav_items:
             paint(k)
+        if key in nav_items:
+            move_indicator(key)
+        # la page arrive en glissant (léger, 180 ms)
+        if slide["job"]:
+            root.after_cancel(slide["job"])
+            slide["job"] = None
+        t0, start = time.time(), (0 if same else 28)
+
+        def step():
+            k = min(1.0, (time.time() - t0) / 0.18)
+            f.place(x=int(ease(start, 0, k)), y=0, relwidth=1, relheight=1)
+            slide["job"] = root.after(12, step) if k < 1 else None
+        step()
         if key in on_show:
             on_show[key]()
 
@@ -939,15 +1104,15 @@ def manager_window(selftest=False):
 
     acts = tk.Frame(prods, bg=BG)
     acts.pack(fill="x", pady=(12, 0))
-    sel_lbl = label(acts, "Choisis un projet.", 10, MUTED)
-    sel_lbl.pack(side="left")
     a_open = Btn(acts, "Ouvrir dans FL", kind="primary")
-    a_ren = Btn(acts, "Renommer…")
-    a_style = Btn(acts, "Icône et couleur…")
+    a_ren = Btn(acts, "Renommer")
+    a_style = Btn(acts, "Icône et couleur")
     a_dir = Btn(acts, "Dossier")
-    a_play = Btn(acts, "♪ Sons")
-    for b in (a_play, a_dir, a_style, a_ren, a_open):
+    a_play = Btn(acts, "Sons")
+    for b in (a_play, a_dir, a_style, a_ren, a_open):  # les boutons d'abord : jamais coupés
         b.pack(side="right", padx=(8, 0))
+    sel_lbl = label(acts, "Choisis un projet.", 10, MUTED)
+    sel_lbl.pack(side="left", fill="x", expand=True)
 
     lib = {"items": [], "by_id": {}, "sig": None, "shown": []}
     sel = {"id": None}
@@ -1245,12 +1410,27 @@ def manager_window(selftest=False):
         if it.extra.get("yt"):
             yt = tk.Label(inner, text="▶ Voir la vidéo YouTube", bg=bgc, fg="#ff5a52", font=(FONT, 9, "bold"), cursor="hand2", anchor="w")
             yt.pack(fill="x", pady=(6, 0))
-        pb = player_box(inner, it, L.audio_files(it), color)
+        pb = player_box(inner, it, it.extra["audio"] if "audio" in it.extra else L.audio_files(it), color)
         if pb:
             pb[0].pack(fill="x", pady=(10, 0), before=foot)
         else:
             tk.Label(inner, text="Aucun son à écouter", bg=bgc, fg=FAINT, font=(FONT, 9), anchor="w").pack(fill="x", pady=(10, 0), before=foot)
         bind_all_children(c, it)
+
+        def hov(on):  # la bordure s'allume au survol, dans la couleur du projet
+            if c.winfo_exists():
+                c.configure(highlightbackground=color if on or sel["id"] == it.id else blend(color, PANEL, 0.55))
+
+        def leave(e):
+            try:
+                x, y = root.winfo_pointerxy()
+                inside = c.winfo_rootx() <= x < c.winfo_rootx() + c.winfo_width() and c.winfo_rooty() <= y < c.winfo_rooty() + c.winfo_height()
+            except Exception:
+                inside = False
+            if not inside:
+                hov(False)
+        c.bind("<Enter>", lambda e: hov(True), add="+")
+        c.bind("<Leave>", leave, add="+")
         if pb:  # le lecteur garde ses clics pour lui (ni sélection, ni déplacement, ni ouverture)
             def quiet(w):
                 w.bind("<Button-1>", lambda e: "break")
@@ -1319,29 +1499,58 @@ def manager_window(selftest=False):
         update_actions()
         nav_items["prods"][4].configure(text=str(len(items)) if items else "")
 
+    scan = {"busy": False, "fsig": None, "at": 0.0, "again": False}
+
     def load_prods(force=False):
+        """La liste est lue en arrière-plan (la fenêtre ne se fige jamais), et seulement si le
+        dossier a changé (empreinte légère), ou après un changement fait ici (force)."""
         fold_lbl.configure(text=f"Dossier : {FM.settings()['dossier']}")
         try:
-            items = L.scan_projects()
+            fsig = L.folder_sig()
         except OSError:
-            items = []
-        sig = [(i.id, i.name, i.fav, int(i.date), i.extra.get("instru"), i.extra.get("color"), i.extra.get("icon"), bool(i.flp)) for i in items]
-        if force or sig != lib["sig"]:
-            lib.update(items=items, by_id={i.id: i for i in items}, sig=sig)
-            fill_prods()
+            fsig = None
+        if not force and fsig == scan["fsig"] and time.time() - scan["at"] < 120:
+            return
+        if scan["busy"]:
+            scan["again"] = scan["again"] or force or fsig != scan["fsig"]
+            return
+        scan.update(busy=True, fsig=fsig, at=time.time())
+
+        def work():
+            try:
+                items = L.scan_projects()
+                for i in items:  # les sons de chaque projet aussi, ici (jamais pendant l'affichage)
+                    try:
+                        i.extra["audio"] = L.audio_files(i)
+                    except OSError:
+                        i.extra["audio"] = []
+            except Exception:
+                items = []
+            root.after(0, lambda: done(items))
+
+        def done(items):
+            scan["busy"] = False
+            sig = [(i.id, i.name, i.fav, int(i.date), i.extra.get("instru"), i.extra.get("color"), i.extra.get("icon"), bool(i.flp)) for i in items]
+            if force or sig != lib["sig"]:
+                lib.update(items=items, by_id={i.id: i for i in items}, sig=sig)
+                fill_prods()
+            if scan["again"]:
+                scan["again"] = False
+                load_prods(force=True)
+        threading.Thread(target=work, daemon=True).start()
 
     def update_actions():
         it = selected()
         for b in (a_open, a_ren, a_style, a_dir, a_play):
             b.set(enabled=bool(it))
         if not it:
-            sel_lbl.configure(text="Double-clic : ouvrir dans FL · clic sur l'icône : icône et couleur · glisser : changer l'ordre")
+            sel_lbl.configure(text="Double-clic : ouvrir dans FL")
             return
         a_open.set(text="Ouvrir dans FL" if it.flp else ("Créer le projet FL" if FM.settings()["template"] else "Ouvrir la prod"))
         ip = it.extra.get("instru_path")
         a_play.set(enabled=bool((ip and Path(ip).is_file()) or it.folder))
         files = it.extra.get("files")
-        sel_lbl.configure(text=f"{it.title[:44]}" + (f"  ·  {files} fichier{'s' if files > 1 else ''}" if files else ""))
+        sel_lbl.configure(text=f"{it.title[:28]}" + (f"  ·  {files} fichier{'s' if files > 1 else ''}" if files else ""))
 
     def do_open(it=None):
         it = it or selected()
@@ -2214,7 +2423,8 @@ def manager_window(selftest=False):
                 lb_draw_seek(listen_palette(st["color"]), st["pos"], st["len"])
             lb_len.configure(text=_mmss(st["len"] / 1000) if st["len"] else "")
             if not lbar.winfo_ismapped():
-                lbar.pack(side="bottom", fill="x", before=side)
+                lbar.pack(side="bottom", fill="x", before=rail_space)
+                side.place_configure(height=-104)
                 # un peu plus haute pendant l'écoute : le menu de gauche garde toute sa place
                 root.minsize(880, 690)
                 if root.winfo_height() < 690:
@@ -2223,11 +2433,16 @@ def manager_window(selftest=False):
             lb["st"], lb["sig"] = None, None
             if lbar.winfo_ismapped():
                 lbar.pack_forget()
+                side.place_configure(height=0)
                 root.minsize(880, 580)
         root.after(250, tick_listen)
 
     tick_progress()
     tick_listen()
+    eq_tick()
+    # une fois la fenêtre affichée : l'indicateur se place sur la page ouverte
+    root.after(350, lambda: current["page"] in nav_items and move_indicator(current["page"], instant=True))
+    root.bind("<Configure>", lambda e: e.widget is root and current["page"] in nav_items and move_indicator(current["page"], instant=True), add="+")
     tick_player()
     if selftest:
         for k in ("home", "prods", "flmake", "devices", "settings"):

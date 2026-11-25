@@ -191,6 +191,18 @@ ouvre le site dans Chrome) :
 - Code : `pc/` (`melofinds_pc.py` point d'entrée, `mf_core.py`, `mf_worker.py`,
   `mf_install.py`, `mf_gui.py`, `installer.iss`) · tests : `npm run test:pc`.
 
+### Panneau PC : rail, icônes, animations
+
+- Barre latérale en **rail d'icônes** (68 px) ; au survol elle s'ouvre **par-dessus la page**
+  (animation de largeur), l'indicateur de la page **glisse**, les pages arrivent en glissant,
+  les messages montent. Logo **égaliseur animé** (il danse quand un son joue), vu-mètre dans
+  la barre d'écoute, bordure des projets qui s'allume au survol.
+- Icônes **Lucide** (licence ISC, texte dans `pc/mf_icons.py` et `pc/assets/LICENSE-lucide.txt`),
+  rendues en PNG aux couleurs du logiciel et intégrées (`pc/mf_icons.py`).
+- **Mes projets FL** : liste lue en arrière-plan, seulement quand le dossier change (plus de
+  gel de la fenêtre) ; un dossier qui contient plusieurs chansons (« FL STUDIO PROJECT » de FL)
+  donne **une chanson = un projet**, avec ses versions.
+
 ## Bouton « BPM » : Tunebat Analyzer
 
 Quand la description ne donne pas le BPM ou la clé, chaque prod a un petit bouton **BPM** :
