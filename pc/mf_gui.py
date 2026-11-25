@@ -569,6 +569,8 @@ def run_embedtest(root, show, panel, out):
                     r = panel._eval("JSON.stringify({t: document.title, iw: innerWidth, ih: innerHeight, "
                                     "q: !!document.querySelector('input,textarea'), n: document.body.innerText.length})")
                     res["page"] = json.loads(r) if isinstance(r, str) else r
+                    w, h = panel.size  # le site remplit exactement la page (barre de titre et bords cachés)
+                    res["fit"] = abs(res["page"]["iw"] - w) <= 3 and abs(res["page"]["ih"] - h) <= 3
                     if E.WINDOWS:
                         import ctypes
                         res["parent_ok"] = bool(ctypes.windll.user32.GetParent(panel.hwnd))

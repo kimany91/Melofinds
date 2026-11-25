@@ -72,25 +72,30 @@ def start_url(cfg=None, online=True):
 def launch_args(browser, url, x=None, y=None, w=1100, h=760):
     a = [browser, f"--user-data-dir={profile_dir()}", f"--app={url}", "--remote-debugging-port=0",
          "--no-first-run", "--no-default-browser-check", "--hide-crash-restore-bubble",
-         "--disable-session-crashed-bubble", f"--window-size={max(200, int(w))},{max(200, int(h))}"]
+         "--disable-session-crashed-bubble", "--lang=fr", "--accept-lang=fr-FR,fr",
+         "--disable-features=Translate,msTranslateOnLoad", f"--window-size={max(200, int(w))},{max(200, int(h))}"]
     if x is not None and y is not None:  # la fenêtre apparaît déjà à la place de la page
         a.append(f"--window-position={int(x)},{int(y)}")
     return a
 
 
-def title_offset(m, host_w):
-    """Hauteur (en pixels de la page Tk) de la barre de titre dessinée par le navigateur, à partir
-    des mesures du site : outer/inner (px CSS). Indépendant de l'échelle de Windows."""
+def frame_sizes(m, host_w):
+    """(barre de titre, bord) du navigateur en pixels de la page Tk, à partir des mesures du
+    site : outer/inner (px CSS). Indépendant de l'échelle de Windows."""
     try:
         ow, oh, iw, ih = (float(m[k]) for k in ("ow", "oh", "iw", "ih"))
     except (KeyError, TypeError, ValueError):
-        return 0
+        return 0, 0
     if ow <= 0 or host_w <= 0:
-        return 0
+        return 0, 0
     ratio = host_w / ow  # px Tk par px CSS
-    border = max(0.0, (ow - iw) / 2)
-    top = max(0.0, oh - ih - border)
-    return int(round(min(top, 120) * ratio))
+    border = min(max(0.0, (ow - iw) / 2), 20)
+    top = min(max(0.0, oh - ih - border), 120)
+    return int(round(top * ratio)), int(round(border * ratio))
+
+
+def title_offset(m, host_w):
+    return frame_sizes(m, host_w)[0]
 
 
 if WINDOWS:
@@ -151,7 +156,7 @@ class Panel:
         self.on_state = on_state or (lambda *_: None)
         self.state, self.detail = "idle", ""
         self.proc = self.hwnd = self.port = self.bpath = None
-        self.top = 0
+        self.top = self.border = 0
         self.size = (0, 0)
         self.lock = threading.Lock()
         self.online = True  # (tests : ne pas mettre le PC en ligne)
@@ -264,10 +269,10 @@ class Panel:
             time.sleep(0.4)
             r = self._eval("JSON.stringify({ow: outerWidth, oh: outerHeight, iw: innerWidth, ih: innerHeight})")
             m = json.loads(r) if isinstance(r, str) else r
-            self.top = title_offset(m, self.size[0])
-            log(f"mesures {m} → barre de titre {self.top}px")
+            self.top, self.border = frame_sizes(m, self.size[0])
+            log(f"mesures {m} → barre de titre {self.top}px, bord {self.border}px")
         except Exception as e:
-            self.top = 0
+            self.top = self.border = 0
             log(f"mesure impossible : {e}")
         self.resize(*self.size)
 
@@ -276,7 +281,8 @@ class Panel:
         self.size = (int(w), int(h))
         if WINDOWS and self.hwnd:
             try:
-                _U.MoveWindow(self.hwnd, 0, -self.top, int(w), int(h) + self.top, True)
+                b = self.border  # bords et barre de titre du navigateur : hors du cadre (cachés)
+                _U.MoveWindow(self.hwnd, -b, -self.top, int(w) + 2 * b, int(h) + self.top + b, True)
             except Exception:
                 pass
 

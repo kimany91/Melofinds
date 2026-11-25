@@ -2057,6 +2057,8 @@ class RechercheDansLeLogiciel(unittest.TestCase):
         self.assertEqual(E.title_offset({}, 1000), 0)
         self.assertEqual(E.title_offset({"ow": 0, "oh": 1, "iw": 0, "ih": 1}, 1000), 0)
         self.assertLessEqual(E.title_offset({"ow": 1000, "oh": 5000, "iw": 1000, "ih": 10}, 1000), 120)
+        # mesuré sur Windows (CI) : fenêtre 791x700, page 777x663 → barre 30 px, bords 7 px
+        self.assertEqual(E.frame_sizes({"ow": 791, "oh": 700, "iw": 777, "ih": 663}, 791), (30, 7))
 
     def test_reliee_une_seule_fois(self):
         E = self.E

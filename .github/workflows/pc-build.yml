@@ -116,7 +116,7 @@ jobs:
           $p | Wait-Process -Timeout 30 -ErrorAction SilentlyContinue
           if (Test-Path $out) { Get-Content $out } else { Write-Host "embed.json absent" }
           $r = Get-Content $out -Raw | ConvertFrom-Json
-          if ($r.state -ne 'ready' -or -not $r.parent_ok) { Write-Error "Le site ne s'est pas rangé dans la page Rechercher"; exit 1 }
+          if ($r.state -ne 'ready' -or -not $r.parent_ok -or -not $r.fit) { Write-Error "Le site ne s'est pas rangé dans la page Rechercher"; exit 1 }
 
       - name: Construire l'installateur (Inno Setup)
         shell: pwsh
