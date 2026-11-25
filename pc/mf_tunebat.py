@@ -259,6 +259,15 @@ def _targets(port):
         return []
 
 
+def _loaded(targets):
+    """La page a un vrai titre (pas encore son adresse) : on sait ce qu'elle affiche."""
+    page = next((t for t in targets if t.get("type") == "page"), None)
+    title, url = str((page or {}).get("title") or "").strip(), str((page or {}).get("url") or "")
+    if not page or not title or url in ("", "about:blank"):
+        return False
+    return title != url and not re.match(r"^(https?://|[\w.-]+:\d+/|[\w-]+\.[\w.-]+/)", title)
+
+
 def _challenge(targets):
     """Page de vérification Cloudflare (titre « Just a moment… ») ; cf : widget Cloudflare vu."""
     page = next((t for t in targets if t.get("type") == "page"), None)
@@ -336,7 +345,11 @@ def _run(wav, tag, step, timeout, url, browser, extra_args):
             end = time.time() + timeout
             injected_at, polls, challenge_since, cf_seen = None, 0, None, False
             while time.time() < end:
-                blocked, cf = _challenge(_targets(port))
+                targets = _targets(port)
+                if cdp is None and not _loaded(targets):
+                    time.sleep(0.3)  # page pas encore chargée : on ne sait pas si c'est une vérification
+                    continue
+                blocked, cf = _challenge(targets)
                 cf_seen = cf_seen or cf
                 if blocked:
                     # vérification en cours : on ne touche à rien (lu de l'extérieur, sans la page)
