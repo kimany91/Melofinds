@@ -2050,9 +2050,11 @@ class CompteYouTube(unittest.TestCase):
             p = sp.Popen([browser, f"--user-data-dir={Y.profile_dir()}", "--remote-debugging-port=0", "--headless=new",
                           "--no-first-run", *extra, f"http://127.0.0.1:{srv.server_address[1]}/"], stdout=sp.DEVNULL, stderr=sp.DEVNULL)
             port, bpath = T._wait_port(pf, p)
-            time.sleep(3)
             c = T.CDP(f"ws://127.0.0.1:{port}{bpath}")
-            c.ws.send(json.dumps({"id": 1, "method": "Browser.close"}))
+            end = time.time() + 15  # la page a posé son cookie (machine lente : plus de 3 s)
+            while time.time() < end and not any(k.get("name") == "LOGIN_INFO" for k in (c.call("Storage.getCookies") or {}).get("cookies") or []):
+                time.sleep(0.3)
+            c.ws.send(json.dumps({"id": 99, "method": "Browser.close"}))
             p.wait(20)
             c.close()
             time.sleep(1)
