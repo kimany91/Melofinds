@@ -30,9 +30,17 @@ import mf_core as C
 
 WHISPER_API = "https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest"
 WHISPER_ASSET = "whisper-bin-x64.zip"
-MODEL = "ggml-large-v3-turbo-q5_0.bin"
-MODEL_DTW = "large.v3.turbo"
-MODEL_URL = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{MODEL}"
+# Deux moteurs d'écoute. « precise » : Whisper large-v3 complet (32 couches pour écrire les
+# mots, contre 4 pour turbo) : bien meilleur sur le rap rapide ou mal articulé, plus lent.
+MODELS = {
+    "precise": {"file": "ggml-large-v3.bin", "dtw": "large.v3", "size": "3 Go", "label": "Précise"},
+    "rapide": {"file": "ggml-large-v3-turbo-q5_0.bin", "dtw": "large.v3.turbo", "size": "550 Mo", "label": "Rapide"},
+}
+QUALITY = "precise"
+MODEL = MODELS["rapide"]["file"]  # (ancien nom, gardé pour les tests)
+MODEL_DTW = MODELS["rapide"]["dtw"]
+HF = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
+MODEL_URL = HF + MODEL
 MODEL_TREE = "https://huggingface.co/api/models/ggerganov/whisper.cpp/tree/main"
 FONTS_CSS = "https://fonts.googleapis.com/css2?family=Anton&family=Silkscreen:wght@700&family=Archivo+Black"
 FONT_FILES = {"Anton": "Anton.ttf", "Silkscreen": "Silkscreen.ttf", "Archivo Black": "ArchivoBlack.ttf"}
@@ -58,6 +66,8 @@ PROMPT = "Paroles d'un morceau de rap français, avec de l'argot."
 # Whisper (alignement DTW) date les mots en retard : mesuré mot par mot sur une voix aux moments
 # connus, posée sur un beat (CI Windows) : 0,09 à 0,30 s, 0,17 s en moyenne, jamais en avance.
 DTW_SHIFT = 0.14
+DTW_SHIFTS = {"precise": 0.14, "rapide": 0.14}
+LEX_MAX = 80
 
 
 class PromoError(Exception):
@@ -106,13 +116,68 @@ def whisper_exe():
     return None
 
 
-def model_path():
-    p = whisper_dir() / MODEL
+def _quality(q):
+    return q if q in MODELS else QUALITY
+
+
+def model_path(quality=None):
+    p = whisper_dir() / MODELS[_quality(quality)]["file"]
     return p if p.exists() else None
 
 
-def ready():
-    return {"whisper": bool(whisper_exe()), "model": bool(model_path()), "fonts": all((fonts_dir() / f).exists() for f in FONT_FILES.values())}
+def ready(quality=None):
+    return {"whisper": bool(whisper_exe()), "model": bool(model_path(quality)), "fonts": all((fonts_dir() / f).exists() for f in FONT_FILES.values())}
+
+
+# ---------- Tes mots : ce que tu corriges dans les paroles est retenu et donné à Whisper la
+# fois d'après (ton blaze, ton argot, les noms…), pour qu'il les entende bien.
+def _lex_file():
+    return C.P.base / "promo-mots.json"
+
+
+def lexicon():
+    d = C._read_json(_lex_file())
+    return [w for w in d.get("mots") or [] if isinstance(w, str)][-LEX_MAX:] if isinstance(d, dict) else []
+
+
+def _tok(text):
+    return [t for t in re.findall(r"[\w'’-]+", _fix_text(str(text or "")).lower()) if len(t) > 1 and not t.isdigit()]
+
+
+def learn_words(heard, lines):
+    """Mots écrits dans les paroles finales que Whisper n'avait pas entendus : retenus."""
+    got = set(_tok(" ".join(str(w.get("w") or "") for w in heard or [])))
+    new = []
+    for ln in lines or []:
+        for t in re.findall(r"[\w'’-]+", _fix_text(str(ln.get("t") or ""))):
+            if len(t) > 1 and not t.isdigit() and t.lower() not in got and t.lower() not in {x.lower() for x in new}:
+                new.append(t[:30])
+    if not new:
+        return []
+    keep = [w for w in lexicon() if w.lower() not in {x.lower() for x in new}] + new
+    try:
+        C._write_json(_lex_file(), {"mots": keep[-LEX_MAX:]})
+    except OSError:
+        return []
+    return new
+
+
+def forget_word(word):
+    keep = [w for w in lexicon() if w.lower() != str(word).lower()]
+    C._write_json(_lex_file(), {"mots": keep})
+    return keep
+
+
+def prompt_for(title=""):
+    """Consigne donnée à Whisper : rap français + le titre + tes mots (≈ 150 mots au plus)."""
+    p = PROMPT
+    t = re.sub(r"\s+", " ", re.sub(r"[\[\]()_]", " ", str(title or ""))).strip()[:60]
+    if t:
+        p += f" Titre : {t}."
+    lex = lexicon()[-60:]
+    if lex:
+        p += " Mots : " + ", ".join(lex) + "."
+    return p
 
 
 def _json(url, timeout=20):
@@ -134,8 +199,9 @@ def pick_whisper_asset(assets):
     return ok[0] if ok else None
 
 
-def ensure_whisper(progress=None):
-    """whisper.cpp (version officielle pour Windows) + modèle large-v3-turbo. Lève PromoError."""
+def ensure_whisper(progress=None, quality=None):
+    """whisper.cpp (version officielle pour Windows) + le modèle choisi. Lève PromoError."""
+    q = MODELS[_quality(quality)]
     say = progress or (lambda *_: None)
     d = whisper_dir()
     d.mkdir(parents=True, exist_ok=True)
@@ -179,24 +245,24 @@ def ensure_whisper(progress=None):
         if not whisper_exe():
             raise PromoError("whisper.cpp : programme absent de l'archive")
         C.log(f"whisper.cpp installé ({rel.get('tag_name')})")
-    if not model_path():
-        say("Téléchargement du modèle de paroles (une seule fois, ~550 Mo)…")
+    if not model_path(quality):
+        say(f"Téléchargement du modèle de paroles {q['label'].lower()} (une seule fois, ~{q['size']})…")
         try:
             tree = _json(MODEL_TREE)
         except (urllib.error.URLError, OSError, ValueError) as e:
             raise PromoError(f"modèle introuvable ({e})")
-        ent = next((t for t in tree if isinstance(t, dict) and t.get("path") == MODEL), None)
+        ent = next((t for t in tree if isinstance(t, dict) and t.get("path") == q["file"]), None)
         sha = str(((ent or {}).get("lfs") or {}).get("oid") or "")
         if not re.fullmatch(r"[a-f0-9]{64}", sha):
             raise PromoError("modèle : empreinte officielle introuvable")
-        part = d / (MODEL + ".part")
-        got = C.download_file(MODEL_URL, part, say, "modèle")
+        part = d / (q["file"] + ".part")
+        got = C.download_file(HF + q["file"], part, say, "modèle")
         if got != sha:
             part.unlink(missing_ok=True)
             raise PromoError("modèle : empreinte différente, fichier refusé")
-        part.replace(d / MODEL)
-        C.log("Modèle Whisper installé")
-    return whisper_exe(), model_path()
+        part.replace(d / q["file"])
+        C.log(f"Modèle Whisper installé ({q['file']})")
+    return whisper_exe(), model_path(quality)
 
 
 def ensure_fonts(progress=None):
@@ -441,7 +507,7 @@ def _run_whisper(cmd, exe, dur, say):
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                             creationflags=C.NO_WINDOW, cwd=str(exe.parent))
     tail = []
-    end = time.time() + max(600, dur * 30)
+    end = time.time() + max(900, dur * 60)
     for raw in iter(proc.stdout.readline, b""):
         line = raw.decode("utf-8", "replace").strip()
         if line:
@@ -464,13 +530,14 @@ def audio_duration(path):
 
 
 def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr", threads=None, mode="court",
-               isolate=True, snap=True):
+               isolate=True, snap=True, quality=None, title="", slow=None):
     """Paroles de l'extrait [start, start+dur] : {words, lines} (temps depuis le début de l'extrait).
 
     Whisper écoute TA VOIX SEULE : ta piste voix si tu l'as donnée, sinon ta voix séparée du beat
     sur le PC (mf_sep). Chaque mot est ensuite recalé sur l'attaque réelle de ta voix."""
     say = progress or (lambda *_: None)
-    exe, model = ensure_whisper(say)
+    quality = _quality(quality)
+    exe, model = ensure_whisper(say, quality)
     ffmpeg = C.tool_path("ffmpeg.exe")
     if not ffmpeg:
         raise PromoError("ffmpeg manquant")
@@ -490,6 +557,11 @@ def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr"
                     C.log(f"Promo : voix non séparée ({e})")
         wav = Path(tmp) / "extrait.wav"
         flt = "highpass=f=100,lowpass=f=7000,dynaudnorm=f=150" if how == "mix" else "highpass=f=70,dynaudnorm=f=150"
+        # slow (< 1) : la voix est ralentie (même hauteur) pour que Whisper suive un débit rapide ;
+        # les moments des mots sont ensuite remis à la vraie vitesse
+        slow = float(slow) if slow and 0.5 <= float(slow) < 1 else 1.0
+        if slow < 1:
+            flt += f",atempo={slow:.3f}"
         r = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{off:.3f}",
                             "-t", f"{dur + pad + 0.5:.3f}", "-i", str(voice), "-vn", "-ac", "1", "-ar", "16000",
                             "-af", flt, "-c:a", "pcm_s16le", str(wav)],
@@ -498,7 +570,8 @@ def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr"
             raise PromoError(f"son illisible : {C.last_line(r.stderr)}")
         say("Écoute des paroles…", 0)
         base = [str(exe), "-m", str(model), "-f", str(wav), "-l", lang, "-ojf", "-of", str(Path(tmp) / "paroles"),
-                "-t", str(threads or max(2, min(8, (os.cpu_count() or 4)))), "-pp", "--dtw", MODEL_DTW, "--prompt", PROMPT]
+                "-t", str(threads or max(2, min(8, (os.cpu_count() or 4)))), "-pp", "--dtw", MODELS[quality]["dtw"],
+                "-bs", "5", "-bo", "5", "--prompt", prompt_for(title)]
         out = Path(tmp) / "paroles.json"
         # « -nfa » : l'alignement mot à mot (DTW) ne marche pas avec l'accélération « flash attention »
         # (activée d'office dans les versions récentes) ; sans cette option si la version ne la connaît pas
@@ -515,18 +588,18 @@ def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr"
                   if isinstance(t.get("t_dtw"), (int, float)) and t["t_dtw"] >= 0)
         words = []
         for w in words_from_json(data):
-            s, e = w["s"] - pad, w["e"] - pad
+            s, e = w["s"] * slow - pad, w["e"] * slow - pad
             if e <= 0 or s >= dur:
                 continue
             words.append({"w": w["w"], "s": round(max(0.0, s), 2), "e": round(min(dur, e), 2), "g": w.get("g", 0)})
         if dtw:  # retard de Whisper corrigé (les mots restent dans l'ordre)
             for w in words:
-                w["s"] = round(max(0.0, w["s"] - DTW_SHIFT), 2)
+                w["s"] = round(max(0.0, w["s"] - DTW_SHIFTS.get(quality, DTW_SHIFT)), 2)
         if how != "mix" and snap:  # voix seule : chaque mot recalé sur l'attaque réelle de la voix
             say("Calage des mots sur ta voix…", None)
             words = snap_words(words, voice, off + pad, dur)
     lines = lines_from_words(words, mode)
-    return {"words": words, "lines": lines, "dur": round(dur, 2), "dtw": dtw, "voice": how}
+    return {"words": words, "lines": lines, "dur": round(dur, 2), "dtw": dtw, "voice": how, "quality": quality}
 
 
 def _voice_env(voice, off, dur):
@@ -1082,7 +1155,8 @@ class Service:
         if cmd == "transcribe":
             audio = self.path_of(args.get("audio"), AUDIO_EXT)
             vocals = self.path_of(args["vocals"], AUDIO_EXT) if args.get("vocals") else None
-            return transcribe(audio, float(args.get("start") or 0), float(args.get("dur") or 0) or None, vocals, progress)
+            return transcribe(audio, float(args.get("start") or 0), float(args.get("dur") or 0) or None, vocals, progress,
+                              quality=args.get("quality"), title=str(args.get("title") or "")[:80])
         if cmd == "render":
             audio = self.path_of(args.get("audio"), AUDIO_EXT)
             bg = self.path_of(args.get("bg"), VIDEO_EXT)

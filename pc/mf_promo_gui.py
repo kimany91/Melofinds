@@ -69,7 +69,7 @@ def build(ctx):
 
     cfg0 = C.load_config()
     st = {"projects": None, "q": "", "more": False, "audio": None, "title": "", "label": "", "voice": True, "dur_total": 0.0,
-          "vocals": None, "vocals_auto": False, "start": 0.0, "dur": 20, "lines": [], "words": [], "mode": cfg0.get("promo_mode", "court"), "visuals": None, "bg": None, "style": cfg0.get("promo_style", "impact"),
+          "vocals": None, "vocals_auto": False, "start": 0.0, "dur": 20, "lines": [], "words": [], "mode": cfg0.get("promo_mode", "court"), "quality": cfg0.get("promo_quality", PM.QUALITY), "visuals": None, "bg": None, "style": cfg0.get("promo_style", "impact"),
           "pos": cfg0.get("promo_pos", "centre"), "scale": float(cfg0.get("promo_scale", 1.0) or 1.0), "busy": None, "result": None,
           "ig_url": None, "accounts": list(cfg0.get("promo_accounts") or PM.ACCOUNTS), "tags": cfg0.get("promo_tags", DEFAULT_TAGS),
           "keep": cfg0.get("promo_keep_tags", True), "frame": None, "playing": False, "cur": -1, "thumbs": {}, "fonts": False}
@@ -418,9 +418,14 @@ def build(ctx):
             if not st["lines"]:
                 ctx.toast("Aucune parole entendue sur cet extrait : choisis un autre début, ou ajoute la voix seule")
             render_all()
-        mode = st["mode"]
-        bg(lambda: (PM.ensure_whisper(progress), PM.transcribe(audio, start, dur, vocals, progress, mode=mode))[1], done,
+        mode, quality, title = st["mode"], st["quality"], st["title"]
+        bg(lambda: PM.transcribe(audio, start, dur, vocals, progress, mode=mode, quality=quality, title=title), done,
            busy="Écoute des paroles…")
+
+    def set_quality(q):
+        st["quality"] = q
+        save_cfg(promo_quality=q)
+        render_lyrics()
 
     def set_mode(mode):
         st["mode"] = mode
@@ -445,13 +450,28 @@ def build(ctx):
         b = Btn(top, "Réécouter les paroles" if st["lines"] else "Écrire les paroles automatiquement", transcribe, kind="primary", padx=14, pady=6)
         b.pack(side="left")
         st["busy_btns"] = [b]
-        label(s_lyr, "Whisper, sur ton PC : chaque phrase arrive au moment où tu la dis. Corrige un mot ou recale une ligne si besoin.",
+        label(s_lyr, "Whisper, sur ton PC : chaque phrase arrive au moment où tu la dis. Corrige un mot ou recale une ligne si besoin : "
+                     "les mots que tu corriges sont retenus pour la prochaine fois.",
               9, MUTED, wrap=390).pack(anchor="w", pady=(6, 0))
         md = tk.Frame(s_lyr, bg=PANEL)
         md.pack(anchor="w", pady=(6, 0))
         label(md, "Découpage", 9, MUTED).pack(side="left", padx=(0, 8))
         for k, m in PM.MODES.items():
             chip(md, m["label"], lambda k=k: set_mode(k), on=st["mode"] == k).pack(side="left", padx=(0, 4))
+        qd = tk.Frame(s_lyr, bg=PANEL)
+        qd.pack(anchor="w", pady=(4, 0))
+        label(qd, "Écoute", 9, MUTED).pack(side="left", padx=(0, 8))
+        for k, m in PM.MODELS.items():
+            chip(qd, m["label"], lambda k=k: set_quality(k), on=st["quality"] == k).pack(side="left", padx=(0, 4))
+        label(qd, "gros modèle : comprend le rap rapide, plus lent" if st["quality"] == "precise" else "modèle léger : rapide, se trompe plus",
+              9, MUTED).pack(side="left", padx=(6, 0))
+        lex = PM.lexicon()
+        if lex:
+            lx = tk.Frame(s_lyr, bg=PANEL)
+            lx.pack(fill="x", pady=(4, 0))
+            label(lx, f"Tes mots ({len(lex)})", 9, MUTED).pack(side="left", padx=(0, 8))
+            for w in lex[-12:][::-1]:
+                chip(lx, f"{w}  ×", lambda w=w: (PM.forget_word(w), render_lyrics())).pack(side="left", padx=(0, 3))
         rows = tk.Frame(s_lyr, bg=PANEL)
         rows.pack(fill="x", pady=(8, 0))
         for i, ln in enumerate(st["lines"]):
@@ -643,8 +663,15 @@ def build(ctx):
         audio, bgv = st["audio"], PM.visuals_dir() / st["bg"]["file"]
         args = (st["start"], st["dur"], lines, PM.out_name(st["title"] or audio.stem), st["style"], st["pos"], st["scale"])
 
+        heard = list(st["words"])
+
         def done(out):
             st["result"] = out
+            if heard:  # mots corrigés à la main : Whisper les connaîtra la prochaine fois
+                try:
+                    PM.learn_words(heard, lines)
+                except OSError:
+                    pass
             render_out()
             ctx.toast("Vidéo prête : dans le dossier Promo de tes projets")
         bg(lambda: PM.render(bgv, audio, args[0], args[1], args[2], args[3], args[4], args[5], args[6], progress), done,

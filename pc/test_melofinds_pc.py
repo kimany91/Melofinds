@@ -1636,6 +1636,35 @@ class Promo(unittest.TestCase):
         self.assertTrue(all(a["s"] <= b["s"] for a, b in zip(w, w[1:])))
         self.assertTrue(all(x["e"] > x["s"] for x in w))
 
+    def test_mots_retenus_pour_whisper(self):
+        """Les mots corrigés à la main sont donnés à Whisper la fois d'après (consigne)."""
+        PM = self.PM
+        self.assertEqual(PM.lexicon(), [])
+        heard = [{"w": "Elle"}, {"w": "veut"}, {"w": "la"}, {"w": "fer"}]
+        new = PM.learn_words(heard, [{"t": "Elle veut la frappe"}, {"t": "Bu$hi m'a dit ça, 2024"}])
+        self.assertEqual(new, ["frappe", "Bu", "hi", "m'a", "dit", "ça"])
+        self.assertIn("frappe", PM.lexicon())
+        self.assertNotIn("veut", PM.lexicon())  # bien entendu : pas retenu
+        self.assertNotIn("2024", PM.lexicon())
+        p = PM.prompt_for("Haze [C# min, 150 BPM]")
+        self.assertTrue(p.startswith(PM.PROMPT))
+        self.assertIn("Titre : Haze C# min, 150 BPM.", p)
+        self.assertIn("frappe", p)
+        PM.forget_word("frappe")
+        self.assertNotIn("frappe", PM.lexicon())
+        for i in range(PM.LEX_MAX + 20):
+            PM.learn_words([], [{"t": f"mot{i}x"}])
+        self.assertEqual(len(PM.lexicon()), PM.LEX_MAX)  # gardé court : les plus récents
+        self.assertIn(f"mot{PM.LEX_MAX + 19}x", PM.lexicon())
+
+    def test_deux_moteurs(self):
+        PM = self.PM
+        self.assertEqual(PM.QUALITY, "precise")
+        self.assertEqual(PM.MODELS["precise"]["file"], "ggml-large-v3.bin")
+        self.assertEqual(PM.MODELS["precise"]["dtw"], "large.v3")
+        self.assertEqual(PM._quality("nimporte"), "precise")
+        self.assertEqual(set(PM.DTW_SHIFTS), set(PM.MODELS))
+
     def test_accents_coupes_entre_jetons(self):
         PM = self.PM
         raw = '{"transcription":[{"text":" x","tokens":[{"text":" d\u00e9j","offsets":{"from":0,"to":100},"t_dtw":0},{"text":"\u00e0","offsets":{"from":100,"to":200},"t_dtw":10}]}]}'

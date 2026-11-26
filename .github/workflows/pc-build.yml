@@ -123,7 +123,7 @@ jobs:
 
       - name: Promo (paroles avec Whisper + vidéo 1080x1920)
         shell: pwsh
-        timeout-minutes: 20
+        timeout-minutes: 45
         run: |
           $rel = Invoke-RestMethod -Uri https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest -Headers @{ Authorization = "Bearer ${{ github.token }}" }
           Write-Host "whisper.cpp $($rel.tag_name)"
@@ -138,7 +138,14 @@ jobs:
           $phrase = "she wants me to catch the vibe I send the placements every night no breaks they talk but they never know the plan"
           $i = 0
           foreach ($m in $phrase.Split(" ")) { $s.SetOutputToWaveFile(("$PWD\mots\{0:D2} {1}.wav" -f $i, $m)); $s.Speak($m); $i++ }
+          # Compréhension : la même voix très rapide (comme un couplet rappé vite), texte connu
+          $fast = "I been grinding every single night with the bros in the studio we cooking heat they keep sleeping on the flow but the numbers going up and the city know my name now"
+          $s.Rate = 8
+          $s.SetOutputToWaveFile("$PWD\rapide.wav")
+          $s.Speak($fast)
           $s.Dispose()
+          $env:MELOFINDS_TEST_FAST = "$PWD\rapide.wav"
+          $env:MELOFINDS_TEST_FAST_TEXT = $fast
           $env:MELOFINDS_TEST_SPEECH = "$PWD\voix.wav"
           $env:MELOFINDS_TEST_WORDDIR = "$PWD\mots"
           $p = Start-Process -FilePath test\MelofindsPC\MelofindsPC.exe -ArgumentList '--promotest', "$PWD\promo.json" -Wait -PassThru

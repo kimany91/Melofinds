@@ -155,7 +155,8 @@ def promotest(out):
     res = {"version": C.VERSION}
     t0 = time.time()
     try:
-        PM.ensure_whisper(lambda *a: None)
+        for q in PM.MODELS:
+            PM.ensure_whisper(lambda *a: None, q)
         PM.ensure_fonts()
         res["ready"] = PM.ready()
         res["install_s"] = round(time.time() - t0, 1)
@@ -217,13 +218,40 @@ def promotest(out):
                 return {"n": len(dd), "sur": len(truth), "moy": round(sum(ab) / len(ab), 3) if ab else None,
                         "pire": max(ab) if ab else None, "ecarts": dd}
             dur2 = min(30.0, span)
-            variants = {"mix": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", isolate=False)["words"],
-                        "separee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", snap=False)["words"],
-                        "separee_recalee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", snap=True)["words"]}
+            variants = {"separee_recalee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en")["words"],
+                        "rapide_recalee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", quality="rapide")["words"],
+                        "lente_recalee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", slow=0.85)["words"]}
             res["precision"] = {k: err(v) for k, v in variants.items()}
             res["voice"] = r.get("voice")
             p = res["precision"]["separee_recalee"]  # le réglage par défaut : doit rester précis
             res["ok_precision"] = bool(p["moy"] is not None and p["moy"] <= 0.08 and p["n"] >= p["sur"] * 0.8)
+        # Compréhension : une voix TRÈS rapide sur un beat, texte connu → part des mots bien écrits
+        fast, fast_text = os.environ.get("MELOFINDS_TEST_FAST", ""), os.environ.get("MELOFINDS_TEST_FAST_TEXT", "")
+        if fast and Path(fast).exists() and fast_text:
+            span = (C.audio_seconds(fast) or 10) + 1.0
+            song3 = d / "son-rapide.wav"
+            subprocess.run([ff, "-loglevel", "error", "-y", "-i", fast, "-f", "lavfi", "-i", f"sine=frequency=55:duration={span:.2f}",
+                            "-f", "lavfi", "-i", f"aevalsrc=0.6*sin(2*PI*60*t)*exp(-12*mod(t\\,0.43)):d={span:.2f}",
+                            "-filter_complex", "[0:a]adelay=500|500,volume=1.6[v];[1:a]volume=0.25[b];[2:a]volume=0.5[k];[v][b][k]amix=3:duration=longest[o]",
+                            "-map", "[o]", "-ar", "44100", str(song3)], check=True, timeout=120)
+            ref = re.findall(r"[\w']+", fast_text.lower())
+
+            def acc(words):
+                got = [re.sub(r"[^\w']", "", w["w"].lower()) for w in words]
+                got = [g for g in got if g]
+                m = [[0] * (len(got) + 1) for _ in range(len(ref) + 1)]  # mots communs dans l'ordre
+                for i in range(len(ref)):
+                    for j in range(len(got)):
+                        m[i + 1][j + 1] = m[i][j] + 1 if ref[i] == got[j] else max(m[i][j + 1], m[i + 1][j])
+                return {"bons": m[-1][-1], "sur": len(ref), "taux": round(m[-1][-1] / max(1, len(ref)), 3),
+                        "texte": " ".join(got)[:400]}
+            comp = {}
+            for name, kw in (("precise", {}), ("rapide", {"quality": "rapide"}), ("precise_lente", {"slow": 0.85})):
+                t3 = time.time()
+                comp[name] = acc(PM.transcribe(song3, 0, span, None, lambda *a: None, lang="en", **kw)["words"])
+                comp[name]["s"] = round(time.time() - t3, 1)
+            res["comprehension"] = comp
+            res["ok_comprehension"] = comp["precise"]["taux"] >= max(0.6, comp["rapide"]["taux"] - 0.05)
         res["words"], res["lines"], res["dtw_tokens"] = r["words"], r["lines"], r.get("dtw")
         t2 = time.time()
         vid = PM.render(bg, song, 0, 12, r["lines"], d / "promo.mp4", "impact")
@@ -240,7 +268,7 @@ def promotest(out):
         import traceback
         res["ok"] = False
         res["err"] = traceback.format_exc()[-1500:]
-    if res.get("ok_precision") is False:
+    if res.get("ok_precision") is False or res.get("ok_comprehension") is False:
         res["ok"] = False
     Path(out).write_text(json.dumps(res, indent=1, ensure_ascii=False), encoding="utf-8")
     return 0 if res["ok"] else 1
