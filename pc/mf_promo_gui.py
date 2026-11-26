@@ -6,12 +6,10 @@ tâches longues tournent en arrière-plan et rendent la main à Tk par une file 
 Tk depuis un autre fil).
 """
 
-import os
 import queue
 import re
 import tempfile
 import threading
-import time
 from pathlib import Path
 
 import mf_core as C
@@ -71,7 +69,7 @@ def build(ctx):
 
     cfg0 = C.load_config()
     st = {"projects": None, "q": "", "more": False, "audio": None, "title": "", "label": "", "voice": True, "dur_total": 0.0,
-          "vocals": None, "start": 0.0, "dur": 20, "lines": [], "visuals": None, "bg": None, "style": cfg0.get("promo_style", "impact"),
+          "vocals": None, "start": 0.0, "dur": 20, "lines": [], "words": [], "mode": cfg0.get("promo_mode", "court"), "visuals": None, "bg": None, "style": cfg0.get("promo_style", "impact"),
           "pos": cfg0.get("promo_pos", "centre"), "scale": float(cfg0.get("promo_scale", 1.0) or 1.0), "busy": None, "result": None,
           "ig_url": None, "accounts": list(cfg0.get("promo_accounts") or PM.ACCOUNTS), "tags": cfg0.get("promo_tags", DEFAULT_TAGS),
           "keep": cfg0.get("promo_keep_tags", True), "frame": None, "playing": False, "cur": -1, "thumbs": {}, "fonts": False}
@@ -292,7 +290,7 @@ def build(ctx):
     # ---------- 1. le son
     def set_audio(path, title, label_, voice):
         stop_play()
-        st.update(audio=Path(path), title=title, label=label_, voice=voice, lines=[], result=None, cur=-1, dur_total=0.0)
+        st.update(audio=Path(path), title=title, label=label_, voice=voice, lines=[], words=[], result=None, cur=-1, dur_total=0.0)
         bg(lambda: PM.audio_duration(path) or 0.0, lambda d: (st.update(dur_total=d), render_sound()))
         render_all()
 
@@ -322,7 +320,7 @@ def build(ctx):
                 st["start"] = float(v)
                 start_lbl.configure(text=f"Début {_mmss(st['start'])[:-2]}")
                 if st["lines"]:
-                    st["lines"] = []
+                    st["lines"], st["words"] = [], []
                     render_lyrics()
             sc.configure(command=on_start)
             durs = tk.Frame(s_sound, bg=PANEL)
@@ -405,12 +403,28 @@ def build(ctx):
         audio, vocals, start, dur = st["audio"], st["vocals"], st["start"], st["dur"]
 
         def done(r):
+            st["words"] = list(r.get("words") or [])
             st["lines"] = norm_lines([dict(x) for x in r.get("lines") or []], st["dur"])
             st["result"], st["cur"] = None, -1
             if not st["lines"]:
                 ctx.toast("Aucune parole entendue sur cet extrait : choisis un autre début, ou ajoute la voix seule")
             render_all()
-        bg(lambda: (PM.ensure_whisper(progress), PM.transcribe(audio, start, dur, vocals, progress))[1], done, busy="Écoute des paroles…")
+        mode = st["mode"]
+        bg(lambda: (PM.ensure_whisper(progress), PM.transcribe(audio, start, dur, vocals, progress, mode=mode))[1], done,
+           busy="Écoute des paroles…")
+
+    def set_mode(mode):
+        st["mode"] = mode
+        save_cfg(promo_mode=mode)
+        if not st["words"]:
+            render_lyrics()
+            return
+        words, vocals, start, dur = st["words"], st["vocals"], st["start"], st["dur"]
+
+        def cut():
+            lines = PM.lines_from_words(words, mode)
+            return PM.snap_to_voice(lines, vocals, start, dur) if vocals else lines
+        bg(cut, lambda lines: (st.update(lines=norm_lines(lines, st["dur"]), result=None, cur=-1), render_all()))
 
     def render_lyrics():
         clear(s_lyr)
@@ -424,6 +438,11 @@ def build(ctx):
         st["busy_btns"] = [b]
         label(s_lyr, "Whisper, sur ton PC : chaque phrase arrive au moment où tu la dis. Corrige un mot ou recale une ligne si besoin.",
               9, MUTED, wrap=390).pack(anchor="w", pady=(6, 0))
+        md = tk.Frame(s_lyr, bg=PANEL)
+        md.pack(anchor="w", pady=(6, 0))
+        label(md, "Découpage", 9, MUTED).pack(side="left", padx=(0, 8))
+        for k, m in PM.MODES.items():
+            chip(md, m["label"], lambda k=k: set_mode(k), on=st["mode"] == k).pack(side="left", padx=(0, 4))
         rows = tk.Frame(s_lyr, bg=PANEL)
         rows.pack(fill="x", pady=(8, 0))
         for i, ln in enumerate(st["lines"]):

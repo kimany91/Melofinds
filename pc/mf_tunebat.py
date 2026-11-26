@@ -69,19 +69,24 @@ def local_get(url, timeout=3):
 NO_BACKGROUND = ["--disable-background-mode"]
 
 
-def kill_profile(profile):
-    """Ferme les navigateurs encore ouverts sur ce profil Melofinds (et seulement lui). Windows."""
+def profile_pids(profile):
+    """Processus Edge / Chrome ouverts sur ce profil Melofinds (et seulement lui). Windows."""
     if not C.WINDOWS:
-        return 0
+        return []
     prof = str(Path(profile).resolve()).replace("'", "''")
     ps = ("Get-CimInstance Win32_Process -Filter \"Name='msedge.exe' or Name='chrome.exe'\" | "
           f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{prof}') }} | ForEach-Object {{ $_.ProcessId }}")
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], capture_output=True, timeout=25,
                            creationflags=C.NO_WINDOW, stdin=subprocess.DEVNULL)
-        pids = [int(x) for x in r.stdout.decode("ascii", "ignore").split() if x.isdigit()]
+        return [int(x) for x in r.stdout.decode("ascii", "ignore").split() if x.isdigit()]
     except (OSError, subprocess.SubprocessError):
-        return 0
+        return []
+
+
+def kill_profile(profile):
+    """Ferme les navigateurs encore ouverts sur ce profil Melofinds (et seulement lui). Windows."""
+    pids = profile_pids(profile)
     for pid in pids:
         try:
             subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=10, creationflags=C.NO_WINDOW)
@@ -91,6 +96,19 @@ def kill_profile(profile):
         time.sleep(1.0)
         C.log(f"Navigateur resté ouvert sur {Path(profile).name} : fermé ({len(pids)} processus)")
     return len(pids)
+
+
+def wait_closed(proc, profile, wait):
+    """Attend que TU fermes la fenêtre : le processus lancé, puis (s'il a passé la main à un autre
+    Edge, comme parfois) les processus de ce profil."""
+    end = time.time() + wait
+    try:
+        proc.wait(timeout=wait)
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        return
+    while C.WINDOWS and time.time() < end and profile_pids(profile):
+        time.sleep(2)
 
 
 # ---------------------------------------------------------------------------
@@ -323,10 +341,7 @@ def verify_window(url=ANALYZER, browser=None, wait=300, extra_args=None):
     proc = subprocess.Popen([browser, f"--user-data-dir={profile_dir()}", "--no-first-run", "--no-default-browser-check", *NO_BACKGROUND,
                              f"--app={url}", "--window-size=980,820", *(extra_args or [])],
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        proc.wait(timeout=wait)
-    except subprocess.TimeoutExpired:
-        proc.terminate()
+    wait_closed(proc, profile_dir(), wait)
     time.sleep(1.0)
 
 

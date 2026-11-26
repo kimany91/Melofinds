@@ -168,6 +168,46 @@ def browser_windows(pid):
     return out
 
 
+def browser_pid(port, bpath):
+    """Le vrai processus du navigateur (celui des fenêtres), demandé à Edge par DevTools."""
+    try:
+        b = T.CDP(f"ws://127.0.0.1:{port}{bpath}")
+    except Exception:
+        return None
+    try:
+        r = b.call("SystemInfo.getProcessInfo", timeout=5)
+        for p in r.get("processInfo") or []:
+            if p.get("type") == "browser" and int(p.get("id") or 0) > 0:
+                return int(p["id"])
+    except Exception:
+        return None
+    finally:
+        b.close()
+    return None
+
+
+def titled_windows(title):
+    """Fenêtres d'Edge / Chrome (mode application) dont le titre est exactement `title` (plan B quand
+    le processus du navigateur est introuvable)."""
+    if not WINDOWS:
+        return []
+    out = []
+    _U.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+
+    def cb(h, _):
+        if _U.IsWindowVisible(h):
+            buf = ctypes.create_unicode_buffer(64)
+            _U.GetClassNameW(h, buf, 64)
+            if buf.value == CHROME_CLASS:
+                t = ctypes.create_unicode_buffer(128)
+                _U.GetWindowTextW(h, t, 128)
+                if t.value == title:
+                    out.append(h)
+        return True
+    _U.EnumWindows(_ENUM(cb), 0)
+    return out
+
+
 class Panel:
     """Le site rangé dans un cadre Tk (host_hwnd). start() en arrière-plan ; resize() depuis Tk."""
 
@@ -176,6 +216,7 @@ class Panel:
         self.state, self.detail = "idle", ""
         self.proc = self.hwnd = self.port = self.bpath = None
         self.top = self.border = 0
+        self.pid = None
         self.size = (0, 0)
         self.lock = threading.Lock()
         self.online = True  # (tests : ne pas mettre le PC en ligne)
@@ -191,7 +232,8 @@ class Panel:
             pass
 
     def alive(self):
-        return bool(self.proc and self.proc.poll() is None and self.hwnd and WINDOWS and _U.IsWindow(self.hwnd))
+        # la fenêtre rangée existe encore (le processus lancé peut avoir passé la main à un autre Edge)
+        return bool(self.proc and self.hwnd and WINDOWS and _U.IsWindow(self.hwnd))
 
     # --- démarrage
     def start(self, host_hwnd, screen_xy, size, browser=None, url=None):
@@ -242,14 +284,21 @@ class Panel:
                 if self.proc.poll() == 0:  # lancement repris par un autre Edge ouvert sur ce profil
                     raise EmbedError("un Edge déjà ouvert a pris la page : réessaie (il vient d'être fermé)")
                 raise EmbedError(str(e))
-            hwnd, end = None, time.time() + 20
+            # Le processus lancé n'est pas toujours celui qui affiche la fenêtre : Edge passe parfois
+            # la main à un autre processus (mise à jour en attente…) puis se ferme. On demande à Edge
+            # lui-même son vrai processus.
+            hwnd, end, pid = None, time.time() + 20, None
             while not hwnd and time.time() < end:
-                wins = browser_windows(self.proc.pid)
+                if pid is None or (pid == self.proc.pid and self.proc.poll() is not None):
+                    pid = browser_pid(self.port, self.bpath) or self.proc.pid
+                wins = browser_windows(pid) or (titled_windows("Melofinds") if self.proc.poll() is not None else [])
                 hwnd = wins[0] if wins else None
                 if not hwnd:
-                    if self.proc.poll() is not None:
+                    if pid == self.proc.pid and self.proc.poll() is not None and not browser_pid(self.port, self.bpath):
                         raise EmbedError("le navigateur s'est fermé")
-                    time.sleep(0.05)
+                    time.sleep(0.1)
+            self.pid = pid
+            log(f"fenêtre trouvée (processus {pid}{'' if pid == self.proc.pid else ', relancé par Edge'})")
             if not hwnd:
                 raise EmbedError("fenêtre du navigateur introuvable")
             self.hwnd = hwnd
@@ -377,7 +426,7 @@ class Panel:
         if not proc:
             return
         try:
-            if port and proc.poll() is None:
+            if port:  # même si le processus lancé a passé la main : Edge se ferme par DevTools
                 b = T.CDP(f"ws://127.0.0.1:{port}{bpath}")
                 try:
                     b.ws.send(json.dumps({"id": 1, "method": "Browser.close"}))

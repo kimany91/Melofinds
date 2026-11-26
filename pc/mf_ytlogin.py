@@ -133,10 +133,7 @@ def connect(browser=None, wait=600):
     proc = subprocess.Popen([browser, f"--user-data-dir={prof}", "--no-first-run", "--no-default-browser-check", *T.NO_BACKGROUND,
                              f"--app={LOGIN_URL}", "--window-size=520,720"],
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        proc.wait(timeout=wait)
-    except subprocess.TimeoutExpired:
-        proc.terminate()
+    T.wait_closed(proc, prof, wait)
     time.sleep(1.0)  # le navigateur finit d'écrire ses cookies
     ok = export_cookies(browser)
     if not ok:

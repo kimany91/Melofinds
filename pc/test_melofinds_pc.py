@@ -1603,6 +1603,46 @@ class Promo(unittest.TestCase):
         q = {"transcription": [{"text": "x", "tokens": [self.tok(' "She', 0, 1), self.tok(" wants", 300, 30), self.tok(" breaks.\"", 600, 60)]}]}
         self.assertEqual([w["w"] for w in PM.words_from_json(q)], ["She", "wants", "breaks."])  # sans guillemets
 
+    @staticmethod
+    def flow(text, start, step, g):
+        out, t = [], start
+        for w in text.split():
+            out.append({"w": w, "s": round(t, 2), "e": round(t + step, 2), "g": g})
+            t += step * (1 + len(w) / 9)
+        return out
+
+    def test_decoupage_logique(self):
+        PM = self.PM
+        words = (self.flow("Elle veut que j'la capte lesgui avec les placements", 0.3, 0.17, 0)
+                 + self.flow("j'envoie des prods tous les soirs, j'suis dans le studio", 3.2, 0.16, 1)
+                 + self.flow("On m'a dit que j'allais rien faire de ma vie moi j'ai tout misé sur la musique", 9.0, 0.13, 2))
+        court = PM.lines_from_words(words, "court")
+        texts = [l["t"] for l in court]
+        self.assertNotIn("placements j'envoie", " | ".join(texts))  # jamais deux phrases dans une ligne
+        self.assertIn("tous les soirs", texts)  # la virgule coupe
+        for l in court[:-1]:  # jamais une ligne qui finit par « que », « le », « j'la »…
+            self.assertFalse(PM._glue(l["t"].split()[-1]), l["t"])
+        durs = [l["e"] - l["s"] for l in court if l["e"] - l["s"] < 3]
+        self.assertLess(max(durs) / min(durs), 4.5)  # pas 1 s d'un côté et 0,2 s de l'autre
+        self.assertTrue(all(len(l["t"].split()) <= 5 for l in court))
+        deux, phrase = PM.lines_from_words(words, "deux"), PM.lines_from_words(words, "phrase")
+        self.assertGreater(len(deux), len(court))
+        self.assertLess(len(phrase), len(court))
+        self.assertTrue(PM._glue("j'la") and PM._glue("qu'") and not PM._glue("j'suis") and not PM._glue("capte"))
+
+    def test_recalage_sur_la_voix_seule(self):
+        import subprocess as sp
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg absent")
+        PM = self.PM
+        voix = self.d / "voix.wav"  # silence, puis la voix à 1,0 s et à 2,5 s
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=300:duration=4",
+                "-af", "volume='if(between(t,1.0,1.8)+between(t,2.5,3.3),1,0)':eval=frame", str(voix)], check=True)
+        lines = [{"t": "a", "s": 0.8, "e": 2.3}, {"t": "b", "s": 2.7, "e": 3.5}]  # Whisper un peu à côté
+        out = PM.snap_to_voice(lines, voix, 0, 4)
+        self.assertAlmostEqual(out[0]["s"], 1.0, delta=0.05)
+        self.assertAlmostEqual(out[1]["s"], 2.5, delta=0.05)
+
     def test_lignes_sans_trou(self):
         PM = self.PM
         words = [{"w": w, "s": s, "e": s + 0.25} for w, s in

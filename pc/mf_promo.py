@@ -233,7 +233,7 @@ def words_from_json(data):
     """Sortie JSON complète de whisper.cpp → [{w, s, e}] (secondes). Les jetons qui commencent
     par une espace ouvrent un mot ; le moment vient de l'alignement DTW quand il existe."""
     words = []
-    for seg in (data or {}).get("transcription") or []:
+    for gi, seg in enumerate((data or {}).get("transcription") or []):
         if HALLU.search(_fix_text(str(seg.get("text") or ""))):
             continue
         for tok in seg.get("tokens") or []:
@@ -244,8 +244,8 @@ def words_from_json(data):
             dtw = tok.get("t_dtw", -1)
             s = (dtw * 10 if isinstance(dtw, (int, float)) and dtw >= 0 else off.get("from", 0)) / 1000
             e = (off.get("to") or 0) / 1000
-            if t.startswith(" ") or not words:
-                words.append({"w": t.strip(), "s": s, "e": max(e, s)})
+            if t.startswith(" ") or not words or words[-1].get("g") != gi:
+                words.append({"w": t.strip(), "s": s, "e": max(e, s), "g": gi})  # g : phrase de Whisper
             else:
                 words[-1]["w"] += t
                 words[-1]["e"] = max(words[-1]["e"], e)
@@ -264,28 +264,150 @@ def words_from_json(data):
     return out
 
 
-def lines_from_words(words, max_chars=22, max_words=5, pause=0.6, hold=1.2):
-    """Mots → lignes (comme sur TikTok : 2 à 5 mots). Une ligne reste affichée jusqu'à la
-    suivante (pas de trou), sauf vrai silence (> hold s) : elle part 0,3 s après le dernier mot."""
-    groups, cur = [], []
-    for w in words:
+# Petits mots qui appellent la suite : une ligne ne finit jamais par eux (« le », « de », « que »…)
+GLUE = set("""le la les l' un une des du de d' au aux à a en dans sur sous pour par avec sans chez vers entre et ou mais donc
+ni car que qu' qui quoi dont où je j' tu il elle on nous vous ils elles me m' te t' se s' ne n' mon ma mes ton ta tes son sa ses
+notre nos votre vos leur leurs ce c' cet cette ces y si comme quand plus très trop pas the a an to of and or but in on at for
+with my your his her our their i you we they is are was it that this tout tous toute toutes chaque même quelques""".split())
+# Mots qui ouvrent une nouvelle idée : couper juste avant est naturel
+STARTERS = set("""avec mais et quand pour dans sur sous comme parce puisque alors donc ou si sans depuis pendant chez vers
+que qui où dont moi toi lui eux but and when because cause if with so then""".split())
+# Rythme des sous-titres : mots par ligne, longueur, durée visée / minimale (secondes)
+MODES = {
+    "deux": {"label": "2 mots", "words": 2, "chars": 16, "target": 0.55, "min": 0.3},
+    "court": {"label": "Phrases courtes", "words": 4, "chars": 24, "target": 1.0, "min": 0.5},
+    "phrase": {"label": "Phrase entière", "words": 8, "chars": 38, "target": 2.0, "min": 0.8},
+}
+
+
+def _glue(word):
+    """Le mot appelle la suite (article, préposition, pronom… ou « j'la », « l'y », « qu' »)."""
+    w = re.sub(r"[^\w']", "", word.lower()).replace("’", "'")
+    if not w or w.endswith("'") or w in GLUE:
+        return True
+    parts = [x for x in w.split("'") if x]
+    return len(parts) > 1 and all((p + "'") in GLUE or p in GLUE for p in parts)
+
+
+def _say(w):
+    """Durée probable d'un mot dit (rap) : sert à repérer les respirations entre deux mots."""
+    return 0.06 + 0.055 * len(re.sub(r"\W", "", w["w"]))
+
+
+def _phrases(words):
+    """Coupe les mots en phrases : nouvelle phrase de Whisper, ponctuation forte, ou respiration."""
+    out, cur = [], []
+    for i, w in enumerate(words):
         if cur:
-            txt = " ".join(x["w"] for x in cur + [w])
-            gap = w["s"] - cur[-1]["e"]
-            if len(txt) > max_chars or len(cur) >= max_words or gap > pause or re.search(r"[.!?;:]$", cur[-1]["w"]):
-                groups.append(cur)
+            prev = cur[-1]
+            gap = w["s"] - (prev["s"] + _say(prev))
+            if w.get("g") != prev.get("g") or re.search(r"[.!?;:…,]$", prev["w"]) or gap > 0.6:
+                out.append(cur)
                 cur = []
         cur.append(w)
     if cur:
-        groups.append(cur)
+        out.append(cur)
+    return out
+
+
+def _split(ph, m):
+    """Meilleur découpage d'une phrase en lignes (programmation dynamique) : lignes de durée
+    régulière, jamais terminées par un petit mot, coupées de préférence sur une respiration ou
+    une virgule, jamais trop longues à lire."""
+    n = len(ph)
+    ends = [ph[i + 1]["s"] if i + 1 < n else ph[i]["s"] + max(_say(ph[i]), 0.25) for i in range(n)]
+    best = [0.0] + [float("inf")] * n
+    back = [0] * (n + 1)
+    for i in range(1, n + 1):
+        for j in range(max(0, i - m["words"] * 2), i):
+            chunk = ph[j:i]
+            k = i - j
+            text = " ".join(x["w"] for x in chunk)
+            if k > m["words"] + 1 or (len(text) > m["chars"] + 6 and k > 1):
+                continue
+            dur = ends[i - 1] - chunk[0]["s"]
+            cost = ((dur - m["target"]) / m["target"]) ** 2 + 0.35
+            if k > m["words"] or len(text) > m["chars"]:
+                cost += 1.5  # un mot de plus que prévu : seulement pour couper au bon endroit
+            if dur < m["min"]:
+                cost += 3.0 * (m["min"] - dur) / m["min"] + 1.0  # ligne qui passe trop vite
+            if i < n and _glue(chunk[-1]["w"]):
+                cost += 4.0  # « … que » / « … de » : la suite irait sur la ligne d'après
+            if k == 1 and len(re.sub(r"\W", "", chunk[0]["w"])) <= 3 and n > 1:
+                cost += 1.5  # un petit mot tout seul sur une ligne (« pas », « moi »…)
+            if i < n and re.sub(r"[^\w]", "", ph[i]["w"].lower()) in STARTERS:
+                cost -= 0.6  # la ligne suivante commence par « avec », « mais », « quand »…
+            if i < n:
+                gap = ph[i]["s"] - (chunk[-1]["s"] + _say(chunk[-1]))
+                if gap > 0.2:
+                    cost -= min(0.8, gap)  # coupure sur une respiration : naturelle
+                if re.search(r"[,]$", chunk[-1]["w"]):
+                    cost -= 0.5
+            if best[j] + cost < best[i]:
+                best[i], back[i] = best[j] + cost, j
+    cuts, i = [], n
+    while i > 0:
+        cuts.append((back[i], i))
+        i = back[i]
+    return [ph[a:b] for a, b in reversed(cuts)]
+
+
+def lines_from_words(words, mode="court", hold=1.2):
+    """Mots datés → lignes de sous-titres logiques : jamais deux phrases dans une ligne, découpage
+    le plus régulier possible, chaque ligne reste à l'écran jusqu'à la suivante (pas de trou), sauf
+    vrai silence (> hold s : elle part 0,3 s après le dernier mot)."""
+    m = MODES.get(mode) or MODES["court"]
+    groups = []
+    for ph in _phrases([w for w in words if w.get("w")]):
+        groups += _split(ph, m)
     out = []
     for k, g in enumerate(groups):
-        s, last = g[0]["s"], g[-1]["e"]
+        s = g[0]["s"]
+        last = g[-1]["s"] + max(_say(g[-1]), 0.25)
         nxt = groups[k + 1][0]["s"] if k + 1 < len(groups) else None
         e = nxt if nxt is not None and nxt - last <= hold else last + 0.3
         text = re.sub(r"\s+", " ", " ".join(x["w"] for x in g)).strip()
         text = re.sub(r"[,;:.…]+$", "", text)
         out.append({"t": text, "s": round(s, 2), "e": round(max(e, s + 0.3), 2)})
+    return out
+
+
+def snap_to_voice(lines, vocals, start, dur):
+    """Avec la voix seule : chaque ligne commence exactement quand ta voix reprend (montée du
+    niveau de la piste voix près du moment donné par Whisper, ±0,35 s)."""
+    ffmpeg = C.tool_path("ffmpeg.exe")
+    if not (ffmpeg and vocals and lines):
+        return lines
+    try:
+        r = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.0, start):.3f}", "-t", f"{dur:.3f}",
+                            "-i", str(vocals), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], capture_output=True, timeout=120,
+                           creationflags=C.NO_WINDOW, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return lines
+    import array
+    pcm = array.array("h")
+    pcm.frombytes(r.stdout[: len(r.stdout) // 2 * 2])
+    hop = 80  # 10 ms
+    rms = [(sum(x * x for x in pcm[i:i + hop]) / hop) ** 0.5 for i in range(0, len(pcm) - hop, hop)]
+    if not rms:
+        return lines
+    loud = sorted(rms)[int(len(rms) * 0.9)] or 1
+    thr = loud * 0.12
+    out = []
+    for i, ln in enumerate(lines):
+        c = int(ln["s"] * 100)
+        lo, hi = max(0, c - 35), min(len(rms) - 1, c + 35)
+        best = None
+        for f in range(lo + 3, hi + 1):  # attaque : silence juste avant, voix juste après
+            if rms[f] >= thr and max(rms[f - 3:f]) < thr and (best is None or abs(f - c) < abs(best - c)):
+                best = f
+        s = best / 100 if best is not None else ln["s"]
+        prev_s = out[-1]["s"] if out else -1
+        out.append({**ln, "s": round(max(s, prev_s + 0.1), 2)})
+    for i in range(len(out) - 1):
+        if out[i]["e"] >= lines[i + 1]["s"] - 0.01:  # collée à la suivante : le reste
+            out[i]["e"] = out[i + 1]["s"]
+        out[i]["e"] = max(out[i]["e"], out[i]["s"] + 0.2)
     return out
 
 
@@ -338,7 +460,7 @@ def audio_duration(path):
     return round(d, 2) if d else None
 
 
-def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr", threads=None):
+def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr", threads=None, mode="court"):
     """Paroles de l'extrait [start, start+dur] : {words, lines} (temps depuis le début de l'extrait)."""
     say = progress or (lambda *_: None)
     exe, model = ensure_whisper(say)
@@ -381,8 +503,11 @@ def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr"
         s, e = w["s"] - pad, w["e"] - pad
         if e <= 0 or s >= dur:
             continue
-        words.append({"w": w["w"], "s": round(max(0.0, s), 2), "e": round(min(dur, e), 2)})
-    return {"words": words, "lines": lines_from_words(words), "dur": round(dur, 2), "dtw": dtw}
+        words.append({"w": w["w"], "s": round(max(0.0, s), 2), "e": round(min(dur, e), 2), "g": w.get("g", 0)})
+    lines = lines_from_words(words, mode)
+    if vocals:
+        lines = snap_to_voice(lines, vocals, start, dur)
+    return {"words": words, "lines": lines, "dur": round(dur, 2), "dtw": dtw}
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +782,16 @@ class IGBrowser:
         self.last = None
 
     def running(self):
-        return bool(self.proc and self.proc.poll() is None and self.port)
+        if not (self.proc and self.port):
+            return False
+        if self.proc.poll() is None:
+            return True
+        try:  # le processus lancé a pu passer la main à un autre Edge : la fenêtre répond-elle ?
+            import mf_tunebat as T
+            T.local_get(f"http://127.0.0.1:{self.port}/json/version", 2)
+            return True
+        except OSError:
+            return False
 
     def open(self, user=""):
         import threading
