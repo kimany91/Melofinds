@@ -1171,7 +1171,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 25/11/2026 à 18:20</p>
+    <p class="build-stamp">Version du 26/11/2026 à 10:39</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -4317,7 +4317,7 @@ function pcTunebatAnalyze(id, onState) {
     w.wait = (ms) => { clearTimeout(w.timer); w.timer = setTimeout(() => w.done({ status: 'fail', err: 'ton PC ne répond pas : vérifie qu’il est en ligne et à jour' }), ms); };
     w.wait(60e3);
     tbaWait.set(id, w);
-    ntfyPublish({ cmd: 'tba', v: id }).catch(() => w.done({ status: 'fail', err: 'pas de réseau' }));
+    ntfyPublish({ cmd: 'tba', v: id }).catch((e) => w.done({ status: 'fail', err: e?.limit ? 'limite de ntfy.sh, réessaie dans une minute' : 'pas de réseau' }));
   });
 }
 // Réponse du PC : { v, s: loading | analyze } puis { v, key, bpm, camelot } ou { v, err }
@@ -4907,7 +4907,7 @@ async function phonePcListen(f) {
   renderPhonePcBar();
   // pour la barre d'écoute du PC : pastilles clé / BPM / licence, chaîne, couleur de la prod
   const col = f.meta?.color && typeof f.meta.color.h === 'number' ? { h: f.meta.color.h, s: Number(f.meta.color.s) || 60 } : undefined;
-  try { await ntfyPublish({ cmd: 'listen', v, t: t.slice(0, 160), tags: parts.chips.map((c) => String(c.t).slice(0, 24)).slice(0, 4), ch: String(f.meta?.channel || '').slice(0, 60), color: col }); } catch { phonePc.s = ''; renderPhonePcBar(); toast('Pas de réseau'); return; }
+  try { await ntfyPublish({ cmd: 'listen', v, t: t.slice(0, 160), tags: parts.chips.map((c) => String(c.t).slice(0, 24)).slice(0, 4), ch: String(f.meta?.channel || '').slice(0, 60), color: col }); } catch (e) { phonePc.s = ''; renderPhonePcBar(); toast(netMsg(e)); return; }
   // pas de réponse : PC hors ligne en vrai, ou version trop ancienne
   setTimeout(() => {
     if (phonePc.at !== at || phonePc.s !== 'sent') return;
@@ -4918,12 +4918,12 @@ async function phonePcListen(f) {
 }
 const PC_LISTEN_MIN = '1.20.4';
 function phonePcUpdate() {
-  ntfyPublish({ update: 1 }).then(() => toast('Le PC se met à jour… réessaie dans une minute')).catch(() => toast('Pas de réseau'));
+  ntfyPublish({ update: 1 }).then(() => toast('Le PC se met à jour… réessaie dans une minute')).catch((e) => toast(netMsg(e)));
 }
 function phonePcCtl(a) {
   haptic();
   if (a === 'stop') { phonePc.s = ''; renderPhonePcBar(); }
-  ntfyPublish({ cmd: 'listen', a }).catch(() => toast('Pas de réseau'));
+  ntfyPublish({ cmd: 'listen', a }).catch((e) => toast(netMsg(e)));
 }
 // Réponse du PC : { v, s: loading | playing | paused | stopped | ended | error, t, err }
 function onPcListen(d, m) {
@@ -8333,9 +8333,22 @@ function savePc() {
 }
 async function ntfyPublish(payload) {
   // Corps en texte brut, sans en-tête spécial : pas de requête préalable CORS.
-  const res = await fetch(`${NTFY}/${pcCode()}`, { method: 'POST', body: await signed(payload) });
-  if (!res.ok) throw new Error(`ntfy ${res.status}`);
+  // Signé une fois : un envoi répété garde le même numéro, le PC ne le traite qu'une fois.
+  const body = await signed(payload);
+  let last = null;
+  for (const wait of [0, 1500, 6000]) {  // coupure d'une seconde, ou ntfy.sh qui demande de ralentir (429)
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    let res;
+    try { res = await fetch(`${NTFY}/${pcCode()}`, { method: 'POST', body }); } catch { last = Object.assign(new Error('network'), { net: true }); continue; }
+    if (res.ok) return;
+    last = Object.assign(new Error(`ntfy ${res.status}`), { limit: res.status === 429 });
+    if (res.status !== 429 && res.status < 500) break;
+  }
+  throw last;
 }
+// Message d'erreur d'envoi au PC : vraie coupure, ou limite du relais gratuit ntfy.sh
+const NTFY_LIMIT_MSG = 'ntfy.sh (le relais gratuit entre le site et ton PC) limite les envois depuis ta connexion : réessaie dans une minute';
+function netMsg(e) { return e?.limit ? NTFY_LIMIT_MSG : 'Pas de réseau'; }
 
 function listenPc() {
   if (!WEB || pc.es || typeof EventSource === 'undefined') return;
@@ -8467,9 +8480,11 @@ async function sendToPc(item) {
     pc.queue[id].state = 'sent';
     pc.queue[id].lastSent = Date.now();
     toast(pcOn() ? 'Envoyée à ton PC' : 'Ton PC est éteint : la prod est en file d’attente, elle arrivera dès qu’il se rallume');
-  } catch {
+  } catch (e) {
     pc.queue[id].state = 'unsent';
-    toast('Pas de réseau : la prod partira toute seule dès que tu en auras');
+    toast(e?.limit ? 'ntfy.sh (le relais gratuit entre le site et ton PC) limite les envois depuis ta connexion : la prod repartira toute seule dans 1 à 2 minutes'
+      : 'Pas de réseau : la prod partira toute seule dès que tu en auras');
+    setTimeout(resendPending, e?.limit ? 90e3 : 30e3);
   }
   savePc();
   syncPcUi();
@@ -8828,7 +8843,7 @@ function askPcLib(force) {
   if (!WEB || !pc.info) return;
   if (!force && (Date.now() - pcLib.askedAt < 60e3 || (pcLib.data && Date.now() - pcLib.data.at * 1000 < 60e3))) return;
   pcLib.askedAt = Date.now();
-  ntfyPublish({ cmd: 'lib' }).then(() => { if (force) toast(pcOn() ? 'Le PC envoie sa liste…' : 'PC éteint : la liste arrivera quand il se rallume'); }).catch(() => { if (force) toast('Pas de réseau'); });
+  ntfyPublish({ cmd: 'lib' }).then(() => { if (force) toast(pcOn() ? 'Le PC envoie sa liste…' : 'PC éteint : la liste arrivera quand il se rallume'); }).catch((e) => { if (force) toast(netMsg(e)); });
 }
 
 async function pcCommand(msg, label, quiet = false) {
@@ -9020,7 +9035,7 @@ async function playPcFile(f) {
   try {
     await ntfyPublish({ cmd: 'play', f: f.f });
     toast('Le PC prépare le son… (quelques secondes)');
-  } catch { pcLib.waiting = null; renderPcView(); toast('Pas de réseau'); return; }
+  } catch (e) { pcLib.waiting = null; renderPcView(); toast(netMsg(e)); return; }
   setTimeout(() => { if (pcLib.waiting === f.f) { pcLib.waiting = null; renderPcView(); toast('Pas de réponse du PC pour ce son'); } }, 120e3);
 }
 
@@ -9152,7 +9167,7 @@ function pcUpdateBtn() {
   const b = h('button', { type: 'button', class: 'primary' }, 'Mettre à jour le PC');
   b.addEventListener('click', async () => {
     b.disabled = true;
-    try { await ntfyPublish({ update: 1 }); toast(pcOn() ? 'Le PC se met à jour… il revient tout seul' : 'PC éteint : il se mettra à jour en se rallumant'); } catch { toast('Pas de réseau'); }
+    try { await ntfyPublish({ update: 1 }); toast(pcOn() ? 'Le PC se met à jour… il revient tout seul' : 'PC éteint : il se mettra à jour en se rallumant'); } catch (e) { toast(netMsg(e)); }
     setTimeout(() => { b.disabled = false; }, 5000);
   });
   return b;
@@ -9427,6 +9442,15 @@ function setupTarget() {
     $('#openVerify').before(pcBtn);
     if (pc.info || Object.values(pc.queue).some((q) => q.state === 'sent')) listenPc();
     syncPcUi();
+    // Le PC ne s'est pas signalé depuis longtemps (il ne prévient plus que les appareils utilisés) :
+    // on lui demande s'il est là, au plus toutes les 5 min. Sa réponse met « en ligne » à jour.
+    const askPc = () => {
+      if (!pc.info || pcOn() || Date.now() - (local.get('pcAskAt', 0) || 0) < 5 * 60e3) return;
+      local.set('pcAskAt', Date.now());
+      ntfyPublish({ ping: 1 }).catch(() => { /* hors ligne */ });
+    };
+    setTimeout(askPc, 2500);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') askPc(); });
     setTimeout(resendPending, 6000);
     setInterval(resendPending, 20 * 60e3);
     window.addEventListener('online', () => setTimeout(resendPending, 1500));

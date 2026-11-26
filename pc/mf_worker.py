@@ -796,7 +796,7 @@ class Remote:
             self._note(len(body))
         log(f"Descriptions lues pour l'app : {len(found)}/{len(ids)}")
 
-    def tick(self, devices, cfg, final=False):
+    def tick(self, devices, cfg, st=None, final=False):
         """Liste des projets envoyée à l'app : au démarrage, à chaque changement (au plus
         toutes les 3 min), quand l'app la demande, et à l'arrêt. Les nouveaux sons
         (versions exportées…) partent aussi tout seuls en copie d'écoute."""
@@ -815,7 +815,10 @@ class Remote:
         for d in devices:
             code = d["code"]
             changed = self.sig.get(code) != sig
-            if not (code in self.want or (changed and (final or now - self.sent_at.get(code, 0) > 180))):
+            # à chaque changement : seulement aux appareils utilisés depuis 30 min (les autres la
+            # demandent en ouvrant l'onglet PC) ; ntfy.sh limite les envois par jour
+            active = now - self.active.get(code, 0) < 1800 or recently_used(st, code, 1800)
+            if not (code in self.want or (changed and active and (final or now - self.sent_at.get(code, 0) > 180))):
                 continue
             if C.publish_attachment(code, body, "projets.json", {"lib": 1, "n": len(lib["projects"]), "at": lib["at"]}):
                 self.sig[code], self.sent_at[code] = sig, now
@@ -861,6 +864,14 @@ def note_cancels(cancels, msgs):
     if len(cancels) > 300:
         for k in sorted(cancels, key=cancels.get)[:-300]:
             cancels.pop(k, None)
+
+
+def recently_used(st, code, seconds):
+    """L'appareil a envoyé quelque chose (prod, commande, ping) depuis `seconds` secondes."""
+    try:
+        return time.time() - float(((st or {}).get("devices") or {}).get(code, {}).get("last_seen") or 0) < seconds
+    except (TypeError, ValueError, AttributeError):
+        return False
 
 
 def phone_targets(fmap):
@@ -1036,8 +1047,9 @@ def worker(once=False):
                         remote.want.add(d["code"])  # la liste des projets part tout de suite
                 if time.time() - last_alive > 3000:
                     last_alive = time.time()
-                    for d in devices:
-                        C.reply(d["code"], {"pc": "alive", "version": C.VERSION})
+                    for d in devices:  # seulement aux appareils utilisés ces 3 derniers jours (limite d'envois)
+                        if recently_used(st, d["code"], 3 * 86400):
+                            C.reply(d["code"], {"pc": "alive", "version": C.VERSION})
                 if time.time() - last_maint > 6 * 3600 and not once:  # mises à jour : toutes les 6 h
                     last_maint = time.time()
                     C.update_ytdlp()
@@ -1052,22 +1064,31 @@ def worker(once=False):
                 fl_last = None
                 # les appareils jamais entendus d'abord (téléphone qui vient de scanner le QR code) :
                 # si ntfy.sh limite les requêtes, ce n'est pas lui qui attend
-                for d in sorted(devices, key=lambda x: x["code"] in st["since"]):
+                # UNE requête pour tous les appareils (ntfy.sh limite les requêtes par connexion)
+                since_all = st.get("since_all") or int(time.time()) - 12 * 3600
+                try:
+                    events_all = C.poll_many([d["code"] for d in devices], since_all)
+                    complete = True
+                except NET_ERRORS as e:
+                    log("ntfy.sh limite les requêtes depuis cette connexion : on ralentit un peu." if C.limited(e)
+                        else f"Pas de connexion à ntfy.sh ({e}).")
+                    if C.limited(e):
+                        _sleep(30)
+                    else:
+                        announced.clear()  # se réannoncer quand le réseau revient
+                    events_all, complete = None, False
+                by_topic = {}
+                for ev in events_all or []:
+                    by_topic.setdefault(ev.get("topic"), []).append(ev)
+                for d in sorted(devices if events_all is not None else [], key=lambda x: x["code"] in st["since"]):
                     code, key = d["code"], d["cle"]
-                    since = st["since"].get(code) or "12h"
-                    try:
-                        events = C.poll(code, since)
-                    except NET_ERRORS as e:
-                        log(f"Pas de connexion à ntfy.sh ({e}).")
-                        announced.discard(code)  # se réannoncer quand le réseau revient
-                        break
+                    events = by_topic.get(code, [])
                     msgs = [(ev, C.verify(ev.get("message") or "", key)) for ev in events]
                     cancels = st.setdefault("cancel", {})
                     note_cancels(cancels, msgs)
                     peeked = time.time()
                     for n, (ev, msg) in enumerate(msgs):
-                        since = ev.get("id") or since
-                        st["since"][code] = since
+                        st["since"][code] = ev.get("id") or st["since"].get(code)
                         if not msg:
                             log(f"Envoi ignoré (« {d.get('name', '?')} ») : signature absente ou fausse.")
                             continue
@@ -1104,8 +1125,13 @@ def worker(once=False):
                         fl_last = fl or fl_last
                         C.beat()
                         if P.stop.exists():
+                            complete = False
                             break
-                remote.tick(devices, cfg)
+                if complete and events_all:  # tout traité : la prochaine requête part du dernier envoi
+                    st["since_all"] = max(int(st.get("since_all") or 0), int(events_all[-1].get("time") or 0))
+                elif complete and not st.get("since_all"):
+                    st["since_all"] = since_all
+                remote.tick(devices, cfg, st)
                 if fl_last:
                     try:
                         FM.open_last(*fl_last, cfg)
@@ -1123,12 +1149,12 @@ def worker(once=False):
                 break
             # un téléphone vient d'envoyer une commande (écoute sur le PC…) : réponse plus rapide
             busy = any(time.time() - t < 180 for t in remote.active.values())
-            _sleep(min(C.POLL_SECONDS, 6) if busy else C.POLL_SECONDS)
+            _sleep(min(C.POLL_SECONDS, 8) if busy else C.POLL_SECONDS)
     finally:
         if reason not in ("update", "shutdown"):  # mise à jour : le nouveau programme se réannonce tout de suite
             try:
                 cfg = C.load_config()
-                remote.tick(cfg["devices"], cfg, final=True)  # dernière liste des projets
+                remote.tick(cfg["devices"], cfg, st, final=True)  # dernière liste des projets
                 for d in cfg["devices"]:
                     if d["code"] in announced:
                         C.reply(d["code"], {"pc": "offline", "version": C.VERSION})

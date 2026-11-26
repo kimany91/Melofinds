@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.24.1"
+VERSION = "1.24.2"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -788,7 +788,7 @@ def reply(code, payload, timeout=15):
         http_post(f"{NTFY}/{code}-ok", json.dumps(payload, ensure_ascii=False).encode("utf-8"), timeout=timeout)
         return True
     except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as e:
-        log(f"Impossible de prévenir l'app : {e}")
+        log(f"Impossible de prévenir l'app : {e}" + (" (limite de ntfy.sh atteinte depuis ta connexion)" if limited(e) else ""))
         return False
 
 
@@ -929,6 +929,30 @@ def wait_signed(code, key, stop, since=None, timeout=70):
         except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError):
             stop.wait(5)  # coupure : on réessaie
     return None
+
+
+def poll_many(codes, since):
+    """Tous les sujets des appareils en UNE requête (ntfy.sh limite les requêtes par connexion
+    internet : une requête par appareil toutes les 15 s dépassait la limite à 3 appareils)."""
+    codes = [c for c in codes if CODE_RE.match(str(c))]
+    if not codes:
+        return []
+    url = f"{NTFY}/{','.join(codes)}/json?poll=1&since={int(since)}"
+    out = []
+    for line in http_get(url).decode("utf-8", "replace").splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(ev, dict) and ev.get("event") == "message":
+            out.append(ev)
+    out.sort(key=lambda e: e.get("time") or 0)
+    return out
+
+
+def limited(err):
+    """ntfy.sh refuse : trop de requêtes / d'envois depuis cette connexion (HTTP 429)."""
+    return getattr(err, "code", None) == 429 or "429" in str(err)
 
 
 def poll(code, since):

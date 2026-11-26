@@ -1,3 +1,4 @@
+import contextlib
 import hashlib, hmac, importlib.util, json, re, tempfile, time, unittest
 from pathlib import Path
 
@@ -13,6 +14,15 @@ def signed(payload, key=KEY):
     p = json.dumps(payload)
     return json.dumps({"p": p, "s": hmac.new(bytes.fromhex(key), p.encode(), hashlib.sha256).hexdigest()})
 
+
+
+@contextlib.contextmanager
+def polling(fn):
+    """Faux ntfy.sh : `fn(code, since)` répond pour un sujet ; le programme interroge tous les
+    sujets en une requête (poll_many) et relit un sujet seul pour les annulations (poll)."""
+    many = lambda codes, since: [dict(ev, topic=c) for c in codes for ev in fn(c, since)]
+    with mock.patch.object(mpc, "poll", fn), mock.patch.object(mpc, "poll_many", many):
+        yield
 
 class Names(unittest.TestCase):
     def test_jamais_free(self):
@@ -769,7 +779,7 @@ class Reconnexion(unittest.TestCase):
             if calls["n"] == 1:
                 raise http.client.IncompleteRead(b"")  # réseau coupé en pleine réponse
             return [{"id": "e1", "event": "message", "message": "x"}]
-        with mock.patch.object(mpc, "poll", poll), mock.patch.object(mpc, "verify", lambda raw, key: dict(msg)), \
+        with polling(poll), mock.patch.object(mpc, "verify", lambda raw, key: dict(msg)), \
                 mock.patch.object(mpc, "download", side_effect=RuntimeError("boum")):
             self.assertEqual(W.worker(once=True), 0)  # 1er tour : coupure réseau
             self.assertEqual(W.worker(once=True), 0)  # 2e tour : la prod plante
@@ -788,7 +798,7 @@ class Reconnexion(unittest.TestCase):
                     mpc.P.stop.write_text("stop", encoding="utf-8")
                 return len(tries) >= 3
             return True
-        with mock.patch.object(mpc, "reply", reply), mock.patch.object(mpc, "poll", lambda c, s: []), \
+        with mock.patch.object(mpc, "reply", reply), polling(lambda c, s: []), \
                 mock.patch.object(mpc, "POLL_SECONDS", 0):
             t = threading.Thread(target=W.worker)
             t.start()
@@ -797,7 +807,7 @@ class Reconnexion(unittest.TestCase):
         self.assertEqual(len(tries), 3)
 
     def test_mise_a_jour_ne_dit_pas_hors_ligne(self):
-        with mock.patch.object(mpc, "poll", lambda c, s: []), mock.patch.object(mpc, "POLL_SECONDS", 0):
+        with polling(lambda c, s: []), mock.patch.object(mpc, "POLL_SECONDS", 0):
             t = threading.Thread(target=W.worker)
             t.start()
             for _ in range(100):
@@ -812,7 +822,7 @@ class Reconnexion(unittest.TestCase):
         self.assertTrue(inst.update_in_progress())  # le panneau ne le relance pas pendant la mise à jour
         # arrêt normal (« Mettre hors ligne ») : le téléphone est prévenu
         self.replies.clear()
-        with mock.patch.object(mpc, "poll", lambda c, s: []), mock.patch.object(mpc, "POLL_SECONDS", 0):
+        with polling(lambda c, s: []), mock.patch.object(mpc, "POLL_SECONDS", 0):
             t = threading.Thread(target=W.worker)
             t.start()
             for _ in range(100):
@@ -961,6 +971,10 @@ class EnvoiAutomatiqueALApp(EcouteEtGestionDepuisLApp):
         r.tick(self.devices(), mpc.load_config())
         self.assertEqual(len(libs()), 1)  # envoyée il y a moins de 3 min
         r.checked, r.sent_at[self.CODE] = 0, 0
+        r.tick(self.devices(), mpc.load_config())
+        self.assertEqual(len(libs()), 1)  # appareil pas utilisé depuis 30 min : il la demandera (limite ntfy.sh)
+        r.active[self.CODE] = time.time()  # l'app est ouverte (commande récente)
+        r.checked = 0
         r.tick(self.devices(), mpc.load_config())
         self.assertEqual(len(libs()), 2)
         # arrêt : dernière liste si elle a changé
@@ -1262,7 +1276,7 @@ class AppWebAJourEtVersions(unittest.TestCase):
         # le programme en ligne se réveille et envoie la liste à tous les appareils, sans attendre
         sent = []
         with mock.patch.object(mpc, "ensure_tools", lambda *a: []), mock.patch.object(mpc, "update_ytdlp", lambda: None), \
-                mock.patch.object(mpc, "reply", lambda c, m: True), mock.patch.object(mpc, "poll", lambda c, s: []), \
+                mock.patch.object(mpc, "reply", lambda c, m: True), polling(lambda c, s: []), \
                 mock.patch.object(mpc, "publish_attachment", lambda c, data, fn, meta, timeout=60: sent.append(json.loads(data)) or True), \
                 mock.patch.object(mpc, "resolve_install_dir", lambda: self.d / "prog"):
             W.worker(once=True)
@@ -1354,7 +1368,7 @@ class LicenceEtAnnulation(unittest.TestCase):
                   e("e2", now - 20, {"mf": 2, "n": "2" * 16, "v": "dQw4w9WgXcQ", "t": "Prod B"}),
                   e("e3", now - 10, {"mf": 2, "n": "3" * 16, "cancel": "jNQXAC9IVRw"})]
         got = []
-        with mock.patch.object(mpc, "poll", lambda c, s: events if s != "e3" else []), \
+        with polling(lambda c, s: events if s != "e3" else []), \
                 mock.patch.object(mpc, "verify", lambda raw, key: json.loads(raw)), \
                 mock.patch.object(mpc, "download", lambda vid, root, msg, out, prog, *a: (got.append(vid), (False, "test"))[1]):
             W.worker(once=True)
@@ -1362,7 +1376,7 @@ class LicenceEtAnnulation(unittest.TestCase):
         self.assertIn({"v": "jNQXAC9IVRw", "cancel": True}, self.replies)
         # renvoyée après l'annulation : elle repart
         events[:] = [e("e4", now + 5, {"mf": 2, "n": "4" * 16, "v": "jNQXAC9IVRw", "t": "Prod A"})]
-        with mock.patch.object(mpc, "poll", lambda c, s: events if s != "e4" else []), \
+        with polling(lambda c, s: events if s != "e4" else []), \
                 mock.patch.object(mpc, "verify", lambda raw, key: json.loads(raw)), \
                 mock.patch.object(mpc, "download", lambda vid, root, msg, out, prog, *a: (got.append(vid), (False, "test"))[1]):
             W.worker(once=True)
@@ -1381,11 +1395,64 @@ class LicenceEtAnnulation(unittest.TestCase):
             got.append(vid)
             clock["t"] += 60  # le téléchargement de A dure une minute
             return False, "test"
-        with mock.patch.object(mpc, "poll", lambda c, s: later if s == "e2" else first if s != "e3" else []), \
+        with polling(lambda c, s: later if s == "e2" else first if s != "e3" else []), \
                 mock.patch.object(mpc, "verify", lambda raw, key: json.loads(raw)), \
                 mock.patch.object(mpc, "download", download), mock.patch.object(W.time, "time", lambda: clock["t"]):
             W.worker(once=True)
         self.assertEqual(got, ["jNQXAC9IVRw"])  # B annulée pendant le téléchargement de A
+
+
+class LimiteNtfy(unittest.TestCase):
+    """ntfy.sh limite les requêtes et les envois par connexion internet : avec plusieurs
+    appareils (téléphone, fenêtre Melofinds…), le PC ne doit pas la dépasser."""
+    CODE = Reconnexion.CODE
+    setUp = Reconnexion.setUp
+    tearDown = Reconnexion.tearDown
+
+    def test_une_seule_requete_pour_tous_les_appareils(self):
+        cfg = mpc.load_config()
+        cfg["devices"] += [{"id": f"d{i}", "name": f"App {i}", "code": "melofinds-" + str(i) * 32, "cle": "c" * 64} for i in (2, 3, 4)]
+        mpc.save_config(cfg)
+        now = int(time.time())
+        calls, single = [], []
+        msg = {"mf": 2, "n": "9" * 16, "ping": 1}
+
+        def many(codes, since):
+            calls.append((list(codes), since))
+            return [{"id": "x1", "time": now, "event": "message", "topic": "melofinds-" + "3" * 32, "message": json.dumps(msg)}]
+        with mock.patch.object(mpc, "poll_many", many), mock.patch.object(mpc, "poll", lambda c, s: single.append(c) or []), \
+                mock.patch.object(mpc, "verify", lambda raw, key: json.loads(raw)):
+            W.worker(once=True)
+            W.worker(once=True)
+        self.assertEqual(len(calls), 2)  # une requête par tour, quel que soit le nombre d'appareils
+        self.assertEqual(len(calls[0][0]), 4)
+        self.assertEqual(single, [])
+        self.assertGreaterEqual(calls[1][1], now)  # le tour suivant repart du dernier envoi
+        self.assertEqual(sum(1 for r in self.replies if r.get("pong") == "9" * 16), 1)  # traité une seule fois
+
+    def test_requete_multi_sujets(self):
+        got = {}
+
+        def http_get(url, timeout=40):
+            got["url"] = url
+            return (json.dumps({"event": "open"}) + "\n" + json.dumps({"event": "message", "time": 5, "topic": "t"}) + "\n").encode()
+        with mock.patch.object(mpc, "http_get", http_get):
+            ev = mpc.poll_many(["melofinds-" + "1" * 32, "melofinds-" + "2" * 32, "pas-un-code"], 1700000000)
+        self.assertEqual(len(ev), 1)
+        self.assertIn("/melofinds-" + "1" * 32 + ",melofinds-" + "2" * 32 + "/json?poll=1&since=1700000000", got["url"])
+        self.assertNotIn("pas-un-code", got["url"])
+
+    def test_limite_reconnue(self):
+        import urllib.error
+        self.assertTrue(mpc.limited(urllib.error.HTTPError("u", 429, "Too Many Requests", {}, None)))
+        self.assertFalse(mpc.limited(urllib.error.URLError("timeout")))
+
+    def test_signe_de_vie_seulement_aux_appareils_utilises(self):
+        st = {"devices": {"a": {"last_seen": int(time.time()) - 3600}, "b": {"last_seen": int(time.time()) - 10 * 86400}}}
+        self.assertTrue(W.recently_used(st, "a", 3 * 86400))
+        self.assertFalse(W.recently_used(st, "b", 3 * 86400))
+        self.assertFalse(W.recently_used(st, "c", 3 * 86400))
+        self.assertFalse(W.recently_used(None, "a", 3 * 86400))
 
 
 class DescriptionsPourLApp(unittest.TestCase):
