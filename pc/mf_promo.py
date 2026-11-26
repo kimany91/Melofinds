@@ -251,7 +251,7 @@ def words_from_json(data):
                 words[-1]["e"] = max(words[-1]["e"], e)
     out = []
     for w in words:
-        w["w"] = _fix_text(w["w"]).strip()
+        w["w"] = _fix_text(w["w"]).strip().strip('"“”«»„').strip()  # guillemets ajoutés par Whisper
         if w["w"] and re.search(r"\w", w["w"]):
             out.append(w)
     for i in range(1, len(out)):  # dans l'ordre, toujours

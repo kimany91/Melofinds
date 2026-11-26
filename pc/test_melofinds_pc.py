@@ -1529,6 +1529,8 @@ class Promo(unittest.TestCase):
         PM = self.PM
         raw = '{"transcription":[{"text":" x","tokens":[{"text":" d\u00e9j","offsets":{"from":0,"to":100},"t_dtw":0},{"text":"\u00e0","offsets":{"from":100,"to":200},"t_dtw":10}]}]}'
         self.assertEqual(PM.words_from_json(json.loads(raw))[0]["w"], "déjà")
+        q = {"transcription": [{"text": "x", "tokens": [self.tok(' "She', 0, 1), self.tok(" wants", 300, 30), self.tok(" breaks.\"", 600, 60)]}]}
+        self.assertEqual([w["w"] for w in PM.words_from_json(q)], ["She", "wants", "breaks."])  # sans guillemets
 
     def test_lignes_sans_trou(self):
         PM = self.PM
