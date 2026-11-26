@@ -175,24 +175,51 @@ def promotest(out):
         res["transcribe_s"] = round(time.time() - t1, 1)
         # Précision : moment réel de chaque mot (donné par la voix de Windows) contre Whisper, sur le
         # mix, sur la voix séparée, et sur la voix séparée avec recalage des mots
-        truth_file = os.environ.get("MELOFINDS_TEST_WORDS", "")
-        if truth_file and Path(truth_file).exists():
-            truth = [x for x in json.loads(Path(truth_file).read_text(encoding="utf-8-sig")) if x.get("w")]
-            truth = [{"w": re.sub(r"[^\w']", "", x["w"].lower()), "s": float(x["ms"]) / 1000 + 1.5} for x in truth]
+        wdir = Path(os.environ.get("MELOFINDS_TEST_WORDDIR", "") or "-")
+        if wdir.is_dir():
+            # Voix assemblée mot à mot (moments exacts connus) sur le même beat : précision mesurée
+            import array
+            import wave as wv
+            sr, pcm, truth, t = 16000, array.array("h"), [], 1.5
+            pcm.extend([0] * int(sr * 1.5))
+            for f in sorted(wdir.glob("*.wav")):
+                r2 = subprocess.run([ff, "-loglevel", "error", "-i", str(f), "-af",
+                                     "silenceremove=start_periods=1:start_threshold=-45dB,areverse,silenceremove=start_periods=1:start_threshold=-45dB,areverse",
+                                     "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"], capture_output=True, timeout=60)
+                a2 = array.array("h")
+                a2.frombytes(r2.stdout[: len(r2.stdout) // 2 * 2])
+                truth.append({"w": f.stem.split(" ", 1)[1].lower(), "s": round(len(pcm) / sr, 3)})
+                pcm.extend(a2)
+                pcm.extend([0] * int(sr * 0.05))
+            pcm.extend([0] * sr)
+            voice2, song2 = d / "voix-mots.wav", d / "son-mots.wav"
+            with wv.open(str(voice2), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(sr)
+                w.writeframes(pcm.tobytes())
+            span = len(pcm) / sr
+            subprocess.run([ff, "-loglevel", "error", "-y", "-i", str(voice2), "-f", "lavfi", "-i", f"sine=frequency=55:duration={span:.2f}",
+                            "-f", "lavfi", "-i", f"aevalsrc=0.6*sin(2*PI*60*t)*exp(-12*mod(t\\,0.43)):d={span:.2f}",
+                            "-filter_complex", "[0:a]volume=1.6[v];[1:a]volume=0.25[b];[2:a]volume=0.5[k];[v][b][k]amix=3:duration=longest[o]",
+                            "-map", "[o]", "-ar", "44100", str(song2)], check=True, timeout=120)
 
             def err(words):
                 got = [{"w": re.sub(r"[^\w']", "", w["w"].lower()), "s": w["s"]} for w in words]
-                d, k = [], 0
-                for t in truth:  # mot par mot, dans l'ordre (mots reconnus seulement)
+                dd, k = [], 0
+                for tr in truth:
                     for j in range(k, min(k + 4, len(got))):
-                        if got[j]["w"] == t["w"]:
-                            d.append(abs(got[j]["s"] - t["s"]))
+                        if got[j]["w"] == tr["w"]:
+                            dd.append(round(got[j]["s"] - tr["s"], 2))
                             k = j + 1
                             break
-                return {"n": len(d), "moy": round(sum(d) / len(d), 3) if d else None, "pire": round(max(d), 3) if d else None}
-            variants = {"separee": r["words"]}
-            variants["mix"] = PM.transcribe(song, 0, 12, None, lambda *a: None, lang="en", isolate=False)["words"]
-            variants["separee_recalee"] = PM.transcribe(song, 0, 12, None, lambda *a: None, lang="en", snap=True)["words"]
+                ab = [abs(x) for x in dd]
+                return {"n": len(dd), "sur": len(truth), "moy": round(sum(ab) / len(ab), 3) if ab else None,
+                        "pire": max(ab) if ab else None, "ecarts": dd}
+            dur2 = min(30.0, span)
+            variants = {"mix": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", isolate=False)["words"],
+                        "separee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en")["words"],
+                        "separee_recalee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", snap=True)["words"]}
             res["precision"] = {k: err(v) for k, v in variants.items()}
             res["voice"] = r.get("voice")
         res["words"], res["lines"], res["dtw_tokens"] = r["words"], r["lines"], r.get("dtw")
