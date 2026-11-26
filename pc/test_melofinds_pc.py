@@ -1667,6 +1667,8 @@ class Promo(unittest.TestCase):
         self.assertEqual(PM.MODELS["precise"]["dtw"], "large.v3")
         self.assertEqual(PM._quality("nimporte"), "precise")
         self.assertEqual(set(PM.DTW_SHIFTS), set(PM.MODELS))
+        self.assertEqual(PM.DTW_SHIFTS["precise"], 0.0)  # mesuré : large-v3 complet n'est pas en retard
+        self.assertTrue(0.5 <= PM.MODELS["precise"]["slow"] < 1)
 
     def test_accents_coupes_entre_jetons(self):
         PM = self.PM

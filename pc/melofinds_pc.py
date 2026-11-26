@@ -220,7 +220,7 @@ def promotest(out):
             dur2 = min(30.0, span)
             variants = {"separee_recalee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en")["words"],
                         "rapide_recalee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", quality="rapide")["words"],
-                        "lente_recalee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", slow=0.85)["words"]}
+                        "normale_recalee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", slow=1)["words"]}
             res["precision"] = {k: err(v) for k, v in variants.items()}
             res["voice"] = r.get("voice")
             p = res["precision"]["separee_recalee"]  # le réglage par défaut : doit rester précis
@@ -246,7 +246,7 @@ def promotest(out):
                 return {"bons": m[-1][-1], "sur": len(ref), "taux": round(m[-1][-1] / max(1, len(ref)), 3),
                         "texte": " ".join(got)[:400]}
             comp = {}
-            for name, kw in (("precise", {}), ("rapide", {"quality": "rapide"}), ("precise_lente", {"slow": 0.85})):
+            for name, kw in (("precise", {}), ("rapide", {"quality": "rapide"}), ("precise_normale", {"slow": 1})):
                 t3 = time.time()
                 comp[name] = acc(PM.transcribe(song3, 0, span, None, lambda *a: None, lang="en", **kw)["words"])
                 comp[name]["s"] = round(time.time() - t3, 1)

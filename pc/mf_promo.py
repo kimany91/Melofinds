@@ -33,8 +33,10 @@ WHISPER_ASSET = "whisper-bin-x64.zip"
 # Deux moteurs d'écoute. « precise » : Whisper large-v3 complet (32 couches pour écrire les
 # mots, contre 4 pour turbo) : bien meilleur sur le rap rapide ou mal articulé, plus lent.
 MODELS = {
-    "precise": {"file": "ggml-large-v3.bin", "dtw": "large.v3", "size": "3 Go", "label": "Précise"},
-    "rapide": {"file": "ggml-large-v3-turbo-q5_0.bin", "dtw": "large.v3.turbo", "size": "550 Mo", "label": "Rapide"},
+    # slow : voix ralentie (même hauteur) pour suivre un débit rapide. Mesuré (CI, voix très
+    # rapide sur un beat) : précise ralentie 31/33 mots justes, précise 29/33, rapide 30/33.
+    "precise": {"file": "ggml-large-v3.bin", "dtw": "large.v3", "size": "3 Go", "label": "Précise", "slow": 0.85},
+    "rapide": {"file": "ggml-large-v3-turbo-q5_0.bin", "dtw": "large.v3.turbo", "size": "550 Mo", "label": "Rapide", "slow": 1.0},
 }
 QUALITY = "precise"
 MODEL = MODELS["rapide"]["file"]  # (ancien nom, gardé pour les tests)
@@ -66,7 +68,8 @@ PROMPT = "Paroles d'un morceau de rap français, avec de l'argot."
 # Whisper (alignement DTW) date les mots en retard : mesuré mot par mot sur une voix aux moments
 # connus, posée sur un beat (CI Windows) : 0,09 à 0,30 s, 0,17 s en moyenne, jamais en avance.
 DTW_SHIFT = 0.14
-DTW_SHIFTS = {"precise": 0.14, "rapide": 0.14}
+# large-v3 complet n'a pas ce retard (mesuré : 0,01 s d'avance en moyenne) : rien à corriger
+DTW_SHIFTS = {"precise": 0.0, "rapide": 0.14}
 LEX_MAX = 80
 
 
@@ -559,6 +562,7 @@ def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr"
         flt = "highpass=f=100,lowpass=f=7000,dynaudnorm=f=150" if how == "mix" else "highpass=f=70,dynaudnorm=f=150"
         # slow (< 1) : la voix est ralentie (même hauteur) pour que Whisper suive un débit rapide ;
         # les moments des mots sont ensuite remis à la vraie vitesse
+        slow = MODELS[quality]["slow"] if slow is None else slow
         slow = float(slow) if slow and 0.5 <= float(slow) < 1 else 1.0
         if slow < 1:
             flt += f",atempo={slow:.3f}"
