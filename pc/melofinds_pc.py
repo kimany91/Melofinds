@@ -218,10 +218,12 @@ def promotest(out):
                         "pire": max(ab) if ab else None, "ecarts": dd}
             dur2 = min(30.0, span)
             variants = {"mix": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", isolate=False)["words"],
-                        "separee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en")["words"],
+                        "separee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", snap=False)["words"],
                         "separee_recalee": PM.transcribe(song2, 0, dur2, None, lambda *a: None, lang="en", snap=True)["words"]}
             res["precision"] = {k: err(v) for k, v in variants.items()}
             res["voice"] = r.get("voice")
+            p = res["precision"]["separee_recalee"]  # le réglage par défaut : doit rester précis
+            res["ok_precision"] = bool(p["moy"] is not None and p["moy"] <= 0.08 and p["n"] >= p["sur"] * 0.8)
         res["words"], res["lines"], res["dtw_tokens"] = r["words"], r["lines"], r.get("dtw")
         t2 = time.time()
         vid = PM.render(bg, song, 0, 12, r["lines"], d / "promo.mp4", "impact")
@@ -238,6 +240,8 @@ def promotest(out):
         import traceback
         res["ok"] = False
         res["err"] = traceback.format_exc()[-1500:]
+    if res.get("ok_precision") is False:
+        res["ok"] = False
     Path(out).write_text(json.dumps(res, indent=1, ensure_ascii=False), encoding="utf-8")
     return 0 if res["ok"] else 1
 
