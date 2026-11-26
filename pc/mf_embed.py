@@ -299,6 +299,23 @@ class Panel:
             return True
         return False
 
+    def open_view(self, view):
+        """Affiche une page du site (Rechercher / Promo) : directement dans la page (sans passer
+        par le pont), et le pont est recréé s'il n'est plus là."""
+        if not self.alive():
+            return False
+        view = view if view in ("search", "promo") else "search"
+
+        def go():
+            if self.service and not (self.bridge and self.bridge.alive):
+                self._bridge()
+            try:
+                self._eval(f"(window.mfShowView ? (mfShowView('{view}'), 1) : (location.hash = '{view}', 0))")
+            except Exception as e:
+                log(f"page {view} non affichée : {e}")
+        threading.Thread(target=go, daemon=True).start()
+        return True
+
     # --- depuis Tk
     def resize(self, w, h):
         self.size = (int(w), int(h))

@@ -1604,6 +1604,27 @@ class Promo(unittest.TestCase):
             svc2.call("pick", {"kind": "audio"}, lambda *a: None)
         self.assertIsNone(PM.Service(ask_file=lambda kind: None).call("pick", {"kind": "video"}, lambda *a: None))
 
+    def test_tous_les_projets_avec_leurs_versions(self):
+        PM = self.PM
+        import mf_library as L
+        d = self.d / "Projets" / "LESGUI"
+        d.mkdir(parents=True)
+        mk = lambda n: (d / n).write_bytes(b"x") and (d / n)
+        it = mock.Mock(title="LESGUI", key="F# min", bpm=140, extra={"color": "#e0703a"}, date=5, flp=True)
+        files = [{"path": mk("LESGUI.wav"), "kind": "instru", "instru": True, "ver": None, "label": "", "name": "LESGUI", "ext": "wav", "mtime": 1},
+                 {"path": mk("LESGUI 1.1.wav"), "kind": "version", "instru": False, "ver": (1, 1), "label": "v1.1", "name": "LESGUI 1.1", "ext": "wav", "mtime": 2},
+                 {"path": mk("LESGUI 1.2.wav"), "kind": "version", "instru": False, "ver": (1, 2), "label": "v1.2", "name": "LESGUI 1.2", "ext": "wav", "mtime": 3, "latest": True},
+                 {"path": mk("Master.wav"), "kind": "export", "instru": False, "ver": None, "label": "", "name": "Master", "ext": "wav", "mtime": 4},
+                 {"path": mk("Audio Clip 3.wav"), "kind": "fl", "instru": False, "ver": None, "label": "", "name": "Audio Clip 3", "ext": "wav", "mtime": 9}]
+        projs = [it] * 75  # plus de 60 projets : tous renvoyés
+        with mock.patch.object(L, "scan_projects", lambda cfg: projs), mock.patch.object(L, "audio_files", lambda item, n: files):
+            out = PM.Service().call("projects", {}, lambda *a: None)
+        self.assertEqual(len(out), 75)
+        labels = [f["label"] for f in out[0]["files"]]
+        self.assertEqual(labels, ["v1.2", "v1.1", "Master", "Instru"])  # dernière version d'abord, instru en dernier, rien de FL
+        self.assertTrue(out[0]["files"][0]["latest"] and out[0]["files"][0]["voice"])
+        self.assertFalse(out[0]["files"][-1]["voice"])
+
     def test_visuels_gardes_avec_le_compte(self):
         PM = self.PM
         d = PM.visuals_dir()

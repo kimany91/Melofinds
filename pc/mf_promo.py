@@ -750,17 +750,7 @@ class Service:
             return {"version": C.VERSION, "view": view, "ready": ready(), "accounts": ACCOUNTS, "styles": {k: v["label"] for k, v in STYLES.items()},
                     "folder": str(promo_dir(cfg))}
         if cmd == "projects":
-            import mf_library as L
-            out = []
-            for it in L.scan_projects(cfg)[:80]:
-                af = [f for f in L.audio_files(it, 40) if f["kind"] != "fl" and f["ext"] in ("wav", "mp3", "m4a", "flac", "ogg")]
-                if not af:
-                    continue
-                main = next((f for f in af if f.get("main")), af[0])
-                out.append({"title": it.title[:120], "key": it.key or "", "bpm": it.bpm or 0, "color": it.extra.get("color"),
-                            "files": [{**self.media(f["path"]), "label": f["label"] or ("Instru" if f["instru"] else f["name"][:60]),
-                                       "main": f is main} for f in af[:12]]})
-            return out
+            return self.projects(cfg)
         if cmd == "pick":
             kind = "video" if args.get("kind") == "video" else "audio"
             p = self.ask_file(kind)
@@ -809,6 +799,27 @@ class Service:
             self.reveal(d)
             return True
         raise PromoError("commande inconnue")
+
+    def projects(self, cfg):
+        """Tous tes projets FL, chacun avec ses sons : tes versions (avec ta voix) de la plus récente
+        à la plus ancienne, tes exports, puis l'instru (sans voix) en dernier."""
+        import mf_library as L
+        out = []
+        for it in L.scan_projects(cfg)[:600]:
+            af = [f for f in L.audio_files(it, 120) if f["kind"] != "fl" and f["ext"] in ("wav", "mp3", "m4a", "flac", "ogg")]
+            if not af:
+                continue
+            vers = sorted((f for f in af if f["kind"] == "version"), key=lambda f: f["ver"], reverse=True)
+            exps = sorted((f for f in af if f["kind"] == "export"), key=lambda f: -f["mtime"])
+            ins = [f for f in af if f["instru"]]
+            files = []
+            for f in vers + exps + ins:
+                label = f["label"] or (f["name"][:50] if f["kind"] == "export" else "Instru")
+                files.append({**self.media(f["path"]), "label": label, "kind": f["kind"], "ext": f["ext"],
+                              "voice": not f["instru"], "latest": bool(f.get("latest")), "date": int(f["mtime"])})
+            out.append({"title": it.title[:120], "key": it.key or "", "bpm": it.bpm or 0, "color": it.extra.get("color"),
+                        "date": int(it.date or 0), "fl": bool(it.flp), "files": files[:40]})
+        return out
 
     def close(self):
         self.ig.close()

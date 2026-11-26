@@ -1066,13 +1066,17 @@ body.mobile .chan-txt b { font-size: 17px; }
 .pr-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pr-inline { display: flex; gap: 8px; flex: 1 1 260px; min-width: 0; }
 .pr-inline .pc-input { padding: 9px 12px; font-size: 14px; }
-.pr-projs { display: grid; gap: 4px; max-height: 340px; overflow: auto; }
-.pr-proj { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding: 8px 6px; border-radius: 8px; }
-.pr-proj:hover { background: var(--panel-2); }
+.pr-projs { display: grid; gap: 6px; max-height: 520px; overflow: auto; padding-right: 4px; }
+.pr-proj { display: grid; gap: 7px; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel-2); }
+.pr-ptop { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .pr-proj b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .pr-proj em { font: 600 11.5px var(--f-mono); color: var(--faint); font-style: normal; }
-.pr-files { grid-column: 2 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
-.pr-files .chip { padding: 3px 9px; font-size: 12px; }
+.pr-files { display: flex; gap: 6px; flex-wrap: wrap; padding-left: 20px; }
+.pr-files .chip { padding: 4px 10px; font-size: 12.5px; }
+.pr-files .chip small { font-size: 10.5px; opacity: .8; }
+.chip.pr-novoice { opacity: .6; border-style: dashed; }
+.pr-warn { color: var(--warn); }
+.pr-row > .pc-input { flex: 1 1 220px; padding: 9px 12px; font-size: 14px; }
 .pr-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--accent); }
 .pr-sel { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .pr-sel b { font-size: 15px; }
@@ -1254,7 +1258,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 26/11/2026 à 12:52</p>
+    <p class="build-stamp">Version du 26/11/2026 à 14:21</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -4226,6 +4230,9 @@ function showView(name) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 $$('.nav-item').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
+// Melofinds PC : le menu du logiciel (Rechercher / Promo) affiche directement la bonne page
+window.mfShowView = (v) => showView(v);
+window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (VIEWS.includes(v)) showView(v); });
 $('#brand').addEventListener('click', () => showView('search'));
 
 // ---------------------------------------------------------------------------
@@ -9690,6 +9697,7 @@ function promoInit() {
     promo.hello = r;
     if (!promo.accounts) promo.accounts = (r.accounts || []).slice();
     if (r.view) showView(r.view);
+    else if ($('#view-promo')?.classList.contains('active')) renderPromo();  // lien prêt après l'ouverture de Promo
   }).catch(() => {});
 }
 window.addEventListener('mfpc-ready', promoInit);
@@ -9753,34 +9761,57 @@ function renderPromoSound() {
   const el = $('#prSound');
   if (!el) return;
   const a = promo.audio;
-  const rows = (promo.projects || []).slice(0, 30).map((p) => h('div', { class: 'pr-proj' },
-    h('span', { class: 'pr-dot', style: p.color ? `background:${p.color}` : '' }),
-    h('b', {}, p.title), p.key || p.bpm ? h('em', {}, [p.key, p.bpm ? `${p.bpm} BPM` : ''].filter(Boolean).join(' · ')) : null,
-    h('span', { class: 'pr-files' }, p.files.slice(0, 5).map((f) => h('button', { type: 'button', class: `chip${a?.token === f.token ? ' on' : ''}`,
-      onclick: () => setPromoAudio({ token: f.token, title: p.title, dur: null }) }, f.label)))));
   const dur = a?.dur || 0;
-  prFill(el, 
-    h('h3', {}, h('span', { class: 'pr-n' }, '1'), 'Ton son'),
-    a ? h('div', { class: 'pr-sel' }, h('b', {}, a.title), h('span', { class: 'hint' }, dur ? `${fmtSec(dur).slice(0, -2)} au total` : '…'),
-      h('button', { type: 'button', class: 'link', onclick: () => { promo.audio = null; renderPromoAll(); } }, 'Changer')) : null,
-    a ? h('div', { class: 'pr-range' },
-      h('label', {}, 'Début ', h('b', { id: 'prStartTxt' }, fmtSec(promo.start).slice(0, -2))),
-      h('input', { type: 'range', min: 0, max: Math.max(0, Math.floor(dur - 1)), step: 0.5, value: promo.start, oninput: (e) => {
-        promo.start = Number(e.target.value); $('#prStartTxt').textContent = fmtSec(promo.start).slice(0, -2);
-        if (promo.lines.length) { promo.lines = []; renderPromoLyrics(); }
-      } }),
-      h('div', { class: 'seg' }, PROMO_DURS.map((d) => h('button', { type: 'button', class: `seg-btn${promo.dur === d ? ' active' : ''}`, onclick: () => {
-        promo.dur = d; if (promo.lines.length) promo.lines = promo.lines.filter((l) => l.s < d); renderPromoAll();
-      } }, `${d} s`)))) : null,
-    a ? h('div', { class: 'pr-voc' }, promo.vocals
-      ? [h('span', {}, '🎙 Voix seule : ', h('b', {}, promo.vocals.title)), h('button', { type: 'button', class: 'link', onclick: () => { promo.vocals = null; renderPromoSound(); } }, 'Retirer')]
-      : h('button', { type: 'button', class: 'link', onclick: async () => {
-        try { const v = await prCall('pick', { kind: 'audio' }); if (v) { promo.vocals = v; renderPromoSound(); } } catch (e) { prErr(e); }
-      } }, '+ Voix seule (export de ta piste voix, paroles plus précises)')) : null,
-    !a ? h('div', { class: 'pr-projs' }, promo.projects == null ? h('p', { class: 'hint' }, 'Lecture de tes projets…') : rows.length ? rows : h('p', { class: 'hint' }, 'Aucun son dans tes projets.')) : null,
-    !a ? h('button', { type: 'button', class: 'ghost', onclick: async () => {
-      try { const f = await prCall('pick', { kind: 'audio' }); if (f) setPromoAudio(f); } catch (e) { prErr(e); }
-    } }, icon('plus'), 'Choisir un son sur le PC…') : null);
+  const head = h('h3', {}, h('span', { class: 'pr-n' }, '1'), 'Ton son');
+  if (a) {
+    prFill(el, head,
+      h('div', { class: 'pr-sel' }, h('span', { class: 'pr-dot', style: a.color ? `background:${a.color}` : '' }), h('b', {}, a.title),
+        a.label ? h('span', { class: `chip on${a.voice === false ? ' pr-novoice' : ''}` }, a.label) : null,
+        h('span', { class: 'hint' }, dur ? `${fmtSec(dur).slice(0, -2)} au total` : '…'),
+        h('button', { type: 'button', class: 'link', onclick: () => { promo.audio = null; renderPromoAll(); } }, 'Changer de son')),
+      a.voice === false ? h('p', { class: 'hint pr-warn' }, 'C’est l’instru (sans ta voix) : choisis plutôt une version pour que les paroles soient écrites.') : null,
+      h('div', { class: 'pr-range' },
+        h('label', {}, 'Début ', h('b', { id: 'prStartTxt' }, fmtSec(promo.start).slice(0, -2))),
+        h('input', { type: 'range', min: 0, max: Math.max(0, Math.floor(dur - 1)), step: 0.5, value: promo.start, oninput: (e) => {
+          promo.start = Number(e.target.value); $('#prStartTxt').textContent = fmtSec(promo.start).slice(0, -2);
+          if (promo.lines.length) { promo.lines = []; renderPromoLyrics(); }
+        } }),
+        h('div', { class: 'seg' }, PROMO_DURS.map((d) => h('button', { type: 'button', class: `seg-btn${promo.dur === d ? ' active' : ''}`, onclick: () => {
+          promo.dur = d; if (promo.lines.length) promo.lines = promo.lines.filter((l) => l.s < d); renderPromoAll();
+        } }, `${d} s`)))),
+      h('div', { class: 'pr-voc' }, promo.vocals
+        ? [h('span', {}, 'Voix seule : ', h('b', {}, promo.vocals.title)), h('button', { type: 'button', class: 'link', onclick: () => { promo.vocals = null; renderPromoSound(); } }, 'Retirer')]
+        : h('button', { type: 'button', class: 'link', onclick: async () => {
+          try { const v = await prCall('pick', { kind: 'audio' }); if (v) { promo.vocals = v; renderPromoSound(); } } catch (e) { prErr(e); }
+        } }, '+ Voix seule (facultatif : export de ta piste voix, paroles encore plus justes)')));
+    return;
+  }
+  // Pas encore de son : tous tes projets FL, tu choisis une version (le .wav avec ta voix)
+  const q = strip(promo.q || '').toLowerCase();
+  const list = (promo.projects || []).filter((p) => !q || strip(p.title).toLowerCase().includes(q));
+  const pick = (p, f) => setPromoAudio({ token: f.token, title: p.title, dur: null, label: f.label, voice: f.voice, color: p.color });
+  const cards = list.slice(0, promo.more ? 600 : 60).map((p) => h('div', { class: 'pr-proj' },
+    h('div', { class: 'pr-ptop' }, h('span', { class: 'pr-dot', style: p.color ? `background:${p.color}` : '' }), h('b', {}, p.title),
+      h('em', {}, [p.key, p.bpm ? `${p.bpm} BPM` : '', p.fl ? 'FL' : ''].filter(Boolean).join(' · '))),
+    h('div', { class: 'pr-files' }, p.files.map((f) => h('button', { type: 'button',
+      class: `chip${f.latest ? ' on' : ''}${f.voice ? '' : ' pr-novoice'}`, title: f.voice ? `${f.label} (.${f.ext})` : 'Instru, sans ta voix',
+      onclick: () => pick(p, f) }, f.kind === 'instru' ? 'Instru' : f.label, f.latest ? h('small', {}, ' dernière') : null)))));
+  const search = h('input', { class: 'pc-input', type: 'search', placeholder: 'Chercher un projet', value: promo.q || '', 'aria-label': 'Chercher un projet',
+    oninput: (e) => {
+      promo.q = e.target.value;
+      renderPromoSound();
+      const i = $('#prSound input[type=search]');
+      if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+    } });
+  prFill(el, head,
+    h('p', { class: 'hint' }, 'Choisis la version de ton son (le .wav avec ta voix) : les paroles seront écrites à partir d’elle.'),
+    h('div', { class: 'pr-row' }, search, h('button', { type: 'button', class: 'ghost', onclick: async () => {
+      try { const f = await prCall('pick', { kind: 'audio' }); if (f) setPromoAudio({ ...f, voice: true }); } catch (e) { prErr(e); }
+    } }, icon('plus'), 'Autre fichier…')),
+    promo.projects == null ? h('p', { class: 'hint' }, 'Lecture de tes projets FL…')
+      : h('div', { class: 'pr-projs' }, cards.length ? cards : h('p', { class: 'hint' }, q ? 'Aucun projet trouvé.' : 'Aucun son dans tes projets FL.')),
+    promo.projects && list.length > 60 && !promo.more ? h('button', { type: 'button', class: 'link', onclick: () => { promo.more = true; renderPromoSound(); } }, `Voir les ${list.length} projets`) : null,
+    promo.projects ? h('p', { class: 'hint' }, `${promo.projects.length} projets`) : null);
 }
 
 // ----- 2. Les paroles

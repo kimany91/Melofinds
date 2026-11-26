@@ -589,15 +589,30 @@ def run_embedtest(root, show, panel, out):
                         res["parent_ok"] = bool(ctypes.windll.user32.GetParent(panel.hwnd))
                 except Exception as e:
                     res["page"] = f"erreur {e}"
-            try:
-                res["log"] = [x for x in C.P.log.read_text(encoding="utf-8", errors="replace").splitlines() if "[recherche]" in x][-12:]
-            except OSError:
-                res["log"] = []
-            with open(out, "w", encoding="utf-8") as f:
-                json.dump(res, f, ensure_ascii=False, indent=2)
-            root.after(12000, lambda: (panel.close(), root.destroy()))  # le temps de la capture d'écran
+            if st == "ready":  # bouton « Promo » du logiciel : la page Promo du site s'affiche
+                show("promo")
+                root.after(3000, finish)
+            else:
+                finish()
             return
         root.after(500, check)
+
+    def finish():
+        if panel.state == "ready":
+            try:
+                r3 = panel._eval("JSON.stringify({promo: document.querySelector('#view-promo').classList.contains('active'),"
+                                 "search: document.querySelector('#view-search').classList.contains('active')})")
+                res["promo_view"] = json.loads(r3) if isinstance(r3, str) else r3
+            except Exception as e:
+                res["promo_view"] = f"erreur {e}"
+        try:
+            res["log"] = [x for x in C.P.log.read_text(encoding="utf-8", errors="replace").splitlines() if "[recherche]" in x][-12:]
+        except OSError:
+            res["log"] = []
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(res, f, ensure_ascii=False, indent=2)
+        root.after(12000, lambda: (panel.close(), root.destroy()))  # le temps de la capture d'écran
+
     root.after(1500, check)
 
 
@@ -1075,9 +1090,9 @@ def manager_window(selftest=False, embedtest=None):
 
     web_host.bind("<Configure>", lambda e: panel.resize(e.width, e.height))
     def open_view(view):
-        panel.service.want_view = view
+        panel.service.want_view = view  # page encore en chargement : le site la demande en arrivant
         web_start()
-        panel.event({"type": "open", "view": view})
+        panel.open_view(view)
         root.after(200, panel.focus)
     on_show["search"] = lambda: open_view("search")
     on_show["promo"] = lambda: open_view("promo")
