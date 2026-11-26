@@ -1669,6 +1669,7 @@ function renderMini() {
     mini.hidden = false;
     requestAnimationFrame(() => mini.classList.add('show'));
   } else mini.classList.add('show');
+  document.body.classList.toggle('mf-playing', on && isPlaying());  // le logo bouge pendant la lecture
   if (on) {
     const playing = isPlaying();
     mini.classList.toggle('playing', playing);

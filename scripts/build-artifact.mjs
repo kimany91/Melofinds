@@ -59,8 +59,11 @@ const webHead = [
   '<meta charset="utf-8">',
   '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">',
   '<meta name="description" content="Trouve des prods rap sur YouTube, vérifie la licence (free for profit, up to, payant) et écoute-les direct.">',
-  '<meta name="theme-color" content="#0b0c10">',
+  '<meta name="theme-color" content="#0f1012">',
   '<link rel="icon" href="icon.svg" type="image/svg+xml">',
+  '<link rel="icon" href="icon-192.png" type="image/png" sizes="192x192">',
+  '<link rel="apple-touch-icon" href="apple-touch-icon.png">',
+  '<link rel="manifest" href="manifest.webmanifest">',
   '<link rel="preconnect" href="https://www.googleapis.com">',
   '<link rel="preconnect" href="https://www.youtube-nocookie.com">',
   '<link rel="preconnect" href="https://www.youtube.com">',
@@ -75,5 +78,7 @@ const web = `${webHead}\n${html}\n</body>\n</html>\n`;
 mkdirSync(join(ROOT, 'docs'), { recursive: true });
 writeFileSync(join(ROOT, 'docs/index.html'), web);
 writeFileSync(join(ROOT, 'docs/.nojekyll'), '');
-copyFileSync(join(ROOT, 'public/icon.svg'), join(ROOT, 'docs/icon.svg'));
+for (const f of ['icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png', 'manifest.webmanifest']) {
+  copyFileSync(join(ROOT, 'public', f), join(ROOT, 'docs', f));
+}
 console.log(`docs/index.html (${(web.length / 1024).toFixed(0)} Ko)`);

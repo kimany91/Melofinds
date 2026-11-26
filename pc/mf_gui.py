@@ -539,15 +539,13 @@ def _style(root):
 
 
 def _icon(root):
+    """Icône de la fenêtre et de la barre des tâches : le logo Melofinds (M en barres, ambre)."""
     try:
         import tkinter as tk
-        img = tk.PhotoImage(width=32, height=32)
-        img.put(ACCENT2, to=(0, 0, 32, 32))
-        img.put(ON_ACCENT, to=(8, 14, 11, 24))
-        img.put(ON_ACCENT, to=(14, 9, 17, 24))
-        img.put(ON_ACCENT, to=(20, 12, 23, 24))
-        root.iconphoto(True, img)
-        root._icon = img
+        import mf_logo
+        imgs = [tk.PhotoImage(data=mf_logo.PNG[n]) for n in (64, 32, 16)]
+        root.iconphoto(True, *imgs)
+        root._icon = imgs
     except Exception:
         pass
 
@@ -795,9 +793,17 @@ def manager_window(selftest=False, embedtest=None):
     mark_box.pack_propagate(False)
     mark = tk.Canvas(mark_box, width=34, height=34, bg=BG2, highlightthickness=0)
     mark.place(relx=0.5, rely=0.5, anchor="center")
-    mark.create_rectangle(0, 0, 34, 34, fill=ACCENT2, outline="")
-    eq_bars = [mark.create_rectangle(8 + i * 5, 10, 10 + i * 5, 26, fill=ON_ACCENT, outline="") for i in range(4)]
-    eq = {"h": [0.67, 0.67, 0.67, 0.67], "t": [0.45, 0.75, 0.55, 0.85], "vu": False}
+    import mf_logo
+    try:
+        mark._bg = tk.PhotoImage(data=mf_logo.BG34)  # fond du logo (ambre en relief)
+        mark.create_image(0, 0, image=mark._bg, anchor="nw")
+    except Exception:
+        mark.create_rectangle(0, 0, 34, 34, fill=ACCENT2, outline="")
+    # le M : 5 barres (comme l'icône) ; elles dansent seulement pendant la lecture
+    EQ_X0, EQ_W, EQ_GAP, EQ_BOT, EQ_H = 5.6, 3.1, 1.85, 25.5, 17.0
+    eq_bars = [mark.create_line(EQ_X0 + i * (EQ_W + EQ_GAP) + EQ_W / 2, EQ_BOT - EQ_H * h, EQ_X0 + i * (EQ_W + EQ_GAP) + EQ_W / 2, EQ_BOT,
+                                fill=mf_logo.BAR_COLOR, width=EQ_W, capstyle="round") for i, h in enumerate(mf_logo.BARS)]
+    eq = {"h": [0.9] * 5, "t": [1.0, 0.72, 0.45, 0.72, 1.0], "vu": False}
     tl = tk.Frame(logo, bg=BG2)
     tl.pack(side="left", padx=(2, 0))
     label(tl, "Melofinds", 14, bold=True).pack(anchor="w")
@@ -897,16 +903,16 @@ def manager_window(selftest=False, embedtest=None):
         """Logo : les barres dansent seulement quand un son joue (immobiles sinon)."""
         import random
         playing = bool(PLAYER.path and PLAYER.mode() == "playing") or bool(lb.get("st") and lb["st"].get("s") == "playing")
-        rest = [0.45, 0.75, 0.55, 0.85]
-        eq["t"] = [random.uniform(0.25, 1.0) for _ in range(4)] if playing else rest
+        rest = mf_logo.BARS  # au repos : le M
+        eq["t"] = [random.uniform(0.3, 1.0) for _ in range(5)] if playing else list(rest)
         moved = False
         for i, r in enumerate(eq_bars):
             d = (eq["t"][i] - eq["h"][i]) * (0.45 if playing else 0.3)
             if abs(d) > 0.002:
                 eq["h"][i] += d
                 moved = True
-                h = 4 + 18 * eq["h"][i]
-                mark.coords(r, 8 + i * 5, 27 - h, 10 + i * 5, 27)
+                cx = EQ_X0 + i * (EQ_W + EQ_GAP) + EQ_W / 2
+                mark.coords(r, cx, EQ_BOT - EQ_H * eq["h"][i] + EQ_W / 2, cx, EQ_BOT - EQ_W / 2)
         if lbar.winfo_ismapped():  # vu-mètre de la barre d'écoute
             live = bool(lb.get("st") and lb["st"].get("s") == "playing")
             if live or eq.get("vu"):
