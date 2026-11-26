@@ -1283,7 +1283,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 26/11/2026 à 14:58</p>
+    <p class="build-stamp">Version du 26/11/2026 à 17:59</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -8584,6 +8584,13 @@ function handlePcMsg(d) {
   try { m = JSON.parse(d.message || '{}'); } catch { return; }
   if (!m || typeof m !== 'object') return;
   const fresh = (d.time || 0) * 1000 > Date.now() - 90e3;
+  // N'importe quel message du PC (liste, son, réponse…) prouve qu'il est en ligne : pas besoin
+  // d'attendre son « signe de vie » (qui peut sauter quand ntfy.sh limite les envois).
+  const at = (d.time || 0) * 1000;
+  if (pc.info && !m.pc && !m.pong && at > (pc.info.at || 0)) {
+    pc.info = { ...pc.info, at, offline: false, why: '' };
+    local.set('pcInfo', pc.info);
+  }
   if (onPcViewMessage(d, m, fresh)) return;
   if (m.update) {
     if (fresh) {
@@ -9001,15 +9008,21 @@ async function onPcAudio(d, m, fresh) {
 const pcTarget = (p) => p.files.find((f) => f.x) || p.files.find((f) => f.l) || p.files.find((f) => f.i) || null;
 const pcTargets = () => pcProjects().map(pcTarget).filter(Boolean);
 const pcHas = (f) => (pcLib.cached.has(f.f) ? pcLib.cached.get(f.f) : -1) >= f.m;
-const pcSyncState = { at: 0, sig: '' };
+const pcSyncState = local.get('pcSyncState', null) || { at: 0, sig: '' };
 function pcSync(force, reset) {
   if (!WEB || !pc.info || !pcLib.data || !pcOn() || versionLt(pc.info.version, '3.11.0')) return Promise.resolve(false);
   const miss = pcTargets().filter((f) => !pcHas(f)).map((f) => f.f);
   if (!miss.length) { pcLib.syncInfo = null; return Promise.resolve(false); }
   const sig = miss.join(',');
-  if (!force && sig === pcSyncState.sig && Date.now() - pcSyncState.at < 10 * 60e3) return Promise.resolve(false);
+  // Le PC garde la liste (même après un redémarrage) et l'envoie dès que ntfy.sh le permet :
+  // la renvoyer en boucle ne sert à rien et mange la limite d'envois de ta connexion (le PC et
+  // le téléphone sur le même Wi-Fi partagent la même). Seulement s'il manque un NOUVEAU son
+  // (un son reçu entre-temps ne compte pas), sinon toutes les 6 h.
+  const asked = new Set(String(pcSyncState.sig || '').split(','));
+  if (!force && miss.every((x) => asked.has(x)) && Date.now() - pcSyncState.at < 6 * 3600e3) return Promise.resolve(false);
   Object.assign(pcSyncState, { sig, at: Date.now() });
-  return ntfyPublish({ cmd: 'sync', f: miss.slice(0, 300), reset: reset ? 1 : undefined }).then(() => true).catch(() => { pcSyncState.at = 0; return false; });
+  local.set('pcSyncState', pcSyncState);
+  return ntfyPublish({ cmd: 'sync', f: miss.slice(0, 300), reset: reset ? 1 : undefined }).then(() => true).catch(() => { pcSyncState.at = 0; local.set('pcSyncState', pcSyncState); return false; });
 }
 
 // Bouton « Vider et retélécharger » : efface tous les sons gardés sur ce téléphone, puis le
@@ -9661,7 +9674,7 @@ function setupTarget() {
     $('#pcLibRefresh').addEventListener('click', () => askPcLib(true));
     $('#pcSetupBtn').addEventListener('click', () => openPcSetup());
     pcAudioStore.load().then(() => { renderPcView(); pcSync(); });
-    setInterval(() => pcSync(), 5 * 60e3);
+    setInterval(() => pcSync(), 15 * 60e3);
     try { navigator.storage?.persist?.(); } catch { /* le navigateur décide */ }
     const keyBtn = h('button', { type: 'button', class: 'link', id: 'keyBtn', onclick: openKeySettings }, ytKey() ? 'Clé YouTube' : 'Descriptions complètes (clé YouTube, facultatif)');
     $('.results-foot').append(keyBtn);
@@ -9672,9 +9685,9 @@ function setupTarget() {
     if (pc.info || Object.values(pc.queue).some((q) => q.state === 'sent')) listenPc();
     syncPcUi();
     // Le PC ne s'est pas signalé depuis longtemps (il ne prévient plus que les appareils utilisés) :
-    // on lui demande s'il est là, au plus toutes les 5 min. Sa réponse met « en ligne » à jour.
+    // on lui demande s'il est là, au plus toutes les 20 min (limite d'envois de ntfy.sh). Sa réponse met « en ligne » à jour.
     const askPc = () => {
-      if (!pc.info || pcOn() || Date.now() - (local.get('pcAskAt', 0) || 0) < 5 * 60e3) return;
+      if (!pc.info || pcOn() || Date.now() - (local.get('pcAskAt', 0) || 0) < 20 * 60e3) return;
       local.set('pcAskAt', Date.now());
       ntfyPublish({ ping: 1 }).catch(() => { /* hors ligne */ });
     };

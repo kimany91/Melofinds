@@ -580,7 +580,10 @@ class Remote:
 
     def __init__(self, st):
         self.st = st
-        self.queue = {}          # appareil → sons à lui envoyer (synchronisation du téléphone)
+        # appareil → sons à lui envoyer (synchronisation du téléphone) ; gardé dans l'état, pour
+        # qu'une version pas encore partie (limite de ntfy.sh) parte quand même après un redémarrage
+        sq = st.get("sync_q")
+        self.queue = {k: [x for x in v if isinstance(x, str)][:300] for k, v in sq.items() if isinstance(v, list)} if isinstance(sq, dict) else {}
         self.reported = {}       # appareil → dernier état de synchro annoncé
         self.blocked_until = 0.0
         self.kick = False
@@ -625,12 +628,21 @@ class Remote:
                 return t + 3 * 3600
         return now + 3 * 3600
 
-    def push_audio(self, code, it, f, auto=False):
+    def _save_queue(self):
+        self.st["sync_q"] = {k: v[:300] for k, v in self.queue.items() if v}
+
+    def later(self, code, fid):
+        """Son pas envoyé tout de suite (limite de ntfy.sh) : il passe en tête de la synchro."""
+        q = [x for x in self.queue.get(code, []) if x != fid]
+        self.queue[code] = [fid] + q[:299]
+        self._save_queue()
+
+    def push_audio(self, code, it, f, auto=False, keep=C.KEEP_FILL):
         """Copie d'écoute d'un son du projet, découpée en pièces jointes de 1,9 Mo."""
         """Renvoie "ok", "budget" (limite ntfy.sh : à refaire plus tard) ou "error"."""
         meta = {"aud": f["id"], "p": it.id, "n": f["name"][:140], "v": f["label"], "m": int(f["mtime"])}
         reserve = self.LIB_RESERVE if auto else 0  # la synchro laisse toujours de la place à la liste
-        if auto and not C.ntfy_room():  # assez d'envois aujourd'hui : la synchro reprend demain
+        if auto and not C.ntfy_room(keep=keep):  # plus assez d'envois aujourd'hui : ça repartira plus tard
             return "budget"
         if not self._budget(1_000_000 + reserve):
             if not auto:
@@ -677,6 +689,7 @@ class Remote:
             if isinstance(fid, str) and re.fullmatch(r"[a-f0-9]{12}", fid) and fid not in q:
                 q.append(fid)
         self.queue[code] = q[:300]
+        self._save_queue()
         self.kick = True
 
     def process_sync(self, devices):
@@ -693,14 +706,16 @@ class Remote:
                 if not hit or (rec and rec[0] >= int(hit[1]["mtime"]) and now - rec[1] < 2.5 * 3600):
                     q.pop(0)  # disparu, ou déjà envoyé il y a moins de 2 h 30 (encore sur ntfy)
                     continue
-                res = self.push_audio(code, hit[0], hit[1], auto=True)
+                newest = now - hit[1]["mtime"] < 3 * 86400  # version exportée ces 3 derniers jours : prioritaire
+                res = self.push_audio(code, hit[0], hit[1], auto=True, keep=C.KEEP_NEW if newest else C.KEEP_FILL)
                 if res == "budget":
                     self.blocked_until = max(self.blocked_until, self.next_free())
                     break
                 q.pop(0)
                 sent += 1
+            self.queue[code] = q
             state = (len(q), int(max(0, self.next_free() - now) // 600)) if q else (0, 0)
-            if state != self.reported.get(code, (0, 0)):
+            if state != self.reported.get(code, (0, 0)) and C.ntfy_room(keep=C.KEEP_LIB):
                 C.reply(code, {"sync": {"left": len(q), "wait": int(max(0, max(self.blocked_until, self.next_free()) - now)) if q else 0}})
                 self.reported[code] = state
 
@@ -820,7 +835,7 @@ class Remote:
             # à chaque changement : seulement aux appareils utilisés depuis 30 min (les autres la
             # demandent en ouvrant l'onglet PC) ; ntfy.sh limite les envois par jour
             active = now - self.active.get(code, 0) < 1800 or recently_used(st, code, 1800)
-            if not (code in self.want or (changed and active and C.ntfy_room() and (final or now - self.sent_at.get(code, 0) > 180))):
+            if not (code in self.want or (changed and active and C.ntfy_room(keep=C.KEEP_LIB) and (final or now - self.sent_at.get(code, 0) > 180))):
                 continue
             if C.publish_attachment(code, body, "projets.json", {"lib": 1, "n": len(lib["projects"]), "at": lib["at"]}):
                 self.sig[code], self.sent_at[code] = sig, now
@@ -830,6 +845,7 @@ class Remote:
         if not final:
             self.new_sounds(devices, fmap, now)
             self.process_sync(devices)
+            self._save_queue()
 
     def new_sounds(self, devices, fmap, now):
         """Sons apparus ou modifiés dans les projets (un export « Haze 1.3.4.wav »…) :
@@ -848,8 +864,9 @@ class Remote:
             if pushed.get(fid, 0) >= m or fid not in targets:  # déjà envoyé, ou pas la dernière version
                 continue
             it, f = fmap[fid]
-            for d in devices:
-                self.push_audio(d["code"], it, f, auto=True)
+            for d in devices:  # pas envoyé maintenant (limite) : gardé pour plus tard, pas oublié
+                if self.push_audio(d["code"], it, f, auto=True, keep=C.KEEP_NEW) == "budget":
+                    self.later(d["code"], fid)
         for fid, m in cur.items():  # sons anciens ou déjà connus : rien à envoyer
             if fid not in known and now - m >= 3 * 86400:
                 known[fid] = m
@@ -999,7 +1016,7 @@ def worker(once=False):
     announced = set()
     recent = []
     last_maint = time.time() - 6 * 3600 + 120  # 1re vérification de mise à jour 2 min après le démarrage
-    last_alive = time.time()
+    alive_at = {}  # appareil → dernier signe de vie bien arrivé à ntfy.sh
     last_cycle = time.time()
     log(f"Melofinds PC {C.VERSION} en ligne.")
     reason = ""
@@ -1047,12 +1064,22 @@ def worker(once=False):
                 for d in devices:
                     if d["code"] not in announced and C.reply(d["code"], {"pc": "online", "version": C.VERSION, "dossier": str(root), "name": d.get("name", "")}):
                         announced.add(d["code"])
+                        alive_at[d["code"]] = time.time()
                         remote.want.add(d["code"])  # la liste des projets part tout de suite
-                if time.time() - last_alive > 3000:
-                    last_alive = time.time()
-                    for d in devices:  # seulement aux appareils utilisés ces 3 derniers jours (limite d'envois)
-                        if recently_used(st, d["code"], 3 * 86400) and C.ntfy_room():
-                            C.reply(d["code"], {"pc": "alive", "version": C.VERSION})
+                # combien d'envois il reste aujourd'hui à cette connexion (téléphone compris)
+                left = C.ntfy_check()
+                if left is not None and left <= C.KEEP_FILL and not st.get("low_logged") == time.strftime("%Y-%m-%d"):
+                    st["low_logged"] = time.strftime("%Y-%m-%d")
+                    log(f"ntfy.sh : plus que {left} envois aujourd'hui pour ta connexion : on garde l'essentiel.")
+                # signe de vie toutes les 50 min (le téléphone affiche « hors ligne » après 1 h 50) ;
+                # réessayé 5 min plus tard s'il n'est pas parti. Prioritaire sur tout l'automatique.
+                for d in devices:  # seulement aux appareils utilisés ces 3 derniers jours (limite d'envois)
+                    code = d["code"]
+                    if code in announced and time.time() - alive_at.get(code, 0) > 3000 and recently_used(st, code, 3 * 86400) \
+                            and time.time() - alive_at.get(("try", code), 0) > 300 and C.ntfy_room(keep=C.KEEP_ALIVE):
+                        alive_at[("try", code)] = time.time()
+                        if C.reply(code, {"pc": "alive", "version": C.VERSION}):
+                            alive_at[code] = time.time()
                 if time.time() - last_maint > 6 * 3600 and not once:  # mises à jour : toutes les 6 h
                     last_maint = time.time()
                     C.update_ytdlp()

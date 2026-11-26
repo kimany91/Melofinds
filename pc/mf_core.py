@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.28.3"
+VERSION = "1.28.4"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -906,11 +906,16 @@ def outbox_take():
     return out
 
 
-# Envois à ntfy.sh comptés par jour (il limite les envois par connexion internet) : les envois
-# automatiques (synchro du téléphone, liste des projets, signes de vie) s'arrêtent bien avant la
-# limite, pour qu'il reste toujours de la place pour l'essentiel (prods, réponses à l'app).
+# Envois à ntfy.sh comptés par jour (il limite les envois par connexion internet, et le
+# téléphone sur le même Wi-Fi utilise la MÊME limite) : les envois automatiques s'arrêtent bien
+# avant, chacun avec sa réserve, pour qu'il reste toujours de la place pour l'essentiel.
+# Ordre de priorité : signe de vie > nouvelle version > liste des projets > rattrapage.
 NTFY_AUTO_MAX = 120
+KEEP_ALIVE, KEEP_NEW, KEEP_LIB, KEEP_FILL = 6, 25, 40, 70
 _ntfy = {"day": "", "n": 0, "blocked": 0.0}
+# Ce qu'il reste vraiment aujourd'hui sur cette connexion (ntfy.sh le dit : /v1/account),
+# téléphone compris. None : inconnu → on se fie au compteur du PC.
+_quota = {"left": None, "limit": None, "at": 0.0, "tried": 0.0}
 
 
 def _ntfy_load():
@@ -921,23 +926,59 @@ def _ntfy_load():
     return _ntfy
 
 
+def ntfy_check(every=300):
+    """Demande à ntfy.sh combien d'envois il reste aujourd'hui à cette connexion (une requête,
+    pas un envoi). Renvoie le nombre restant, ou None si ntfy.sh ne le dit pas."""
+    now = time.time()
+    if now - _quota["tried"] < every:
+        return _quota["left"] if now - _quota["at"] < 1800 else None
+    _quota["tried"] = now
+    try:
+        d = json.loads(http_get(f"{NTFY}/v1/account", timeout=10).decode("utf-8", "replace"))
+        left = int((d.get("stats") or {})["messages_remaining"])
+        limit = int((d.get("limits") or {}).get("messages") or 0) or None
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError, KeyError, TypeError, AttributeError) as e:
+        if limited(e):
+            _ntfy_load()["blocked"] = now + 600
+        return None
+    _quota.update(left=max(0, left), limit=limit, at=now)
+    return _quota["left"]
+
+
+def ntfy_left():
+    """Envois restants aujourd'hui (connexion entière), ou None si on ne sait pas."""
+    return _quota["left"] if time.time() - _quota["at"] < 1800 else None
+
+
 def ntfy_note(err=None):
     st = _ntfy_load()
     if err is not None:
         if limited(err):
             st["blocked"] = time.time() + 600  # ntfy.sh refuse : rien d'automatique pendant 10 min
+            if ntfy_left() is not None:
+                _quota["left"] = 0
         return
     st["n"] += 1
+    if _quota["left"]:
+        _quota["left"] -= 1
     try:
         _write_json(P.base / "ntfy-jour.json", {"day": st["day"], "n": st["n"]})
     except OSError:
         pass
 
 
-def ntfy_room(auto=True):
-    """Peut-on envoyer quelque chose d'automatique à ntfy.sh maintenant ?"""
+def ntfy_room(auto=True, keep=60):
+    """Peut-on envoyer quelque chose d'automatique à ntfy.sh maintenant ? `keep` : envois
+    gardés pour plus important (KEEP_ALIVE < KEEP_NEW < KEEP_LIB < KEEP_FILL)."""
     st = _ntfy_load()
-    return time.time() >= st["blocked"] and (not auto or st["n"] < NTFY_AUTO_MAX)
+    if time.time() < st["blocked"]:
+        return False
+    if not auto:
+        return True
+    left = ntfy_left()
+    if left is not None:
+        return left > keep
+    return st["n"] + keep < NTFY_AUTO_MAX + 60
 
 
 def reply(code, payload, timeout=15):

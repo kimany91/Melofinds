@@ -1005,6 +1005,26 @@ class EnvoiAutomatiqueALApp(EcouteEtGestionDepuisLApp):
         r.tick(self.devices(), mpc.load_config())
         self.assertEqual(len([1 for _, m, _ in self.files[n:] if "aud" in m]), 0)  # pas deux fois
 
+    def test_nouvelle_version_pas_oubliee_si_limite(self):
+        """ntfy.sh limite les envois (téléphone et PC sur le même Wi-Fi) : la nouvelle version
+        n'est pas perdue, elle part dès que c'est de nouveau possible, même après un redémarrage."""
+        r = W.Remote(mpc.load_state())
+        r.tick(self.devices(), mpc.load_config())
+        new = self.root / self.name / "Haze 1.4.wav"
+        new.write_bytes(fake_wav(1))
+        old = time.time() - 60
+        os.utime(new, (old, old))
+        r.checked = 0
+        with mock.patch.dict(mpc._quota, left=3, at=time.time()):
+            r.tick(self.devices(), mpc.load_config())
+        self.assertFalse([m for _, m, _ in self.files if "aud" in m])  # plus assez d'envois : rien
+        self.assertTrue(r.st["sync_q"][self.CODE])  # mais gardée pour plus tard
+        r2 = W.Remote(r.st)  # le PC redémarre
+        r2.tick(self.devices(), mpc.load_config())
+        sent = [m for _, m, _ in self.files if "aud" in m]
+        self.assertEqual({(m["n"], m["v"]) for m in sent}, {("Haze 1.4", "v1.4")})
+        self.assertFalse(r2.st.get("sync_q", {}).get(self.CODE))
+
     def test_versions_fl(self):
         self.assertEqual(L.version_of("Haze_2"), (2,))
         self.assertEqual(L.version_of("Haze_2 [C# min, 150 BPM]"), (2,))
@@ -1540,6 +1560,26 @@ class LimiteNtfy(unittest.TestCase):
         self.assertTrue(mpc.ntfy_room(auto=False))  # l'essentiel passe toujours
         mpc._ntfy.update(day="")
         self.assertFalse(mpc.ntfy_room())  # relu du fichier (redémarrage)
+
+    def test_reste_du_jour_dit_par_ntfy(self):
+        """Ce qu'il reste vraiment à la connexion (téléphone compris) : l'automatique passe par
+        ordre d'importance, le signe de vie en dernier recours."""
+        mpc._ntfy.update(day="", n=0, blocked=0.0)
+        acc = json.dumps({"limits": {"messages": 250}, "stats": {"messages": 220, "messages_remaining": 30}}).encode()
+        with mock.patch.dict(mpc._quota, left=None, at=0.0, tried=0.0), mock.patch.object(mpc, "http_get", lambda url, timeout=40: acc):
+            self.assertEqual(mpc.ntfy_check(), 30)
+            self.assertTrue(mpc.ntfy_room(keep=mpc.KEEP_ALIVE))
+            self.assertTrue(mpc.ntfy_room(keep=mpc.KEEP_NEW))
+            self.assertFalse(mpc.ntfy_room(keep=mpc.KEEP_LIB))
+            self.assertFalse(mpc.ntfy_room(keep=mpc.KEEP_FILL))
+            for _ in range(6):
+                mpc.ntfy_note()
+            self.assertFalse(mpc.ntfy_room(keep=mpc.KEEP_NEW))  # compté entre deux vérifications
+            self.assertEqual(mpc.ntfy_check(), 24)  # pas redemandé avant 5 min
+        with mock.patch.dict(mpc._quota, left=None, at=0.0, tried=0.0), \
+                mock.patch.object(mpc, "http_get", lambda url, timeout=40: (_ for _ in ()).throw(OSError("pas de réseau"))):
+            self.assertIsNone(mpc.ntfy_check())
+            self.assertTrue(mpc.ntfy_room())  # inconnu : compteur du PC
 
     def test_requete_multi_sujets(self):
         got = {}
