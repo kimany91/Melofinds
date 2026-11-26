@@ -643,12 +643,13 @@ class IGBrowser:
             raise PromoError("Edge ou Chrome introuvable sur ce PC")
         prof = ig_profile_dir()
         prof.mkdir(parents=True, exist_ok=True)
+        T.kill_profile(prof)
         pf = prof / "DevToolsActivePort"
         try:
             pf.unlink(missing_ok=True)
         except OSError:
             pass
-        self.proc = subprocess.Popen([browser, f"--user-data-dir={prof}", "--remote-debugging-port=0", "--no-first-run",
+        self.proc = subprocess.Popen([browser, f"--user-data-dir={prof}", "--remote-debugging-port=0", "--no-first-run", *T.NO_BACKGROUND,
                                       "--no-default-browser-check", f"--app={url}", "--window-size=520,900"],
                                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:

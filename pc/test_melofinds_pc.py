@@ -2438,13 +2438,30 @@ class RechercheDansLeLogiciel(unittest.TestCase):
         lst = [{"type": "page", "url": "edge://shopping-sidebar/", "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/A"},
                {"type": "service_worker", "url": "https://kimany91.github.io/Melofinds/sw.js", "webSocketDebuggerUrl": "ws://x/B"},
                {"type": "page", "url": "https://kimany91.github.io/Melofinds/#pair=x", "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/C"}]
-        with mock.patch("urllib.request.urlopen", lambda *a, **k: io.BytesIO(json.dumps(lst).encode())):
+        with mock.patch.object(E.T, "local_get", lambda *a, **k: json.dumps(lst).encode()):
             self.assertTrue(E.site_page(1)["webSocketDebuggerUrl"].endswith("/C"))
-        with mock.patch("urllib.request.urlopen", lambda *a, **k: io.BytesIO(json.dumps(lst[:1]).encode())), \
+        with mock.patch.object(E.T, "local_get", lambda *a, **k: json.dumps(lst[:1]).encode()), \
                 mock.patch.object(E.time, "sleep", lambda s: None):
             with self.assertRaises(E.EmbedError) as e:
                 E.site_page(1, seconds=0.01)
             self.assertIn("edge://shopping-sidebar", str(e.exception))
+
+    def test_edge_reste_ouvert_ferme_avant(self):
+        """Edge resté ouvert en arrière-plan sur le profil de la page : fermé (seulement lui)."""
+        E = self.E
+        calls = []
+
+        def run(args, **k):
+            calls.append(args)
+            return sp.CompletedProcess(args, 0, b"1234\r\n5678\r\n" if args[0] == "powershell" else b"", b"")
+        with mock.patch.object(E.T.C, "WINDOWS", True), mock.patch.object(E.T.subprocess, "run", run), \
+                mock.patch.object(E.T.time, "sleep", lambda s: None):
+            self.assertEqual(E.T.kill_profile(E.profile_dir()), 2)
+        self.assertIn(str(E.profile_dir().resolve()), calls[0][-1])  # filtré sur NOTRE profil
+        self.assertEqual([c[:3] for c in calls[1:]], [["taskkill", "/PID", "1234"], ["taskkill", "/PID", "5678"]])
+        a = E.launch_args("/x/msedge.exe", "https://x/")
+        self.assertIn("--disable-background-mode", a)  # Edge ne reste plus en arrière-plan
+        self.assertEqual(sum(1 for x in a if x.startswith("--disable-features=")), 1)  # une seule (sinon la 1re est ignorée)
 
     def test_hors_windows_erreur_propre(self):
         E = self.E

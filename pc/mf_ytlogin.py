@@ -84,7 +84,8 @@ def export_cookies(browser=None, extra_args=None, domains=DOMAINS, timeout=30, p
         port_file.unlink(missing_ok=True)
     except OSError:
         pass
-    proc = subprocess.Popen([browser, f"--user-data-dir={prof}", "--remote-debugging-port=0", "--headless=new",
+    T.kill_profile(prof)
+    proc = subprocess.Popen([browser, f"--user-data-dir={prof}", "--remote-debugging-port=0", "--headless=new", *T.NO_BACKGROUND,
                              "--no-first-run", "--no-default-browser-check", "about:blank", *(extra_args or [])],
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             creationflags=C.NO_WINDOW)
@@ -128,7 +129,8 @@ def connect(browser=None, wait=600):
         raise LoginError("Edge ou Chrome introuvable sur ce PC")
     prof = profile_dir()
     prof.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.Popen([browser, f"--user-data-dir={prof}", "--no-first-run", "--no-default-browser-check",
+    T.kill_profile(prof)
+    proc = subprocess.Popen([browser, f"--user-data-dir={prof}", "--no-first-run", "--no-default-browser-check", *T.NO_BACKGROUND,
                              f"--app={LOGIN_URL}", "--window-size=520,720"],
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:

@@ -94,11 +94,13 @@ jobs:
       - name: Recherche dans le logiciel (site Melofinds rangé dans la page Rechercher)
         shell: pwsh
         timeout-minutes: 4
+        env:
+          MELOFINDS_TEST_STALE: '1'  # un Edge déjà ouvert sur le profil de la page (comme chez certains)
         run: |
           $out = "$PWD\embed.json"
           $p = Start-Process -FilePath test\MelofindsPC\MelofindsPC.exe -ArgumentList '--embedtest', $out -PassThru
           $t = 0
-          while (-not (Test-Path $out) -and $t -lt 90) { Start-Sleep 1; $t++ }
+          while (-not (Test-Path $out) -and $t -lt 120) { Start-Sleep 1; $t++ }
           Start-Sleep 5
           Add-Type -AssemblyName System.Drawing
           $bmp = New-Object System.Drawing.Bitmap 1040, 700

@@ -15,7 +15,6 @@ import os
 import subprocess
 import threading
 import time
-import urllib.request
 
 import mf_core as C
 import mf_install as I
@@ -73,7 +72,7 @@ def launch_args(browser, url, x=None, y=None, w=1100, h=760):
     a = [browser, f"--user-data-dir={profile_dir()}", f"--app={url}", "--remote-debugging-port=0",
          "--no-first-run", "--no-default-browser-check", "--hide-crash-restore-bubble",
          "--disable-session-crashed-bubble", "--lang=fr", "--accept-lang=fr-FR,fr",
-         "--disable-features=Translate,msTranslateOnLoad", f"--window-size={max(200, int(w))},{max(200, int(h))}"]
+         "--disable-features=Translate,msTranslateOnLoad,msEdgeStartupBoost", *T.NO_BACKGROUND, f"--window-size={max(200, int(w))},{max(200, int(h))}"]
     if x is not None and y is not None:  # la fenêtre apparaît déjà à la place de la page
         a.append(f"--window-position={int(x)},{int(y)}")
     return a
@@ -102,13 +101,11 @@ def site_page(port, prefix=None, seconds=15):
     """La page du site Melofinds dans le navigateur (DevTools). Edge ouvre parfois d'autres pages
     cachées (pages intégrées d'Edge) : on prend celle dont l'adresse est le site, jamais la
     première venue."""
-    import urllib.request
     prefix = prefix or C.WEB_APP
     end, seen = time.time() + seconds, []
     while time.time() < end:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=3) as r:
-                targets = json.loads(r.read())
+            targets = json.loads(T.local_get(f"http://127.0.0.1:{port}/json/list"))
         except (OSError, ValueError):
             targets = []
         pages = [t for t in targets if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
@@ -205,12 +202,11 @@ class Panel:
         threading.Thread(target=self._start, args=(host_hwnd, screen_xy, size, browser, url), daemon=True).start()
 
     def _close_old(self):
-        """Un ancien navigateur de cette page encore ouvert (logiciel fermé brutalement) : fermé."""
+        """Un ancien Edge de cette page encore ouvert (logiciel fermé brutalement, ou Edge resté en
+        arrière-plan) : fermé, sinon il prendrait la nouvelle fenêtre (impossible à ranger)."""
         pf = profile_dir() / "DevToolsActivePort"
         try:
             port, bpath = pf.read_text(encoding="utf-8").splitlines()[:2]
-            with urllib.request.urlopen(f"http://127.0.0.1:{int(port)}/json/version", timeout=2):
-                pass
             b = T.CDP(f"ws://127.0.0.1:{int(port)}{bpath.strip()}")
             try:
                 b.ws.send(json.dumps({"id": 1, "method": "Browser.close"}))
@@ -220,6 +216,7 @@ class Panel:
             log("ancien navigateur de la page fermé")
         except Exception:
             pass
+        T.kill_profile(profile_dir())
         try:
             pf.unlink(missing_ok=True)
         except OSError:
@@ -242,6 +239,8 @@ class Panel:
             try:
                 self.port, self.bpath = T._wait_port(profile_dir() / "DevToolsActivePort", self.proc, 30)
             except T.TunebatError as e:
+                if self.proc.poll() == 0:  # lancement repris par un autre Edge ouvert sur ce profil
+                    raise EmbedError("un Edge déjà ouvert a pris la page : réessaie (il vient d'être fermé)")
                 raise EmbedError(str(e))
             hwnd, end = None, time.time() + 20
             while not hwnd and time.time() < end:
@@ -268,6 +267,7 @@ class Panel:
         except Exception as e:
             self._set("error", str(e)[:200])
             self.close()
+            T.kill_profile(profile_dir())  # pas de fenêtre Edge laissée par-dessus le logiciel
 
     def _attach(self, host):
         h = self.hwnd

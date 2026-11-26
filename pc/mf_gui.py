@@ -557,7 +557,19 @@ def run_embedtest(root, show, panel, out):
     res = {"version": C.VERSION}
     panel.online = False
     root.geometry("1040x700+40+40")
-    root.after(800, lambda: show("search"))
+    if os.environ.get("MELOFINDS_TEST_STALE") and E.WINDOWS:
+        # comme chez certains : un Edge resté ouvert (arrière-plan) sur le profil de la page
+        try:
+            b = T.find_browser()
+            E.profile_dir().mkdir(parents=True, exist_ok=True)
+            subprocess.Popen([b, f"--user-data-dir={E.profile_dir()}", "--no-first-run", "--no-default-browser-check",
+                              "--window-position=600,200", "--window-size=400,300", "about:blank"])
+            res["stale"] = True
+        except Exception as e:
+            res["stale"] = f"erreur {e}"
+        root.after(5000, lambda: show("search"))
+    else:
+        root.after(800, lambda: show("search"))
 
     def check():
         st = panel.state

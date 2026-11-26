@@ -54,6 +54,45 @@ def find_browser():
     return None
 
 
+# Adresses locales (DevTools sur 127.0.0.1) : jamais par le proxy de Windows (un proxy
+# réglé sur le PC, un VPN ou un antivirus les ferait échouer)
+_LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def local_get(url, timeout=3):
+    with _LOCAL.open(url, timeout=timeout) as r:
+        return r.read()
+
+
+# Edge peut rester ouvert en arrière-plan après la fermeture de sa fenêtre : le lancement
+# suivant serait alors pris par cet Edge-là (fenêtre impossible à retrouver et à piloter).
+NO_BACKGROUND = ["--disable-background-mode"]
+
+
+def kill_profile(profile):
+    """Ferme les navigateurs encore ouverts sur ce profil Melofinds (et seulement lui). Windows."""
+    if not C.WINDOWS:
+        return 0
+    prof = str(Path(profile).resolve()).replace("'", "''")
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name='msedge.exe' or Name='chrome.exe'\" | "
+          f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{prof}') }} | ForEach-Object {{ $_.ProcessId }}")
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], capture_output=True, timeout=25,
+                           creationflags=C.NO_WINDOW, stdin=subprocess.DEVNULL)
+        pids = [int(x) for x in r.stdout.decode("ascii", "ignore").split() if x.isdigit()]
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    for pid in pids:
+        try:
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=10, creationflags=C.NO_WINDOW)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if pids:
+        time.sleep(1.0)
+        C.log(f"Navigateur resté ouvert sur {Path(profile).name} : fermé ({len(pids)} processus)")
+    return len(pids)
+
+
 # ---------------------------------------------------------------------------
 # WebSocket minimal (bibliothèque standard) : juste ce qu'il faut pour DevTools
 
@@ -221,8 +260,7 @@ def _page(port, seconds=20):
     end = time.time() + seconds
     while time.time() < end:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=3) as r:
-                pages = [p for p in json.loads(r.read()) if p.get("type") == "page" and p.get("webSocketDebuggerUrl")]
+            pages = [p for p in json.loads(local_get(f"http://127.0.0.1:{port}/json/list")) if p.get("type") == "page" and p.get("webSocketDebuggerUrl")]
             if pages:
                 return pages[0]
         except (OSError, ValueError):
@@ -253,8 +291,7 @@ def profile_dir():
 
 def _targets(port):
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=3) as r:
-            return json.loads(r.read())
+        return json.loads(local_get(f"http://127.0.0.1:{port}/json/list"))
     except (OSError, ValueError):
         return []
 
@@ -282,7 +319,8 @@ def verify_window(url=ANALYZER, browser=None, wait=300, extra_args=None):
     if not browser:
         raise TunebatError("Edge ou Chrome introuvable sur ce PC")
     profile_dir().mkdir(parents=True, exist_ok=True)
-    proc = subprocess.Popen([browser, f"--user-data-dir={profile_dir()}", "--no-first-run", "--no-default-browser-check",
+    kill_profile(profile_dir())
+    proc = subprocess.Popen([browser, f"--user-data-dir={profile_dir()}", "--no-first-run", "--no-default-browser-check", *NO_BACKGROUND,
                              f"--app={url}", "--window-size=980,820", *(extra_args or [])],
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
@@ -331,8 +369,9 @@ def _run(wav, tag, step, timeout, url, browser, extra_args):
     with tempfile.TemporaryDirectory(prefix="melofinds-tb-", ignore_cleanup_errors=True) as tmp:
         f = Path(tmp) / name
         shutil.copyfile(src, f)
-        args = [browser, f"--user-data-dir={profile}", "--remote-debugging-port=0", "--no-first-run",
-                "--no-default-browser-check", "--disable-features=Translate", f"--app={url}",
+        kill_profile(profile)  # un Edge resté ouvert sur ce profil prendrait la fenêtre
+        args = [browser, f"--user-data-dir={profile}", "--remote-debugging-port=0", "--no-first-run", *NO_BACKGROUND,
+                "--no-default-browser-check", "--disable-features=Translate,msEdgeStartupBoost", f"--app={url}",
                 "--window-size=980,820", *(extra_args or [])]
         proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 creationflags=C.NO_WINDOW)
