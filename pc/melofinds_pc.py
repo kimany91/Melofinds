@@ -14,6 +14,7 @@ Voir mf_core.py pour la sécurité (envois signés, WAV seulement, un seul dossi
 
 import argparse
 import json
+import re
 import os
 import sys
 import tempfile
@@ -172,6 +173,28 @@ def promotest(out):
         t1 = time.time()
         r = PM.transcribe(song, 0, 12, None, lambda *a: None, lang="en")
         res["transcribe_s"] = round(time.time() - t1, 1)
+        # Précision : moment réel de chaque mot (donné par la voix de Windows) contre Whisper, sur le
+        # mix, sur la voix séparée, et sur la voix séparée avec recalage des mots
+        truth_file = os.environ.get("MELOFINDS_TEST_WORDS", "")
+        if truth_file and Path(truth_file).exists():
+            truth = [x for x in json.loads(Path(truth_file).read_text(encoding="utf-8-sig")) if x.get("w")]
+            truth = [{"w": re.sub(r"[^\w']", "", x["w"].lower()), "s": float(x["ms"]) / 1000 + 1.5} for x in truth]
+
+            def err(words):
+                got = [{"w": re.sub(r"[^\w']", "", w["w"].lower()), "s": w["s"]} for w in words]
+                d, k = [], 0
+                for t in truth:  # mot par mot, dans l'ordre (mots reconnus seulement)
+                    for j in range(k, min(k + 4, len(got))):
+                        if got[j]["w"] == t["w"]:
+                            d.append(abs(got[j]["s"] - t["s"]))
+                            k = j + 1
+                            break
+                return {"n": len(d), "moy": round(sum(d) / len(d), 3) if d else None, "pire": round(max(d), 3) if d else None}
+            variants = {"separee": r["words"]}
+            variants["mix"] = PM.transcribe(song, 0, 12, None, lambda *a: None, lang="en", isolate=False)["words"]
+            variants["separee_recalee"] = PM.transcribe(song, 0, 12, None, lambda *a: None, lang="en", snap=True)["words"]
+            res["precision"] = {k: err(v) for k, v in variants.items()}
+            res["voice"] = r.get("voice")
         res["words"], res["lines"], res["dtw_tokens"] = r["words"], r["lines"], r.get("dtw")
         t2 = time.time()
         vid = PM.render(bg, song, 0, 12, r["lines"], d / "promo.mp4", "impact")

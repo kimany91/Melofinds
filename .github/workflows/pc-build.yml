@@ -58,7 +58,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip wheel setuptools
           python -m pip install --no-binary pyinstaller pyinstaller==6.11.1
-          python -m pip install segno==1.6.6
+          python -m pip install segno==1.6.6 numpy==2.2.6 onnxruntime==1.22.1
           pyinstaller --version
 
       - name: Construire le programme (dossier)
@@ -66,7 +66,7 @@ jobs:
         run: |
           pyinstaller --noconfirm --onedir --noconsole --noupx --name MelofindsPC `
             --icon pc/assets/melofinds.ico --version-file build/version_info.txt `
-            --paths pc --hidden-import mf_gui --hidden-import mf_flmake --hidden-import mf_library --hidden-import mf_tunebat --hidden-import mf_ytlogin --hidden-import mf_keybpm --hidden-import mf_webwin --hidden-import mf_icons --hidden-import mf_embed --hidden-import mf_promo --hidden-import mf_promo_gui --hidden-import mf_logo --hidden-import segno pc/melofinds_pc.py
+            --paths pc --hidden-import mf_gui --hidden-import mf_flmake --hidden-import mf_library --hidden-import mf_tunebat --hidden-import mf_ytlogin --hidden-import mf_keybpm --hidden-import mf_webwin --hidden-import mf_icons --hidden-import mf_embed --hidden-import mf_promo --hidden-import mf_promo_gui --hidden-import mf_sep --collect-binaries onnxruntime --hidden-import mf_logo --hidden-import segno pc/melofinds_pc.py
           Get-ChildItem dist\MelofindsPC | Select-Object Name, Length
 
       - name: Outils inclus (yt-dlp, ffmpeg, Deno), empreintes vérifiées
@@ -130,10 +130,16 @@ jobs:
           $rel.assets | ForEach-Object { Write-Host "  $($_.name)  $($_.digest)" }
           Add-Type -AssemblyName System.Speech
           $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $s.Rate = 2
           $s.SetOutputToWaveFile("$PWD\voix.wav")
-          $s.Speak("She wants me to catch the vibe. I send the placements every night, no breaks.")
+          $global:mots = New-Object System.Collections.ArrayList
+          $s.add_SpeakProgress({ param($o, $e) [void]$global:mots.Add(@{ w = $e.Text; ms = $e.AudioPosition.TotalMilliseconds }) })
+          $s.Speak("She wants me to catch the vibe, I send the placements every night, no breaks, they talk but they don't know the plan.")
           $s.Dispose()
+          $global:mots | ConvertTo-Json | Set-Content -Encoding utf8 "$PWD\mots.json"
+          Write-Host "mots : $($global:mots.Count)"
           $env:MELOFINDS_TEST_SPEECH = "$PWD\voix.wav"
+          $env:MELOFINDS_TEST_WORDS = "$PWD\mots.json"
           $p = Start-Process -FilePath test\MelofindsPC\MelofindsPC.exe -ArgumentList '--promotest', "$PWD\promo.json" -Wait -PassThru
           if (Test-Path promo.json) { Get-Content promo.json } else { Write-Host "promo.json absent" }
           if (Test-Path promo.jpg) {

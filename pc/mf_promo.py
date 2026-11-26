@@ -460,24 +460,36 @@ def audio_duration(path):
     return round(d, 2) if d else None
 
 
-def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr", threads=None, mode="court"):
-    """Paroles de l'extrait [start, start+dur] : {words, lines} (temps depuis le début de l'extrait)."""
+def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr", threads=None, mode="court",
+               isolate=True, snap=False):
+    """Paroles de l'extrait [start, start+dur] : {words, lines} (temps depuis le début de l'extrait).
+
+    Whisper écoute TA VOIX SEULE : ta piste voix si tu l'as donnée, sinon ta voix séparée du beat
+    sur le PC (mf_sep). Chaque mot est ensuite recalé sur l'attaque réelle de ta voix."""
     say = progress or (lambda *_: None)
     exe, model = ensure_whisper(say)
     ffmpeg = C.tool_path("ffmpeg.exe")
     if not ffmpeg:
         raise PromoError("ffmpeg manquant")
-    src = Path(vocals or audio)
-    total = audio_duration(src) or 0
+    total = audio_duration(vocals or audio) or 0
     start = max(0.0, float(start or 0))
     dur = float(dur) if dur else max(1.0, total - start)
     pad = min(start, 1.0)
     with tempfile.TemporaryDirectory(prefix="melofinds-paroles-", ignore_cleanup_errors=True) as tmp:
+        voice, off, how = (Path(vocals), start - pad, "piste voix") if vocals else (Path(audio), start - pad, "mix")
+        if not vocals and isolate:
+            import mf_sep as S
+            if S.available():
+                try:
+                    voice = S.separate(audio, start - pad, dur + pad + 0.5, Path(tmp) / "voix.wav", say)
+                    off, how = 0.0, "voix séparée"
+                except Exception as e:  # séparation impossible : Whisper écoute le mix (moins précis)
+                    C.log(f"Promo : voix non séparée ({e})")
         wav = Path(tmp) / "extrait.wav"
-        # voix mise en avant (graves de la prod et aigus coupés), niveau égalisé
-        r = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start - pad:.3f}",
-                            "-t", f"{dur + pad + 0.5:.3f}", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000",
-                            "-af", "highpass=f=100,lowpass=f=7000,dynaudnorm=f=150", "-c:a", "pcm_s16le", str(wav)],
+        flt = "highpass=f=100,lowpass=f=7000,dynaudnorm=f=150" if how == "mix" else "highpass=f=70,dynaudnorm=f=150"
+        r = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{off:.3f}",
+                            "-t", f"{dur + pad + 0.5:.3f}", "-i", str(voice), "-vn", "-ac", "1", "-ar", "16000",
+                            "-af", flt, "-c:a", "pcm_s16le", str(wav)],
                            capture_output=True, timeout=300, creationflags=C.NO_WINDOW, stdin=subprocess.DEVNULL)
         if r.returncode != 0 or not wav.exists():
             raise PromoError(f"son illisible : {C.last_line(r.stderr)}")
@@ -496,18 +508,108 @@ def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr"
         if code != 0 or not out.exists():
             raise PromoError("transcription impossible : " + (tail[-1] if tail else f"code {code}"))
         data = json.loads(out.read_bytes().decode("utf-8", "surrogateescape"))
-    dtw = sum(1 for seg in data.get("transcription") or [] for t in seg.get("tokens") or []
-              if isinstance(t.get("t_dtw"), (int, float)) and t["t_dtw"] >= 0)
-    words = []
-    for w in words_from_json(data):
-        s, e = w["s"] - pad, w["e"] - pad
-        if e <= 0 or s >= dur:
-            continue
-        words.append({"w": w["w"], "s": round(max(0.0, s), 2), "e": round(min(dur, e), 2), "g": w.get("g", 0)})
+        dtw = sum(1 for seg in data.get("transcription") or [] for t in seg.get("tokens") or []
+                  if isinstance(t.get("t_dtw"), (int, float)) and t["t_dtw"] >= 0)
+        words = []
+        for w in words_from_json(data):
+            s, e = w["s"] - pad, w["e"] - pad
+            if e <= 0 or s >= dur:
+                continue
+            words.append({"w": w["w"], "s": round(max(0.0, s), 2), "e": round(min(dur, e), 2), "g": w.get("g", 0)})
+        if how != "mix" and snap:  # voix seule : chaque mot recalé sur l'attaque réelle de la voix
+            say("Calage des mots sur ta voix…", None)
+            words = snap_words(words, voice, off + pad, dur)
     lines = lines_from_words(words, mode)
-    if vocals:
-        lines = snap_to_voice(lines, vocals, start, dur)
-    return {"words": words, "lines": lines, "dur": round(dur, 2), "dtw": dtw}
+    return {"words": words, "lines": lines, "dur": round(dur, 2), "dtw": dtw, "voice": how}
+
+
+def _voice_env(voice, off, dur):
+    """Énergie de la voix (dB) toutes les 10 ms, à partir de `off` secondes dans le fichier."""
+    ffmpeg = C.tool_path("ffmpeg.exe")
+    if not ffmpeg:
+        return None
+    try:
+        r = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.0, off):.3f}", "-t", f"{dur + 0.5:.3f}",
+                            "-i", str(voice), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], capture_output=True, timeout=120,
+                           creationflags=C.NO_WINDOW, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    import array
+    import math
+    pcm = array.array("h")
+    pcm.frombytes(r.stdout[: len(r.stdout) // 2 * 2])
+    hop = 80
+    env = []
+    for i in range(0, len(pcm) - hop, hop):
+        e = sum(x * x for x in pcm[i:i + hop]) / hop
+        env.append(10 * math.log10(e + 1.0))
+    return env
+
+
+def snap_words(words, voice, off, dur, reach=0.22):
+    """Recale les mots sur les attaques de la voix seule (montées d'énergie). Mise en
+    correspondance globale dans l'ordre (programmation dynamique) : chaque mot prend une attaque
+    différente, la plus proche de son moment Whisper (±reach s) ; sinon il garde ce moment."""
+    env = _voice_env(voice, off, dur)
+    if not env or not words:
+        return words
+    srt = sorted(env)
+    floor, peak = srt[len(env) // 10], srt[int(len(env) * 0.95)]
+    if peak - floor < 12:  # pas de voix nette : on ne touche à rien
+        return words
+    strength = [0.0] * len(env)
+    for t in range(3, len(env)):
+        rise = env[t] - env[t - 3]
+        if rise > 4 and env[t] > floor + (peak - floor) * 0.3:
+            strength[t] = rise
+    cands = []  # attaques : maxima locaux, au moins 60 ms d'écart
+    for t in range(3, len(env) - 1):
+        if strength[t] > 0 and strength[t] >= strength[t - 1] and strength[t] >= strength[t + 1]:
+            if cands and t - cands[-1][0] < 6:
+                if strength[t] > cands[-1][1]:
+                    cands[-1] = (t, strength[t])
+                continue
+            cands.append((t, strength[t]))
+    times = [(t - 2) / 100 for t, _ in cands]  # début de la montée
+    n, m = len(words), len(times)
+    if not m:
+        return words
+    big = 10 ** 9
+    keep = reach * 0.9  # coût d'un mot laissé à son moment Whisper
+    # best[i][j] : coût minimal des i premiers mots en n'utilisant que les j premières attaques
+    best = [[0.0] * (m + 1)] + [[big] * (m + 1) for _ in range(n)]
+    how = [[None] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        ws = words[i - 1]["s"]
+        for j in range(0, m + 1):
+            c = best[i - 1][j] + keep  # mot non recalé
+            h = ("keep", j)
+            if j > 0:
+                c2 = best[i][j - 1]  # attaque j inutilisée
+                if c2 < c:
+                    c, h = c2, ("skip", j - 1)
+                d = abs(times[j - 1] - ws)
+                if d <= reach:
+                    c3 = best[i - 1][j - 1] + d - 0.01 * min(cands[j - 1][1], 20) / 20
+                    if c3 < c:
+                        c, h = c3, ("take", j - 1)
+            best[i][j], how[i][j] = c, h
+    out = [dict(w) for w in words]
+    i, j = n, m
+    while i > 0:
+        kind, jj = how[i][j]
+        if kind == "take":
+            out[i - 1]["s"] = round(max(0.0, times[jj]), 2)
+            i, j = i - 1, jj
+        elif kind == "skip":
+            j = jj
+        else:
+            i, j = i - 1, jj
+    for k in range(1, n):  # toujours dans l'ordre
+        out[k]["s"] = round(max(out[k]["s"], out[k - 1]["s"] + 0.05), 2)
+    for k in range(n - 1):
+        out[k]["e"] = max(out[k]["s"] + 0.05, min(out[k]["e"], out[k + 1]["s"]))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -740,6 +842,27 @@ def project_sounds(cfg=None):
         out.append({"title": it.title[:120], "key": it.key or "", "bpm": it.bpm or 0, "color": it.extra.get("color"),
                     "date": int(it.date or 0), "fl": bool(it.flp), "files": files[:40]})
     return out
+
+
+VOCAL_RE = re.compile(r"(?:^|[\s_\-.(\[])(voix|vocals?|vox|voc|acap+ella|a\s?cap+ella|lead|chant|rap)(?:$|[\s_\-.)\]\d])", re.I)
+
+
+def find_vocal_stem(audio):
+    """Ta piste voix exportée dans le même projet (« LESGUI voix.wav », « Lead Vocal.wav »…), la plus
+    récente, sinon None. Promo l'utilise toute seule : les paroles sont calées sur ta vraie voix."""
+    audio = Path(audio)
+    seen, found = set(), []
+    for d in {audio.parent, audio.parent.parent} if audio.parent.name.lower() in ("exports", "export", "stems", "bounces") else {audio.parent}:
+        try:
+            for p in d.rglob("*"):
+                if len(p.relative_to(d).parts) > 3 or p.suffix.lower() not in AUDIO_EXT or p == audio or p in seen:
+                    continue
+                seen.add(p)
+                if VOCAL_RE.search(p.stem) and not re.search(r"instru|beat|prod|sans voix|no vocal", p.stem, re.I):
+                    found.append(p)
+        except OSError:
+            continue
+    return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
 def frame_png(video, dest, w=270, h=480, at=1.0):

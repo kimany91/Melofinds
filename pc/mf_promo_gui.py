@@ -69,7 +69,7 @@ def build(ctx):
 
     cfg0 = C.load_config()
     st = {"projects": None, "q": "", "more": False, "audio": None, "title": "", "label": "", "voice": True, "dur_total": 0.0,
-          "vocals": None, "start": 0.0, "dur": 20, "lines": [], "words": [], "mode": cfg0.get("promo_mode", "court"), "visuals": None, "bg": None, "style": cfg0.get("promo_style", "impact"),
+          "vocals": None, "vocals_auto": False, "start": 0.0, "dur": 20, "lines": [], "words": [], "mode": cfg0.get("promo_mode", "court"), "visuals": None, "bg": None, "style": cfg0.get("promo_style", "impact"),
           "pos": cfg0.get("promo_pos", "centre"), "scale": float(cfg0.get("promo_scale", 1.0) or 1.0), "busy": None, "result": None,
           "ig_url": None, "accounts": list(cfg0.get("promo_accounts") or PM.ACCOUNTS), "tags": cfg0.get("promo_tags", DEFAULT_TAGS),
           "keep": cfg0.get("promo_keep_tags", True), "frame": None, "playing": False, "cur": -1, "thumbs": {}, "fonts": False}
@@ -290,8 +290,15 @@ def build(ctx):
     # ---------- 1. le son
     def set_audio(path, title, label_, voice):
         stop_play()
-        st.update(audio=Path(path), title=title, label=label_, voice=voice, lines=[], words=[], result=None, cur=-1, dur_total=0.0)
+        st.update(audio=Path(path), title=title, label=label_, voice=voice, lines=[], words=[], result=None, cur=-1, dur_total=0.0,
+                  vocals=None, vocals_auto=False)
         bg(lambda: PM.audio_duration(path) or 0.0, lambda d: (st.update(dur_total=d), render_sound()))
+
+        def stem(found):  # ta piste voix exportée dans le projet : utilisée toute seule
+            if found and st["audio"] == Path(path):
+                st.update(vocals=found, vocals_auto=True)
+                render_sound()
+        bg(lambda: PM.find_vocal_stem(path), stem)
         render_all()
 
     def render_sound():
@@ -331,10 +338,12 @@ def build(ctx):
             voc = tk.Frame(s_sound, bg=PANEL)
             voc.pack(fill="x", pady=(8, 0))
             if st["vocals"]:
-                label(voc, f"Voix seule : {Path(st['vocals']).name}", 9, FG).pack(side="left")
-                Btn(voc, "Retirer", lambda: (st.update(vocals=None), render_sound()), kind="subtle", padx=8, pady=0).pack(side="left")
+                label(voc, ("Ta piste voix trouvée : " if st.get("vocals_auto") else "Voix seule : ") + Path(st["vocals"]).name[:40],
+                      9, FG).pack(side="left")
+                Btn(voc, "Retirer", lambda: (st.update(vocals=None, vocals_auto=False), render_sound()), kind="subtle", padx=8, pady=0).pack(side="left")
             else:
-                Btn(voc, "+ Voix seule (facultatif, plus précis)", pick_vocals, kind="subtle", padx=0, pady=0).pack(side="left")
+                label(voc, "Ta voix sera séparée du beat sur le PC pour caler les paroles.", 9, MUTED).pack(side="left")
+                Btn(voc, "ou choisir ta piste voix…", pick_vocals, kind="subtle", padx=8, pady=0).pack(side="left")
             return
         label(s_sound, "Choisis la version de ton son (le .wav avec ta voix) : les paroles seront écrites à partir d'elle.", 9, MUTED,
               wrap=390).pack(anchor="w")

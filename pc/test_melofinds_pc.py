@@ -1747,6 +1747,39 @@ class Promo(unittest.TestCase):
         self.assertEqual(lines[1]["e"], 2.5)  # vrai silence avant « c » : gardé
         self.assertEqual(PG.description("LESGUI", "#rap rapfr", "psxsht"), "LESGUI\n\n#rap #rapfr\n\nvisuel : @psxsht")
 
+    def test_piste_voix_trouvee_dans_le_projet(self):
+        PM = self.PM
+        d = self.d / "Projets" / "LESGUI"
+        (d / "Exports").mkdir(parents=True)
+        for n in ("LESGUI 1.2.wav", "LESGUI instru.wav", "Exports/LESGUI voix.wav", "notes.txt"):
+            (d / n).write_bytes(b"x")
+        self.assertEqual(PM.find_vocal_stem(d / "LESGUI 1.2.wav").name, "LESGUI voix.wav")
+        (d / "Exports" / "LESGUI voix.wav").unlink()
+        self.assertIsNone(PM.find_vocal_stem(d / "LESGUI 1.2.wav"))
+
+    def test_separation_de_la_voix(self):
+        import mf_sep as S
+        if not S.available():
+            self.skipTest("numpy / onnxruntime absents")
+        import numpy as np
+        x = np.random.default_rng(1).standard_normal((2, S.HOP * (S.DIM_T - 1))).astype(np.float64)
+        win = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(S.N_FFT) / S.N_FFT)
+        y = S._istft(S._stft(x, win), win, x.shape[1])
+        self.assertLess(float(np.max(np.abs(y - x))), 1e-6)  # STFT / inverse exactes (comme le modèle les attend)
+        model = os.environ.get("MELOFINDS_SEP_MODEL", "")
+        if not (model and Path(model).exists()):
+            return
+        import subprocess as sp
+        mpc.P.tools.mkdir(parents=True, exist_ok=True)
+        (mpc.P.tools / "sep").mkdir(exist_ok=True)
+        shutil.copyfile(model, mpc.P.tools / "sep" / S.MODEL)
+        mix = self.d / "mix.wav"  # une « voix » (voyelle) sur un kick : la voix séparée garde la voyelle, pas le kick
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "aevalsrc=0.5*sin(2*PI*220*t)*(1+0.5*sin(2*PI*660*t))*between(t\\,2\\,4):d=6",
+                "-f", "lavfi", "-i", "aevalsrc=0.9*sin(2*PI*55*t)*exp(-10*mod(t\\,0.5)):d=6", "-filter_complex", "amix=2:normalize=0",
+                "-ac", "2", "-ar", "44100", str(mix)], check=True)
+        out = S.separate(mix, 0, 6, self.d / "voix.wav")
+        self.assertTrue(out.exists() and out.stat().st_size > 100_000)
+
     def test_visuels_gardes_avec_le_compte(self):
         PM = self.PM
         d = PM.visuals_dir()
