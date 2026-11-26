@@ -123,6 +123,14 @@ def _safe_member(name):
     return base if re.fullmatch(r"[\w.+-]{1,80}\.(?:exe|dll)", base, re.I) else None
 
 
+def pick_whisper_asset(assets):
+    """Le .zip Windows 64 bits « processeur » de la version officielle (pas CUDA / BLAS)."""
+    ok = [a for a in assets if isinstance(a, dict) and re.fullmatch(r"whisper-bin-x64\.zip", str(a.get("name") or ""))]
+    ok = ok or [a for a in assets if isinstance(a, dict) and re.fullmatch(r"whisper-[\w.-]*bin[\w.-]*x64[\w.-]*\.zip", str(a.get("name") or ""), re.I)
+                and not re.search(r"cublas|cuda|blas|vulkan|arm", str(a.get("name") or ""), re.I)]
+    return ok[0] if ok else None
+
+
 def ensure_whisper(progress=None):
     """whisper.cpp (version officielle pour Windows) + modèle large-v3-turbo. Lève PromoError."""
     say = progress or (lambda *_: None)
@@ -133,13 +141,27 @@ def ensure_whisper(progress=None):
             raise PromoError("whisper-cli introuvable")
         say("Téléchargement du moteur de paroles (whisper.cpp)…")
         try:
-            rel = _json(WHISPER_API)
+            rels = [_json(WHISPER_API)]
         except (urllib.error.URLError, OSError, ValueError) as e:
             raise PromoError(f"whisper.cpp introuvable ({e})")
-        asset = next((a for a in rel.get("assets") or [] if a.get("name") == WHISPER_ASSET), None)
-        digest = str((asset or {}).get("digest") or "")
-        if not asset or not digest.startswith("sha256:"):
-            raise PromoError("whisper.cpp : fichier ou empreinte officielle introuvable")
+        rel = asset = None
+        for i in range(2):  # la dernière version, sinon la plus récente qui a le fichier Windows et son empreinte
+            for r in rels:
+                a = pick_whisper_asset(r.get("assets") or [])
+                if a and str(a.get("digest") or "").startswith("sha256:") and not r.get("prerelease") and not r.get("draft"):
+                    rel, asset = r, a
+                    break
+            if asset or i:
+                break
+            try:
+                rels = _json(WHISPER_API.replace("/latest", "?per_page=10"))
+            except (urllib.error.URLError, OSError, ValueError):
+                break
+        if not asset:
+            last = rels[0] if rels else {}
+            names = ", ".join(f"{a.get('name')}{'' if a.get('digest') else ' (sans empreinte)'}" for a in last.get("assets") or [])[:400]
+            raise PromoError(f"whisper.cpp {last.get('tag_name')} : fichier Windows ou empreinte introuvable ({names})")
+        digest = str(asset.get("digest"))
         with tempfile.TemporaryDirectory(prefix="melofinds-whisper-", ignore_cleanup_errors=True) as tmp:
             z = Path(tmp) / WHISPER_ASSET
             got = C.download_file(asset["browser_download_url"], z, say, "whisper.cpp")

@@ -123,6 +123,9 @@ jobs:
         shell: pwsh
         timeout-minutes: 20
         run: |
+          $rel = Invoke-RestMethod -Uri https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest -Headers @{ Authorization = "Bearer ${{ github.token }}" }
+          Write-Host "whisper.cpp $($rel.tag_name)"
+          $rel.assets | ForEach-Object { Write-Host "  $($_.name)  $($_.digest)" }
           Add-Type -AssemblyName System.Speech
           $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
           $s.SetOutputToWaveFile("$PWD\voix.wav")
