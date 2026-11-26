@@ -7,6 +7,7 @@ import os, sys
 os.environ.setdefault("MELOFINDS_HOME", tempfile.mkdtemp(prefix="mf-test-"))
 sys.path.insert(0, str(Path(__file__).parent))
 import mf_core as mpc
+os.environ["MELOFINDS_QUOTA"] = "0"  # le vrai reste du jour de ntfy.sh ne doit pas jouer sur les tests
 import mf_install as inst
 KEY = "ab" * 32
 
@@ -1566,7 +1567,8 @@ class LimiteNtfy(unittest.TestCase):
         ordre d'importance, le signe de vie en dernier recours."""
         mpc._ntfy.update(day="", n=0, blocked=0.0)
         acc = json.dumps({"limits": {"messages": 250}, "stats": {"messages": 220, "messages_remaining": 30}}).encode()
-        with mock.patch.dict(mpc._quota, left=None, at=0.0, tried=0.0), mock.patch.object(mpc, "http_get", lambda url, timeout=40: acc):
+        with mock.patch.dict(mpc._quota, left=None, at=0.0, tried=0.0), mock.patch.object(mpc, "http_get", lambda url, timeout=40: acc), \
+                mock.patch.dict(os.environ, MELOFINDS_QUOTA=""):
             self.assertEqual(mpc.ntfy_check(), 30)
             self.assertTrue(mpc.ntfy_room(keep=mpc.KEEP_ALIVE))
             self.assertTrue(mpc.ntfy_room(keep=mpc.KEEP_NEW))
@@ -1577,7 +1579,8 @@ class LimiteNtfy(unittest.TestCase):
             self.assertFalse(mpc.ntfy_room(keep=mpc.KEEP_NEW))  # compté entre deux vérifications
             self.assertEqual(mpc.ntfy_check(), 24)  # pas redemandé avant 5 min
         with mock.patch.dict(mpc._quota, left=None, at=0.0, tried=0.0), \
-                mock.patch.object(mpc, "http_get", lambda url, timeout=40: (_ for _ in ()).throw(OSError("pas de réseau"))):
+                mock.patch.object(mpc, "http_get", lambda url, timeout=40: (_ for _ in ()).throw(OSError("pas de réseau"))), \
+                mock.patch.dict(os.environ, MELOFINDS_QUOTA=""):
             self.assertIsNone(mpc.ntfy_check())
             self.assertTrue(mpc.ntfy_room())  # inconnu : compteur du PC
 

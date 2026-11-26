@@ -930,6 +930,8 @@ def ntfy_check(every=300):
     """Demande à ntfy.sh combien d'envois il reste aujourd'hui à cette connexion (une requête,
     pas un envoi). Renvoie le nombre restant, ou None si ntfy.sh ne le dit pas."""
     now = time.time()
+    if os.environ.get("MELOFINDS_QUOTA") == "0":  # tests : jamais le vrai ntfy.sh
+        return None
     if now - _quota["tried"] < every:
         return _quota["left"] if now - _quota["at"] < 1800 else None
     _quota["tried"] = now
