@@ -96,6 +96,23 @@ avec toujours un bouton « YouTube » pour ouvrir la vidéo.
   ton navigateur) pour lire toutes les descriptions et les likes. Quota : environ
   25 recherches par jour et par clé.
 
+## Lecteur sans pub (version web, téléphone, fenêtre du PC)
+
+Le son de la prod est lu directement (flux audio via Piped, logiciel libre déjà utilisé pour
+la recherche) dans un lecteur audio du site : pas de pub YouTube. Ce lecteur répond aux mêmes
+commandes que le lecteur YouTube (lecture, pause, avance, volume, boucle, Rec), donc tout le
+reste du site marche pareil. Si Piped ne répond pas (5 s) ou que le son ne se lit pas, le site
+repasse tout seul sur le lecteur YouTube intégré (avec ses pubs) et réessaie Piped 20 min plus
+tard.
+
+## Envois vers le PC et limite de ntfy.sh
+
+ntfy.sh (relais gratuit) limite les requêtes et les envois **par connexion internet**. Le PC
+interroge tous ses appareils en **une seule requête** par tour, n'envoie la liste des projets à
+chaque changement qu'aux appareils utilisés depuis 30 min, et son signe de vie qu'aux appareils
+utilisés ces 3 derniers jours. Si ntfy.sh demande quand même de ralentir (429), le site le dit
+(au lieu de « Pas de réseau ») et renvoie la prod tout seul une à deux minutes plus tard.
+
 ## Écoute téléphone verrouillé (version web)
 
 Sur mobile : commandes sur l'écran verrouillé quand le téléphone les propose, tentative

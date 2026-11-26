@@ -1329,7 +1329,99 @@ function destroyFrame() {
   Object.assign(player, { frame: null, ready: false, loadedVid: null, state: -1 });
 }
 
+// ---------------------------------------------------------------------------
+// Lecteur SANS PUB : le son de la prod est lu directement (flux audio via Piped, logiciel
+// libre déjà utilisé pour la recherche), dans un <audio> qui parle comme le lecteur YouTube
+// (mêmes commandes, mêmes états) : tout le reste du site marche pareil. Si Piped ne répond
+// pas ou que le son ne se lit pas, on repasse tout seul sur le lecteur YouTube intégré.
+const adFreeOn = () => local.get('adFree', true) !== false;
+const adFreeCache = new Map(); // vid → { url, at }
+async function adFreeSrc(vid) {
+  const c = adFreeCache.get(vid);
+  if (c && Date.now() - c.at < 2 * 3600e3) return c.url;
+  const bad = local.get('adFreeDown', 0) || 0;
+  if (Date.now() - bad < 20 * 60e3) throw new Error('piped indisponible');
+  const t0 = Date.now();
+  const { body } = await Promise.race([pipedGet(`/streams/${vid}`, { stick: false, only: local.get('pipedGood', null) || undefined }).catch(() => pipedGet(`/streams/${vid}`, { stick: false })),
+    new Promise((_, no) => setTimeout(() => no(new Error('trop lent')), 5000))]);
+  const list = (Array.isArray(body?.audioStreams) ? body.audioStreams : []).filter((a) => a && /^https:\/\//.test(String(a.url || '')));
+  const probe = document.createElement('audio');
+  const can = (a) => !a.mimeType || probe.canPlayType(String(a.mimeType).split(';')[0]) !== '';
+  // m4a d'abord (lu partout, iPhone compris), le meilleur débit ensuite
+  const best = list.filter(can).sort((a, b) => (/mp4/.test(b.mimeType) - /mp4/.test(a.mimeType)) || ((b.bitrate || 0) - (a.bitrate || 0)))[0];
+  if (!best) throw new Error('pas de son');
+  adFreeCache.set(vid, { url: best.url, at: Date.now() });
+  if (Date.now() - t0 > 6000) local.set('adFreeSlow', Date.now());
+  return best.url;
+}
+function adFreeFrame(vid) {
+  const a = new Audio();
+  a.preload = 'metadata';
+  a.setAttribute('playsinline', '');
+  let ended = false;
+  let gone = false;
+  const fake = { adFree: true, vid, audio: a, contentWindow: null, remove() { gone = true; try { a.pause(); a.removeAttribute('src'); a.load(); } catch { /* rien */ } } };
+  const live = () => player.frame === fake && !gone;
+  const stateNow = () => (ended ? 0 : a.paused ? (a.currentTime > 0 ? 2 : 5) : a.readyState < 3 ? 3 : 1);
+  const info = () => { if (live()) ytEvent({ event: 'infoDelivery', info: { playerState: stateNow(), currentTime: a.currentTime || 0, duration: Number.isFinite(a.duration) ? a.duration : 0 } }); };
+  ['playing', 'pause', 'waiting', 'timeupdate', 'loadedmetadata', 'seeked'].forEach((ev) => a.addEventListener(ev, () => { if (ev === 'playing') ended = false; info(); }));
+  a.addEventListener('ended', () => { ended = true; info(); });
+  // son illisible (lien expiré, serveur Piped en panne) : lecteur YouTube à la place
+  a.addEventListener('error', () => { if (live() && a.getAttribute('src')) fallBack(fake.vid); });
+  const load = async (id, play) => {
+    fake.vid = id;
+    ended = false;
+    try {
+      const url = await adFreeSrc(id);
+      if (gone || fake.vid !== id) return;
+      a.src = url;
+      if (play) a.play().catch(() => info());
+      if (live() && !player.ready) ytEvent({ event: 'onReady' });
+      info();
+    } catch {
+      if (!gone && fake.vid === id && player.frame === fake) fallBack(id);
+    }
+  };
+  const fallBack = (id) => {
+    if (!adFreeCache.has(id)) local.set('adFreeDown', Date.now());
+    adFreeCache.delete(id);
+    const want = Boolean(player.item) && !player.userPaused;
+    player.ready = false;
+    createYtFrame(id, want);
+  };
+  fake.contentWindow = {
+    postMessage(msg) {
+      let d;
+      try { d = typeof msg === 'string' ? JSON.parse(msg) : msg; } catch { return; }
+      const args = d?.args || [];
+      switch (d?.func) {
+        case 'playVideo': if (a.getAttribute('src')) { if (ended) { a.currentTime = 0; ended = false; } a.play().catch(() => info()); } break;
+        case 'pauseVideo': a.pause(); break;
+        case 'stopVideo': a.pause(); try { a.currentTime = 0; } catch { /* pas chargé */ } break;
+        case 'seekTo': try { a.currentTime = Math.max(0, Number(args[0]) || 0); ended = false; } catch { /* pas chargé */ } info(); break;
+        case 'setVolume': a.volume = Math.max(0, Math.min(1, (Number(args[0]) || 0) / 100)); break;
+        case 'loadVideoById': load(String(args[0] || ''), true); break;
+        default: break;
+      }
+    },
+  };
+  fake.load = load;
+  return fake;
+}
+
 function createFrame(vid, autoplay) {
+  if (adFreeOn() && Date.now() - (local.get('adFreeDown', 0) || 0) > 20 * 60e3) {
+    destroyFrame();
+    const f = adFreeFrame(vid);
+    player.frame = f;
+    player.loadedVid = vid;
+    f.load(vid, false);  // prêt dès que le son est trouvé ; startVideo lance la lecture
+    return;
+  }
+  createYtFrame(vid, autoplay);
+}
+
+function createYtFrame(vid, autoplay) {
   destroyFrame();
   const params = new URLSearchParams({ autoplay: autoplay ? '1' : '0', enablejsapi: '1', controls: '0', playsinline: '1', rel: '0', iv_load_policy: '3', fs: '0', disablekb: '1' });
   if (location.origin && location.origin !== 'null') params.set('origin', location.origin);
@@ -1535,11 +1627,14 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('message', (e) => {
-  if (!player.frame || e.source !== player.frame.contentWindow) return;
+  if (!player.frame || player.frame.adFree || e.source !== player.frame.contentWindow) return;
   if (!/^https:\/\/(?:www\.)?youtube(?:-nocookie)?\.com$/.test(e.origin)) return;
   let d = e.data;
   if (typeof d === 'string') { try { d = JSON.parse(d); } catch { return; } }
   if (!d || typeof d !== 'object') return;
+  ytEvent(d);
+});
+function ytEvent(d) {
   if (d.event === 'onReady' || d.event === 'initialDelivery') onPlayerReady();
   if ((d.event === 'infoDelivery' || d.event === 'initialDelivery') && d.info && typeof d.info === 'object') {
     const i = d.info;
@@ -1553,7 +1648,7 @@ window.addEventListener('message', (e) => {
   if (player.state !== player.prevState) { const was = player.prevState; player.prevState = player.state; onStateChanged(was, player.state); }
   if (isPlaying() && player.status !== 'blocked') player.status = 'ready';
   if (player.item) renderMini();
-});
+}
 
 let miniHideTimer = null;
 let msTick = 0;
