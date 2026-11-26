@@ -1696,6 +1696,17 @@ class Promo(unittest.TestCase):
         self.assertTrue(out[0]["files"][0]["latest"] and out[0]["files"][0]["voice"])
         self.assertFalse(out[0]["files"][-1]["voice"])
 
+    def test_page_promo_du_logiciel(self):
+        import mf_promo_gui as PG
+        self.assertEqual(PG.parse_time("1:02.5"), 62.5)
+        self.assertEqual(PG.parse_time("3,2"), 3.2)
+        self.assertIsNone(PG.parse_time("abc"))
+        lines = PG.norm_lines([{"t": "b", "s": 2.0, "e": 2.5}, {"t": "a", "s": 0.5, "e": 1.0}, {"t": "c", "s": 9.0, "e": 9.1}], 10)
+        self.assertEqual([x["t"] for x in lines], ["a", "b", "c"])
+        self.assertEqual(lines[0]["e"], 2.0)  # pas de trou entre deux phrases proches
+        self.assertEqual(lines[1]["e"], 2.5)  # vrai silence avant « c » : gardé
+        self.assertEqual(PG.description("LESGUI", "#rap rapfr", "psxsht"), "LESGUI\n\n#rap #rapfr\n\nvisuel : @psxsht")
+
     def test_visuels_gardes_avec_le_compte(self):
         PM = self.PM
         d = PM.visuals_dir()

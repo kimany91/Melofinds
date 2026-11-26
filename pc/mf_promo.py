@@ -594,6 +594,43 @@ def description(title, tags, user="", extra=""):
     return "\n\n".join(parts)
 
 
+def project_sounds(cfg=None):
+    """Tous tes projets FL, chacun avec ses sons : tes versions (avec ta voix) de la plus récente
+    à la plus ancienne, tes exports, puis l'instru (sans voix) en dernier."""
+    import mf_library as L
+    cfg = cfg if cfg is not None else C.load_config()
+    out = []
+    for it in L.scan_projects(cfg)[:600]:
+        af = [f for f in L.audio_files(it, 120) if f["kind"] != "fl" and f["ext"] in ("wav", "mp3", "m4a", "flac", "ogg")]
+        if not af:
+            continue
+        vers = sorted((f for f in af if f["kind"] == "version"), key=lambda f: f["ver"], reverse=True)
+        exps = sorted((f for f in af if f["kind"] == "export"), key=lambda f: -f["mtime"])
+        ins = [f for f in af if f["instru"]]
+        files = []
+        for f in vers + exps + ins:
+            label = f["label"] or (f["name"][:50] if f["kind"] == "export" else "Instru")
+            files.append({"path": Path(f["path"]), "label": label, "kind": f["kind"], "ext": f["ext"],
+                          "voice": not f["instru"], "latest": bool(f.get("latest")), "date": int(f["mtime"])})
+        out.append({"title": it.title[:120], "key": it.key or "", "bpm": it.bpm or 0, "color": it.extra.get("color"),
+                    "date": int(it.date or 0), "fl": bool(it.flp), "files": files[:40]})
+    return out
+
+
+def frame_png(video, dest, w=270, h=480, at=1.0):
+    """Image du visuel recadrée en portrait (PNG : lisible par la fenêtre du logiciel)."""
+    ffmpeg = C.tool_path("ffmpeg.exe")
+    if not ffmpeg:
+        return None
+    for t in (at, 0):
+        r = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{t:.2f}", "-i", str(video),
+                            "-frames:v", "1", "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}", str(dest)],
+                           capture_output=True, timeout=60, creationflags=C.NO_WINDOW, stdin=subprocess.DEVNULL)
+        if r.returncode == 0 and Path(dest).exists():
+            return Path(dest)
+    return None
+
+
 def new_token():
     return secrets.token_hex(12)
 
@@ -809,24 +846,9 @@ class Service:
         raise PromoError("commande inconnue")
 
     def projects(self, cfg):
-        """Tous tes projets FL, chacun avec ses sons : tes versions (avec ta voix) de la plus récente
-        à la plus ancienne, tes exports, puis l'instru (sans voix) en dernier."""
-        import mf_library as L
-        out = []
-        for it in L.scan_projects(cfg)[:600]:
-            af = [f for f in L.audio_files(it, 120) if f["kind"] != "fl" and f["ext"] in ("wav", "mp3", "m4a", "flac", "ogg")]
-            if not af:
-                continue
-            vers = sorted((f for f in af if f["kind"] == "version"), key=lambda f: f["ver"], reverse=True)
-            exps = sorted((f for f in af if f["kind"] == "export"), key=lambda f: -f["mtime"])
-            ins = [f for f in af if f["instru"]]
-            files = []
-            for f in vers + exps + ins:
-                label = f["label"] or (f["name"][:50] if f["kind"] == "export" else "Instru")
-                files.append({**self.media(f["path"]), "label": label, "kind": f["kind"], "ext": f["ext"],
-                              "voice": not f["instru"], "latest": bool(f.get("latest")), "date": int(f["mtime"])})
-            out.append({"title": it.title[:120], "key": it.key or "", "bpm": it.bpm or 0, "color": it.extra.get("color"),
-                        "date": int(it.date or 0), "fl": bool(it.flp), "files": files[:40]})
+        out = project_sounds(cfg)
+        for p in out:
+            p["files"] = [{**{k: v for k, v in f.items() if k != "path"}, **self.media(f["path"])} for f in p["files"]]
         return out
 
     def close(self):

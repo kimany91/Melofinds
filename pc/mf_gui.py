@@ -326,6 +326,14 @@ class Player:
         if was == "playing":
             self._cmd("play mfplay")
 
+    def play_at(self, path, seconds):
+        """Joue le son à partir de `seconds` (aperçu Promo)."""
+        ok = self.play(path)
+        if ok and seconds > 0:
+            self._cmd(f"seek mfplay to {int(seconds * 1000)}")
+            self._cmd("play mfplay")
+        return ok
+
     def stop(self):
         if self.path:
             self._cmd("close mfplay")
@@ -599,22 +607,11 @@ def run_embedtest(root, show, panel, out):
                         res["parent_ok"] = bool(ctypes.windll.user32.GetParent(panel.hwnd))
                 except Exception as e:
                     res["page"] = f"erreur {e}"
-            if st == "ready":  # bouton « Promo » du logiciel : la page Promo du site s'affiche
-                show("promo")
-                root.after(3000, finish)
-            else:
-                finish()
+            finish()
             return
         root.after(500, check)
 
     def finish():
-        if panel.state == "ready":
-            try:
-                r3 = panel._eval("JSON.stringify({promo: document.querySelector('#view-promo').classList.contains('active'),"
-                                 "search: document.querySelector('#view-search').classList.contains('active')})")
-                res["promo_view"] = json.loads(r3) if isinstance(r3, str) else r3
-            except Exception as e:
-                res["promo_view"] = f"erreur {e}"
         try:
             res["log"] = [x for x in C.P.log.read_text(encoding="utf-8", errors="replace").splitlines() if "[recherche]" in x][-12:]
         except OSError:
@@ -988,7 +985,7 @@ def manager_window(selftest=False, embedtest=None):
             if k != key:
                 f.place_forget()
         f, t, s = pages[key]
-        if key in ("search", "promo"):
+        if key == "search":
             head.pack_forget()
         elif not head.winfo_ismapped():
             head.pack(fill="x", before=body)
@@ -1003,7 +1000,7 @@ def manager_window(selftest=False, embedtest=None):
         if slide["job"]:
             root.after_cancel(slide["job"])
             slide["job"] = None
-        t0, start = time.time(), (0 if same or key in ("search", "promo") else 28)
+        t0, start = time.time(), (0 if same or key == "search" else 28)
 
         def step():
             k = min(1.0, (time.time() - t0) / 0.18)
@@ -1029,7 +1026,6 @@ def manager_window(selftest=False, embedtest=None):
     web_btns.pack()
     panel = E.Panel()
     web = {"seen": None, "preload": None}
-    pages["promo"] = (s_outer, "Promo", "")
 
     # Promo : le site demande un fichier → fenêtre de choix de Windows (dans le fil de Tk)
     ui_q = queue.Queue()
@@ -1098,7 +1094,7 @@ def manager_window(selftest=False, embedtest=None):
         if st == "ready" and not panel.alive():  # navigateur fermé : on le relance à la prochaine visite
             panel.state = "idle"
             st = "idle"
-            if current["page"] in ("search", "promo"):
+            if current["page"] == "search":
                 web_start()
         if (st, panel.detail) != web["seen"]:
             web["seen"] = (st, panel.detail)
@@ -1113,8 +1109,17 @@ def manager_window(selftest=False, embedtest=None):
         panel.open_view(view)
         root.after(200, panel.focus)
     on_show["search"] = lambda: open_view("search")
-    on_show["promo"] = lambda: open_view("promo")
     web_poll()
+
+    # ================= Promo : page du logiciel (sans navigateur), voir mf_promo_gui
+    import types
+    import mf_promo_gui as PG
+    on_close = []
+    PG.build(types.SimpleNamespace(
+        tk=tk, root=root, page=page, Btn=Btn, card=card, label=label, entry=entry, scroll_area=scroll_area, Bar=Bar, toast=toast,
+        PLAYER=PLAYER, filedialog=filedialog, messagebox=messagebox, on_show=on_show, on_close=on_close, open_path=_open_path,
+        colors={"BG": BG, "PANEL": PANEL, "PANEL2": PANEL2, "PANEL3": PANEL3, "FG": FG, "MUTED": MUTED, "FAINT": FAINT,
+                "ACCENT": ACCENT, "LINE": LINE, "FONT": FONT, "MONO": MONO}))
 
     # ================= Accueil
     home = page("home", "File d'attente", "Les prods envoyées depuis Melofinds Web : celle qui arrive, celles qui attendent, "
@@ -2586,6 +2591,11 @@ def manager_window(selftest=False, embedtest=None):
     root.bind("<Configure>", lambda e: e.widget is root and current["page"] in nav_items and move_indicator(current["page"], instant=True), add="+")
     tick_player()
     def quit_all():
+        for fn in on_close:
+            try:
+                fn()
+            except Exception:
+                pass
         panel.service.close()
         panel.close()
         root.destroy()
@@ -2596,7 +2606,7 @@ def manager_window(selftest=False, embedtest=None):
         root.mainloop()
         return
     if selftest:
-        for k in ("home", "prods", "flmake", "devices", "settings"):
+        for k in ("home", "prods", "flmake", "devices", "settings", "promo"):
             show(k)
             root.update()
         root.destroy()

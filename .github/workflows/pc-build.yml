@@ -66,7 +66,7 @@ jobs:
         run: |
           pyinstaller --noconfirm --onedir --noconsole --noupx --name MelofindsPC `
             --icon pc/assets/melofinds.ico --version-file build/version_info.txt `
-            --paths pc --hidden-import mf_gui --hidden-import mf_flmake --hidden-import mf_library --hidden-import mf_tunebat --hidden-import mf_ytlogin --hidden-import mf_keybpm --hidden-import mf_webwin --hidden-import mf_icons --hidden-import mf_embed --hidden-import mf_promo --hidden-import mf_logo --hidden-import segno pc/melofinds_pc.py
+            --paths pc --hidden-import mf_gui --hidden-import mf_flmake --hidden-import mf_library --hidden-import mf_tunebat --hidden-import mf_ytlogin --hidden-import mf_keybpm --hidden-import mf_webwin --hidden-import mf_icons --hidden-import mf_embed --hidden-import mf_promo --hidden-import mf_promo_gui --hidden-import mf_logo --hidden-import segno pc/melofinds_pc.py
           Get-ChildItem dist\MelofindsPC | Select-Object Name, Length
 
       - name: Outils inclus (yt-dlp, ffmpeg, Deno), empreintes vérifiées
@@ -119,7 +119,6 @@ jobs:
           if (Test-Path $out) { Get-Content $out } else { Write-Host "embed.json absent" }
           $r = Get-Content $out -Raw | ConvertFrom-Json
           if (-not $r.bridge.ok -or $r.bridge.bytes -ne 5004 -or -not $r.bridge.promo) { Write-Error "Pont Promo (site ↔ logiciel) raté"; exit 1 }
-          if (-not $r.promo_view.promo -or $r.promo_view.search) { Write-Error "Le bouton Promo du logiciel n'affiche pas la page Promo"; exit 1 }
           if ($r.state -ne 'ready' -or -not $r.parent_ok -or -not $r.fit) { Write-Error "Le site ne s'est pas rangé dans la page Rechercher"; exit 1 }
 
       - name: Promo (paroles avec Whisper + vidéo 1080x1920)

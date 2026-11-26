@@ -227,7 +227,8 @@ ouvre le site dans Chrome) :
 
 ## Promo : vidéo TikTok / Reels avec tes paroles (Melofinds PC)
 
-Dans Melofinds PC, **Promo** (menu de gauche) :
+Dans Melofinds PC, **Promo** (menu de gauche) est une page du logiciel lui-même (pas de
+navigateur ; seule la fenêtre Instagram en est un) :
 
 1. **Ton son** : un son de tes projets FL (ou un fichier), le début et la durée de l'extrait
    (10 à 60 s). Facultatif : la **voix seule** (export de ta piste voix) pour des paroles
@@ -243,12 +244,12 @@ Dans Melofinds PC, **Promo** (menu de gauche) :
    (lien choisi par toi, yt-dlp ; si Instagram demande d'être connecté, connecte-toi dans
    cette fenêtre). Le nom du compte est gardé pour la mention.
 4. **Le style** : Impact, Pixel ou Gras (polices libres OFL), en haut / au milieu / en bas,
-   taille réglable. L'aperçu à droite montre la vidéo avec les paroles en direct.
+   taille réglable. L'aperçu à droite (image du visuel) joue le son avec les paroles en direct.
 5. **La vidéo** : 1080x1920, 30 i/s, H.264 + AAC, dans `Promo/Vidéos` du dossier des projets.
 6. **La description** à copier : titre, tes # (« Toujours mettre ces # » les garde) et
    `visuel : @compte` à la fin.
 
-Fichiers : `pc/mf_promo.py` (paroles, sous-titres, vidéo, visuels), pont site ↔ logiciel
+Fichiers : `pc/mf_promo.py` (paroles, sous-titres, vidéo, visuels), `pc/mf_promo_gui.py` (la page), pont site ↔ logiciel
 dans `pc/mf_embed.py` (le site n'appelle le PC que dans la fenêtre du logiciel, les fichiers
 ne sont désignés que par des jetons donnés par le PC). Vérifié à chaque construction sur
 Windows : vraie voix sur un beat → paroles datées → vidéo (image dans le journal de la CI).
