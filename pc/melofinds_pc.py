@@ -145,6 +145,53 @@ def selftest(out):
     return 0 if res["ok"] else 1
 
 
+def promotest(out):
+    """Test Promo (construction sur GitHub, Windows) : moteur de paroles officiel téléchargé,
+    une voix sur un beat → paroles datées → vidéo 1080x1920 ; une image de la vidéo pour la vérifier."""
+    import subprocess
+    import time
+    import mf_promo as PM
+    res = {"version": C.VERSION}
+    t0 = time.time()
+    try:
+        PM.ensure_whisper(lambda *a: None)
+        PM.ensure_fonts()
+        res["ready"] = PM.ready()
+        res["install_s"] = round(time.time() - t0, 1)
+        speech = os.environ.get("MELOFINDS_TEST_SPEECH", "")
+        ff = C.tool_path("ffmpeg.exe")
+        d = Path(tempfile.mkdtemp(prefix="melofinds-promotest-"))
+        song, bg = d / "son.wav", d / "visuel.mp4"
+        # la voix arrive à 1,5 s, sur un beat (kick + basse) : comme un vrai morceau
+        subprocess.run([ff, "-loglevel", "error", "-y", "-i", speech, "-f", "lavfi", "-i", "sine=frequency=55:duration=14",
+                        "-f", "lavfi", "-i", "aevalsrc=0.6*sin(2*PI*60*t)*exp(-12*mod(t\\,0.43)):d=14",
+                        "-filter_complex", "[0:a]adelay=1500|1500,volume=1.6[v];[1:a]volume=0.25[b];[2:a]volume=0.5[k];[v][b][k]amix=3:duration=longest[o]",
+                        "-map", "[o]", "-ar", "44100", str(song)], check=True, timeout=120)
+        subprocess.run([ff, "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=720x1280:rate=30", "-t", "3", str(bg)],
+                       check=True, timeout=120)
+        t1 = time.time()
+        r = PM.transcribe(song, 0, 12, None, lambda *a: None, lang="en")
+        res["transcribe_s"] = round(time.time() - t1, 1)
+        res["words"], res["lines"] = r["words"], r["lines"]
+        t2 = time.time()
+        vid = PM.render(bg, song, 0, 12, r["lines"], d / "promo.mp4", "impact")
+        res["render_s"] = round(time.time() - t2, 1)
+        at = (r["lines"][0]["s"] + 0.3) if r["lines"] else 2
+        frame = Path(out).with_suffix(".jpg")
+        subprocess.run([ff, "-loglevel", "error", "-y", "-ss", f"{at:.2f}", "-i", str(vid), "-frames:v", "1", "-vf", "scale=270:-2",
+                        "-q:v", "5", str(frame)], timeout=60)
+        res["video"] = {"bytes": vid.stat().st_size, "frame": str(frame)}
+        first = r["words"][0]["s"] if r["words"] else -1
+        res["first_word_s"] = first
+        res["ok"] = bool(r["lines"]) and 1.0 <= first <= 2.4  # la voix commence à 1,5 s
+    except Exception as e:
+        import traceback
+        res["ok"] = False
+        res["err"] = traceback.format_exc()[-1500:]
+    Path(out).write_text(json.dumps(res, indent=1, ensure_ascii=False), encoding="utf-8")
+    return 0 if res["ok"] else 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Melofinds PC : reçoit les prods envoyées depuis Melofinds Web.")
     ap.add_argument("--background", action="store_true", help="être en ligne (reçoit les prods), sans fenêtre")
@@ -159,12 +206,15 @@ def main(argv=None):
     ap.add_argument("--dossier", help="dossier des prods")
     ap.add_argument("--une-fois", action="store_true", help="vérifier une fois puis quitter (test)")
     ap.add_argument("--selftest", metavar="FICHIER", help="vérification automatique")
-    ap.add_argument("--embedtest", metavar="FICHIER", help=argparse.SUPPRESS)  # test : site dans la page Rechercher
+    ap.add_argument("--embedtest", metavar="FICHIER", help=argparse.SUPPRESS)
+    ap.add_argument("--promotest", metavar="FICHIER", help=argparse.SUPPRESS)  # test : paroles + vidéo Promo  # test : site dans la page Rechercher
     args = ap.parse_args(argv)
     P.set(C.resolve_install_dir())
 
     if args.selftest:
         return selftest(args.selftest)
+    if args.promotest:
+        return promotest(args.promotest)
     if args.embedtest:
         import mf_gui as G
         G.manager_window(selftest=True, embedtest=args.embedtest)

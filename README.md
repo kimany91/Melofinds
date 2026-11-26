@@ -225,6 +225,34 @@ ouvre le site dans Chrome) :
   gel de la fenêtre) ; un dossier qui contient plusieurs chansons (« FL STUDIO PROJECT » de FL)
   donne **une chanson = un projet**, avec ses versions.
 
+## Promo : vidéo TikTok / Reels avec tes paroles (Melofinds PC)
+
+Dans Melofinds PC, **Promo** (menu de gauche) :
+
+1. **Ton son** : un son de tes projets FL (ou un fichier), le début et la durée de l'extrait
+   (10 à 60 s). Facultatif : la **voix seule** (export de ta piste voix) pour des paroles
+   encore plus justes.
+2. **Les paroles** : écrites automatiquement par **Whisper** (OpenAI, MIT) via whisper.cpp
+   (MIT), **sur ton PC** (rien n'est envoyé). Modèle large-v3-turbo, téléchargé une fois
+   (~550 Mo) depuis les dépôts officiels et vérifié (empreinte publiée). Chaque mot est daté
+   (alignement DTW) ; une phrase reste à l'écran jusqu'à la suivante (pas de trou). Tu peux
+   corriger le texte, recaler une ligne (±0,1 s), en ajouter ou en retirer.
+3. **Le visuel** : ta vidéo, ou une vidéo Instagram. Les comptes de visualizers
+   (otisaltaiexp, godhandusa, psxsht, violetnmarlowne, et ceux que tu ajoutes) s'ouvrent
+   dans une fenêtre Instagram normale où tu choisis ; « Utiliser cette vidéo » la télécharge
+   (lien choisi par toi, yt-dlp ; si Instagram demande d'être connecté, connecte-toi dans
+   cette fenêtre). Le nom du compte est gardé pour la mention.
+4. **Le style** : Impact, Pixel ou Gras (polices libres OFL), en haut / au milieu / en bas,
+   taille réglable. L'aperçu à droite montre la vidéo avec les paroles en direct.
+5. **La vidéo** : 1080x1920, 30 i/s, H.264 + AAC, dans `Promo/Vidéos` du dossier des projets.
+6. **La description** à copier : titre, tes # (« Toujours mettre ces # » les garde) et
+   `visuel : @compte` à la fin.
+
+Fichiers : `pc/mf_promo.py` (paroles, sous-titres, vidéo, visuels), pont site ↔ logiciel
+dans `pc/mf_embed.py` (le site n'appelle le PC que dans la fenêtre du logiciel, les fichiers
+ne sont désignés que par des jetons donnés par le PC). Vérifié à chaque construction sur
+Windows : vraie voix sur un beat → paroles datées → vidéo (image dans le journal de la CI).
+
 ## Bouton « BPM » : Tunebat Analyzer
 
 Quand la description ne donne pas le BPM ou la clé, chaque prod a un petit bouton **BPM** :

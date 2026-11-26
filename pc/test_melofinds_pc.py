@@ -1,4 +1,5 @@
 import contextlib
+import shutil
 import hashlib, hmac, importlib.util, json, re, tempfile, time, unittest
 from pathlib import Path
 
@@ -1453,6 +1454,155 @@ class LimiteNtfy(unittest.TestCase):
         self.assertFalse(W.recently_used(st, "b", 3 * 86400))
         self.assertFalse(W.recently_used(st, "c", 3 * 86400))
         self.assertFalse(W.recently_used(None, "a", 3 * 86400))
+
+
+class Promo(unittest.TestCase):
+    """Onglet Promo : paroles (Whisper) → sous-titres sans trou, vidéo, visuels, pont avec le site."""
+
+    def setUp(self):
+        import mf_promo as PM
+        self.PM = PM
+        self.d = Path(tempfile.mkdtemp(prefix="mf-promo-"))
+        mpc.P.set(self.d)
+        cfg = mpc.load_config()
+        cfg["dossier"] = str(self.d / "Projets")
+        cfg.setdefault("flmake", {})["dossier"] = str(self.d / "Projets")
+        mpc.save_config(cfg)
+
+    @staticmethod
+    def tok(text, t_ms, dtw=None, to=None):
+        return {"text": text, "offsets": {"from": t_ms, "to": to if to is not None else t_ms + 200}, "t_dtw": dtw if dtw is not None else -1}
+
+    def test_mots_depuis_whisper(self):
+        PM = self.PM
+        data = {"transcription": [
+            {"text": " Elle veut que j'la capte", "tokens": [self.tok("[_BEG_]", 0), self.tok(" Elle", 100, 12), self.tok(" veut", 400, 41),
+                                                         self.tok(" que", 700, 70), self.tok(" j", 900, 92), self.tok("'la", 1000, 99),
+                                                         self.tok(" capte", 1100, 112), self.tok("[_TT_60]", 1500)]},
+            {"text": " Sous-titres réalisés par la communauté d'Amara.org", "tokens": [self.tok(" Sous", 5000), self.tok("-titres", 5200)]}]}
+        w = PM.words_from_json(data)
+        self.assertEqual([x["w"] for x in w], ["Elle", "veut", "que", "j'la", "capte"])  # « j » + « 'la » réunis, hallucination retirée
+        self.assertAlmostEqual(w[0]["s"], 0.12)  # moment DTW (centièmes de seconde)
+        self.assertTrue(all(a["s"] <= b["s"] for a, b in zip(w, w[1:])))
+        self.assertTrue(all(x["e"] > x["s"] for x in w))
+
+    def test_accents_coupes_entre_jetons(self):
+        PM = self.PM
+        raw = '{"transcription":[{"text":" x","tokens":[{"text":" d\u00e9j","offsets":{"from":0,"to":100},"t_dtw":0},{"text":"\u00e0","offsets":{"from":100,"to":200},"t_dtw":10}]}]}'
+        self.assertEqual(PM.words_from_json(json.loads(raw))[0]["w"], "déjà")
+
+    def test_lignes_sans_trou(self):
+        PM = self.PM
+        words = [{"w": w, "s": s, "e": s + 0.25} for w, s in
+                 [("Elle", 0.1), ("veut", 0.35), ("que", 0.6), ("j'la", 0.8), ("capte", 1.0), ("lesgui", 1.3),
+                  ("avec", 1.9), ("les", 2.1), ("placements,", 2.3), ("j'envoie", 5.5), ("des", 5.8)]]
+        lines = PM.lines_from_words(words)
+        self.assertGreaterEqual(len(lines), 3)
+        self.assertTrue(all(len(l["t"]) <= 30 for l in lines))
+        for a, b in zip(lines, lines[1:]):
+            gap = b["s"] - a["e"]
+            self.assertGreaterEqual(gap, -1e-9)
+            # pas de trou entre deux phrases proches ; un vrai silence (3 s) laisse l'écran vide
+            if b["s"] - a["s"] < 2.5:
+                self.assertAlmostEqual(gap, 0, places=2)
+        self.assertEqual(lines[0]["s"], 0.1)  # la 1re phrase arrive au moment exact du 1er mot
+        self.assertNotIn(",", lines[-2]["t"][-1:])  # ponctuation de fin retirée
+        self.assertLess(lines[-2]["e"], 5.5)  # long silence : la ligne part avant
+
+    def test_lignes_corrigees_rangees(self):
+        PM = self.PM
+        out = PM.clean_lines([{"t": "b", "s": 2, "e": 9}, {"t": "a", "s": 0.5, "e": 3}, {"t": "", "s": 1, "e": 2}, {"t": "trop tard", "s": 40, "e": 41},
+                              "x", {"t": "c", "s": "?", "e": 1}], dur=10)
+        self.assertEqual([x["t"] for x in out], ["a", "b"])
+        self.assertEqual(out[0]["e"], 2)  # coupé au début de la suivante
+        self.assertEqual(out[1]["e"], 9)
+
+    def test_sous_titres_ass(self):
+        PM = self.PM
+        ass = PM.make_ass([{"t": "Elle veut que {j'la} capte", "s": 0.1, "e": 1.25}], "impact", "bas")
+        self.assertIn("PlayResX: 1080", ass)
+        self.assertIn("Style: Promo,Anton,150,", ass)
+        self.assertIn("Dialogue: 0,0:00:00.10,0:00:01.25,Promo", ass)
+        self.assertIn("ELLE VEUT QUE (J'LA) CAPTE", ass)  # majuscules, accolades neutralisées
+        self.assertIn(",2,90,90,430,1", ass)  # en bas
+        self.assertIn("j'envoie", PM.make_ass([{"t": "J'ENVOIE", "s": 0, "e": 1}], "pixel").split("\n")[-2])
+
+    def test_description(self):
+        PM = self.PM
+        d = PM.description("LESGUI", ["rap", "#rapfr", "#spotify", "#rap", "#"], "@godhandusa")
+        self.assertEqual(d, "LESGUI\n\n#rap #rapfr #spotify\n\nvisuel : @godhandusa")
+
+    def test_liens_instagram(self):
+        PM = self.PM
+        self.assertEqual(PM.ig_shortcode("https://www.instagram.com/reel/C9xYz_12AbC/?igsh=abc"), "C9xYz_12AbC")
+        self.assertEqual(PM.ig_shortcode("https://instagram.com/p/AbCdEf123/"), "AbCdEf123")
+        self.assertEqual(PM.ig_shortcode("https://www.instagram.com/godhandusa/reel/AbCdEf123/"), "AbCdEf123")
+        for bad in ("https://www.instagram.com/godhandusa/", "https://evil.com/reel/AbCdEf123/", "javascript:alert(1)",
+                    "https://www.instagram.com/reel/AbCdEf123/ && calc"):
+            self.assertIsNone(PM.ig_shortcode(bad), bad)
+        with self.assertRaises(PM.PromoError):
+            PM.ig_download("https://www.instagram.com/godhandusa/")
+
+    def test_le_site_ne_donne_jamais_de_chemin(self):
+        PM = self.PM
+        song = self.d / "son.wav"
+        song.write_bytes(fake_wav(2))
+        svc = PM.Service(ask_file=lambda kind: str(song))
+        got = svc.call("pick", {"kind": "audio"}, lambda *a: None)
+        self.assertRegex(got["token"], r"^[a-f0-9]{24}$")
+        self.assertEqual(svc.path_of(got["token"]), song)
+        for bad in ("../../Windows/system32", str(song), "", None):
+            with self.assertRaises(PM.PromoError):
+                svc.path_of(bad)
+        with self.assertRaises(PM.PromoError):  # un son n'est pas un visuel
+            svc.call("render", {"audio": got["token"], "bg": got["token"], "lines": []}, lambda *a: None)
+        with self.assertRaises(PM.PromoError):
+            svc.call("rm -rf", {}, lambda *a: None)
+        svc2 = PM.Service(ask_file=lambda kind: str(self.d / "x.exe"))
+        with self.assertRaises(PM.PromoError):
+            svc2.call("pick", {"kind": "audio"}, lambda *a: None)
+        self.assertIsNone(PM.Service(ask_file=lambda kind: None).call("pick", {"kind": "video"}, lambda *a: None))
+
+    def test_visuels_gardes_avec_le_compte(self):
+        PM = self.PM
+        d = PM.visuals_dir()
+        d.mkdir(parents=True)
+        (d / "godhandusa - AbC.mp4").write_bytes(b"x")
+        PM._save_visual({"file": "godhandusa - AbC.mp4", "thumb": "", "user": "godhandusa", "url": "u", "code": "AbC", "at": 5})
+        PM._save_visual({"file": "absent.mp4", "thumb": "", "user": "", "url": "", "code": "", "at": 9})
+        self.assertEqual([v["user"] for v in PM.visuals()], ["godhandusa"])  # fichier absent : ignoré
+        svc = PM.Service()
+        vs = svc.call("visuals", {}, lambda *a: None)
+        self.assertEqual(vs[0]["user"], "godhandusa")
+        self.assertEqual(svc.path_of(vs[0]["token"]), d / "godhandusa - AbC.mp4")
+        self.assertTrue(PM.remove_visual("godhandusa - AbC.mp4"))
+        self.assertFalse((d / "godhandusa - AbC.mp4").exists())
+        self.assertFalse(PM.remove_visual("../config.json"))
+
+    def test_morceaux_de_fichier(self):
+        import mf_embed as E
+        self.assertEqual(E.parse_range("bytes=0-", 10_000_000), (0, E.CHUNK - 1))
+        self.assertEqual(E.parse_range("bytes=100-199", 1000), (100, 199))
+        self.assertEqual(E.parse_range("bytes=-100", 1000), (900, 999))
+        self.assertIsNone(E.parse_range("bytes=5000-", 1000))
+        self.assertIsNone(E.parse_range("octets=1-2", 1000))
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg absent")
+    def test_video_finale(self):
+        import subprocess as sp
+        PM = self.PM
+        bg, song = self.d / "bg.mp4", self.d / "son.wav"
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "2", str(bg)], check=True)
+        sp.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=330:duration=10", str(song)], check=True)
+        with mock.patch.object(PM, "ensure_fonts", lambda *a: PM.fonts_dir()):
+            out = PM.render(bg, song, 2, 5, [{"t": "Elle veut que j'la capte", "s": 0.2, "e": 2}], self.d / "o" / "promo.mp4", "pixel")
+        r = sp.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,width,height", "-of", "csv=p=0", str(out)],
+                   capture_output=True, text=True)
+        self.assertIn("h264,1080,1920", r.stdout)  # visuel en boucle, recadré en portrait
+        self.assertIn("aac", r.stdout)
+        dur = float(sp.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
+                           capture_output=True, text=True).stdout)
+        self.assertAlmostEqual(dur, 5, delta=0.2)
 
 
 class DescriptionsPourLApp(unittest.TestCase):

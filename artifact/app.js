@@ -130,7 +130,7 @@ const LIMITS = () => (WEB
 // ---------------------------------------------------------------------------
 // Navigation
 
-const VIEWS = ['search', 'saved', 'history', ...(window.MF_TARGET === 'web' ? ['recs', 'pc', 'phone'] : [])];
+const VIEWS = ['search', 'saved', 'history', ...(window.MF_TARGET === 'web' ? ['recs', 'pc', 'phone', 'promo'] : [])];
 function showView(name) {
   if (!VIEWS.includes(name)) name = 'search';
   $$('.nav-item').forEach((t) => { const on = t.dataset.view === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
@@ -141,6 +141,7 @@ function showView(name) {
   if (name === 'recs') renderRecs();
   if (name === 'pc') { listenPc(); renderPcView(); askPcLib(); }
   if (name === 'phone') phoneRefresh();
+  if (name === 'promo') renderPromo();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 $$('.nav-item').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
@@ -5567,6 +5568,367 @@ function setupTarget() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Promo (dans Melofinds PC) : vidéo TikTok / Reels avec tes paroles en sous-titres, calées
+// mot à mot (Whisper sur le PC), sur le visuel choisi (ta vidéo ou une vidéo Instagram),
+// et la description à copier (tes # et « visuel : @compte »). Le PC fait le travail lourd
+// (transcription, vidéo) : cet onglet n'existe que dans la fenêtre du logiciel.
+
+const PROMO_STYLE_PX = { impact: 150, pixel: 72, bold: 92 };
+const PROMO_DURS = [10, 15, 20, 30, 45, 60];
+const promo = {
+  hello: null, projects: null, visuals: null, audio: null, vocals: null, start: 0, dur: 20, lines: [], bg: null,
+  style: local.get('promoStyle', 'impact'), pos: local.get('promoPos', 'centre'), scale: Number(local.get('promoScale', 1)) || 1,
+  job: null, result: null, igUrl: null, desc: null,
+  tags: local.get('promoTags', ['#rap', '#rapfr', '#spotify']), keepTags: local.get('promoKeepTags', true) !== false,
+  accounts: local.get('promoAccounts', null), raf: 0, cur: -1,
+};
+const prFill = (el, ...k) => el.replaceChildren(...k.flat().filter((x) => x != null && x !== false));
+const pcBridge = () => (typeof window.mfPc === 'object' && window.mfPc ? window.mfPc : null);
+const prUrl = (token) => pcBridge()?.url(token) || '';
+const fmtSec = (t) => { t = Math.max(0, Number(t) || 0); return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}.${Math.floor((t % 1) * 10)}`; };
+const parseSec = (s) => { const m = String(s || '').trim().match(/^(?:(\d+):)?(\d+(?:[.,]\d+)?)$/); return m ? (Number(m[1] || 0) * 60 + Number(m[2].replace(',', '.'))) : null; };
+
+async function prCall(cmd, args, label) {
+  const b = pcBridge();
+  if (!b) throw new Error('Ouvre Promo depuis Melofinds PC');
+  if (label) { promo.job = { cmd, text: label, pct: null }; renderPromoJob(); }
+  try { return await b.call(cmd, args || {}); } finally { if (label && promo.job?.cmd === cmd) { promo.job = null; renderPromoJob(); } }
+}
+
+function promoInit() {
+  const b = pcBridge();
+  if (!b || promo.hello) return;
+  $('#navPromo').hidden = false;
+  b.on((e) => {
+    if (e?.type === 'progress' && promo.job && e.cmd === promo.job.cmd) { promo.job.text = e.text || promo.job.text; promo.job.pct = e.pct; renderPromoJob(); }
+    if (e?.type === 'open' && e.view) showView(e.view);
+    if (e?.type === 'ig-url') { promo.igUrl = e.url || null; renderPromoVisual(); }
+  });
+  b.call('hello').then((r) => {
+    promo.hello = r;
+    if (!promo.accounts) promo.accounts = (r.accounts || []).slice();
+    if (r.view) showView(r.view);
+  }).catch(() => {});
+}
+window.addEventListener('mfpc-ready', promoInit);
+
+function renderPromo() {
+  const root = $('#promoRoot');
+  if (!root) return;
+  if (!pcBridge()) {
+    prFill(root, h('div', { class: 'pr-card' }, h('h3', {}, 'Promo se fait dans Melofinds PC'),
+      h('p', { class: 'muted' }, 'Ouvre Melofinds PC, puis « Promo » dans le menu : le PC écrit les paroles de ton son (mot à mot) et crée la vidéo avec le visuel.')));
+    return;
+  }
+  if (root.dataset.built) { renderPromoAll(); return; }
+  root.dataset.built = '1';
+  prFill(root, 
+    h('div', { class: 'pr-cols' },
+      h('div', { class: 'pr-steps' },
+        h('div', { class: 'pr-card', id: 'prSound' }), h('div', { class: 'pr-card', id: 'prLyrics' }),
+        h('div', { class: 'pr-card', id: 'prVisual' }), h('div', { class: 'pr-card', id: 'prStyle' }),
+        h('div', { class: 'pr-card', id: 'prExport' }), h('div', { class: 'pr-card', id: 'prDesc' })),
+      h('div', { class: 'pr-side' },
+        h('div', { class: 'pr-phone', id: 'prPhone' },
+          h('video', { id: 'prBg', muted: true, loop: true, playsinline: true, preload: 'auto' }),
+          h('div', { class: 'pr-sub', id: 'prSub' }),
+          h('div', { class: 'pr-empty', id: 'prEmpty' }, 'Aperçu')),
+        h('audio', { id: 'prAudio', preload: 'auto' }),
+        h('div', { class: 'pr-ctl' },
+          h('button', { type: 'button', class: 'primary', id: 'prPlay', onclick: () => promoPlay() }, icon('play'), 'Aperçu'),
+          h('span', { class: 'hint', id: 'prTime' }, '')),
+        h('div', { class: 'pr-job', id: 'prJob', hidden: true }))));
+  $('#prBg').muted = true;
+  $('#prAudio').addEventListener('pause', () => { $('#prBg').pause(); syncPromoPlay(); });
+  $('#prAudio').addEventListener('play', syncPromoPlay);
+  renderPromoAll();
+  prCall('projects').then((p) => { promo.projects = p || []; renderPromoSound(); }).catch(() => { promo.projects = []; renderPromoSound(); });
+  prCall('visuals').then((v) => { promo.visuals = v || []; renderPromoVisual(); }).catch(() => { promo.visuals = []; renderPromoVisual(); });
+}
+function renderPromoAll() { renderPromoSound(); renderPromoLyrics(); renderPromoVisual(); renderPromoStyle(); renderPromoExport(); renderPromoDesc(); renderPromoPreview(); }
+
+function renderPromoJob() {
+  const el = $('#prJob');
+  if (!el) return;
+  el.hidden = !promo.job;
+  if (promo.job) prFill(el, h('b', {}, promo.job.text || 'En cours…'), h('div', { class: 'pr-bar' }, h('i', { style: `width:${promo.job.pct == null ? 100 : promo.job.pct}%`, class: promo.job.pct == null ? 'indet' : '' })));
+  $$('#promoRoot [data-busy]').forEach((b) => { b.disabled = Boolean(promo.job); });
+}
+function prErr(e) { toast(String(e?.message || e || 'Erreur').slice(0, 220)); }
+
+// ----- 1. Le son
+function setPromoAudio(a) {
+  promo.audio = a;
+  promo.lines = [];
+  promo.result = null;
+  promo.desc = null;
+  promo.start = Math.min(promo.start, Math.max(0, (a.dur || 0) - promo.dur));
+  if (a.dur == null) prCall('info', { token: a.token }).then((r) => { promo.audio.dur = r.dur; renderPromoSound(); }).catch(() => {});
+  $('#prAudio').src = prUrl(a.token);
+  renderPromoAll();
+}
+function renderPromoSound() {
+  const el = $('#prSound');
+  if (!el) return;
+  const a = promo.audio;
+  const rows = (promo.projects || []).slice(0, 30).map((p) => h('div', { class: 'pr-proj' },
+    h('span', { class: 'pr-dot', style: p.color ? `background:${p.color}` : '' }),
+    h('b', {}, p.title), p.key || p.bpm ? h('em', {}, [p.key, p.bpm ? `${p.bpm} BPM` : ''].filter(Boolean).join(' · ')) : null,
+    h('span', { class: 'pr-files' }, p.files.slice(0, 5).map((f) => h('button', { type: 'button', class: `chip${a?.token === f.token ? ' on' : ''}`,
+      onclick: () => setPromoAudio({ token: f.token, title: p.title, dur: null }) }, f.label)))));
+  const dur = a?.dur || 0;
+  prFill(el, 
+    h('h3', {}, h('span', { class: 'pr-n' }, '1'), 'Ton son'),
+    a ? h('div', { class: 'pr-sel' }, h('b', {}, a.title), h('span', { class: 'hint' }, dur ? `${fmtSec(dur).slice(0, -2)} au total` : '…'),
+      h('button', { type: 'button', class: 'link', onclick: () => { promo.audio = null; renderPromoAll(); } }, 'Changer')) : null,
+    a ? h('div', { class: 'pr-range' },
+      h('label', {}, 'Début ', h('b', { id: 'prStartTxt' }, fmtSec(promo.start).slice(0, -2))),
+      h('input', { type: 'range', min: 0, max: Math.max(0, Math.floor(dur - 1)), step: 0.5, value: promo.start, oninput: (e) => {
+        promo.start = Number(e.target.value); $('#prStartTxt').textContent = fmtSec(promo.start).slice(0, -2);
+        if (promo.lines.length) { promo.lines = []; renderPromoLyrics(); }
+      } }),
+      h('div', { class: 'seg' }, PROMO_DURS.map((d) => h('button', { type: 'button', class: `seg-btn${promo.dur === d ? ' active' : ''}`, onclick: () => {
+        promo.dur = d; if (promo.lines.length) promo.lines = promo.lines.filter((l) => l.s < d); renderPromoAll();
+      } }, `${d} s`)))) : null,
+    a ? h('div', { class: 'pr-voc' }, promo.vocals
+      ? [h('span', {}, '🎙 Voix seule : ', h('b', {}, promo.vocals.title)), h('button', { type: 'button', class: 'link', onclick: () => { promo.vocals = null; renderPromoSound(); } }, 'Retirer')]
+      : h('button', { type: 'button', class: 'link', onclick: async () => {
+        try { const v = await prCall('pick', { kind: 'audio' }); if (v) { promo.vocals = v; renderPromoSound(); } } catch (e) { prErr(e); }
+      } }, '+ Voix seule (export de ta piste voix, paroles plus précises)')) : null,
+    !a ? h('div', { class: 'pr-projs' }, promo.projects == null ? h('p', { class: 'hint' }, 'Lecture de tes projets…') : rows.length ? rows : h('p', { class: 'hint' }, 'Aucun son dans tes projets.')) : null,
+    !a ? h('button', { type: 'button', class: 'ghost', onclick: async () => {
+      try { const f = await prCall('pick', { kind: 'audio' }); if (f) setPromoAudio(f); } catch (e) { prErr(e); }
+    } }, icon('plus'), 'Choisir un son sur le PC…') : null);
+}
+
+// ----- 2. Les paroles
+function normLines() {
+  promo.lines.sort((x, y) => x.s - y.s);
+  for (let i = 0; i < promo.lines.length; i++) {
+    const n = promo.lines[i + 1];
+    if (n && (promo.lines[i].e > n.s || n.s - promo.lines[i].e <= 1.2)) promo.lines[i].e = n.s;  // pas de trou
+    if (!n) promo.lines[i].e = Math.min(promo.dur, Math.max(promo.lines[i].e, promo.lines[i].s + 0.3));
+  }
+}
+async function promoTranscribe() {
+  if (!promo.audio) return;
+  try {
+    const rd = promo.hello?.ready || {};
+    if (!rd.model || !rd.whisper) { promo.hello.ready = await prCall('prepare', {}, 'Installation du moteur de paroles (une seule fois)…'); }
+    const r = await prCall('transcribe', { audio: promo.audio.token, vocals: promo.vocals?.token, start: promo.start, dur: promo.dur }, 'Écoute des paroles…');
+    promo.lines = (r.lines || []).map((l) => ({ ...l }));
+    normLines();
+    promo.result = null;
+    if (!promo.lines.length) toast('Aucune parole entendue sur cet extrait : choisis un autre début, ou ajoute la voix seule');
+    renderPromoAll();
+  } catch (e) { prErr(e); }
+}
+function renderPromoLyrics() {
+  const el = $('#prLyrics');
+  if (!el) return;
+  const rows = promo.lines.map((l, i) => h('div', { class: 'pr-line' },
+    h('input', { class: 'pr-t', value: fmtSec(l.s), 'aria-label': 'Début', onchange: (e) => { const v = parseSec(e.target.value); if (v != null && v < promo.dur) { l.s = v; normLines(); renderPromoLyrics(); } else e.target.value = fmtSec(l.s); } }),
+    h('button', { type: 'button', class: 'pr-nudge', title: 'Plus tôt (0,1 s)', onclick: () => { l.s = Math.max(0, l.s - 0.1); normLines(); renderPromoLyrics(); } }, '−'),
+    h('button', { type: 'button', class: 'pr-nudge', title: 'Plus tard (0,1 s)', onclick: () => { l.s = Math.min(promo.dur - 0.1, l.s + 0.1); normLines(); renderPromoLyrics(); } }, '+'),
+    h('input', { class: 'pr-txt', value: l.t, 'aria-label': 'Paroles', oninput: (e) => { l.t = e.target.value; promo.result = null; } }),
+    h('button', { type: 'button', class: 'pr-nudge', title: 'Écouter depuis cette ligne', onclick: () => promoPlay(l.s) }, icon('play')),
+    h('button', { type: 'button', class: 'pr-nudge', title: 'Supprimer', onclick: () => { promo.lines.splice(i, 1); normLines(); renderPromoLyrics(); } }, icon('x'))));
+  prFill(el, 
+    h('h3', {}, h('span', { class: 'pr-n' }, '2'), 'Les paroles'),
+    !promo.audio ? h('p', { class: 'hint' }, 'Choisis d’abord ton son.') : h('div', { class: 'pr-row' },
+      h('button', { type: 'button', class: 'primary', 'data-busy': '1', onclick: promoTranscribe }, icon('mic'), promo.lines.length ? 'Réécouter les paroles' : 'Écrire les paroles automatiquement'),
+      h('span', { class: 'hint' }, 'Whisper, sur ton PC : chaque phrase arrive au moment exact où tu la dis.')),
+    rows.length ? h('div', { class: 'pr-lines' }, rows) : null,
+    promo.audio ? h('button', { type: 'button', class: 'link', onclick: () => {
+      const last = promo.lines[promo.lines.length - 1];
+      promo.lines.push({ t: '', s: last ? Math.min(promo.dur - 0.5, last.s + 1.5) : 0, e: promo.dur });
+      normLines(); renderPromoLyrics();
+      $$('#prLyrics .pr-txt').pop()?.focus();
+    } }, '+ Ajouter une ligne') : null);
+  renderPromoExport();
+}
+
+// ----- 3. Le visuel
+function promoAccounts() { return (promo.accounts || []).filter((u) => /^[\w.]{1,30}$/.test(u)); }
+function saveAccounts() { local.set('promoAccounts', promo.accounts); renderPromoVisual(); }
+async function promoUseIg(url) {
+  try {
+    const v = await prCall('ig.use', { url }, 'Téléchargement du visuel Instagram…');
+    promo.visuals = [v, ...(promo.visuals || []).filter((x) => x.file !== v.file)];
+    promo.bg = v; promo.igUrl = null; promo.desc = null; promo.result = null;
+    renderPromoAll();
+    toast(v.user ? `Visuel de @${v.user} prêt` : 'Visuel prêt');
+  } catch (e) { prErr(e); }
+}
+function renderPromoVisual() {
+  const el = $('#prVisual');
+  if (!el) return;
+  const cards = (promo.visuals || []).map((v) => {
+    const vid = h('video', { muted: true, loop: true, playsinline: true, preload: 'none', poster: v.thumb ? prUrl(v.thumb) : null });
+    const card = h('button', { type: 'button', class: `pr-vcard${promo.bg?.file === v.file ? ' on' : ''}`, title: v.user ? `@${v.user}` : v.name,
+      onclick: () => { promo.bg = v; promo.desc = null; promo.result = null; renderPromoAll(); },
+      onpointerenter: () => { if (!vid.src) vid.src = prUrl(v.token); vid.muted = true; vid.play().catch(() => {}); },
+      onpointerleave: () => vid.pause() }, vid, h('span', { class: 'pr-vuser' }, v.user ? `@${v.user}` : 'Ma vidéo'));
+    const del = h('span', { class: 'pr-vdel', role: 'button', title: 'Retirer', onclick: async (e) => {
+      e.stopPropagation();
+      try { await prCall('visual.remove', { file: v.file }); promo.visuals = promo.visuals.filter((x) => x.file !== v.file); if (promo.bg?.file === v.file) promo.bg = null; renderPromoAll(); } catch (er) { prErr(er); }
+    } }, icon('x'));
+    card.append(del);
+    return card;
+  });
+  const linkIn = h('input', { class: 'pc-input', placeholder: 'Lien d’une vidéo Instagram (reel ou post)', 'aria-label': 'Lien Instagram' });
+  const addIn = h('input', { class: 'pc-input', placeholder: 'Ajouter un compte (ex : psxsht)', 'aria-label': 'Compte Instagram' });
+  prFill(el, 
+    h('h3', {}, h('span', { class: 'pr-n' }, '3'), 'Le visuel'),
+    promo.igUrl ? h('div', { class: 'pr-ig' }, h('span', {}, 'Vidéo ouverte dans Instagram'),
+      h('button', { type: 'button', class: 'primary', 'data-busy': '1', onclick: () => promoUseIg(promo.igUrl) }, icon('down'), 'Utiliser cette vidéo')) : null,
+    h('div', { class: 'pr-vgrid' }, promo.visuals == null ? h('p', { class: 'hint' }, 'Chargement…') : cards.length ? cards : h('p', { class: 'hint' }, 'Tes visuels s’afficheront ici.')),
+    h('div', { class: 'pr-row' },
+      h('button', { type: 'button', class: 'ghost', onclick: async () => {
+        try { const v = await prCall('pick', { kind: 'video' }, 'Ajout de ta vidéo…'); if (v) { promo.visuals = [v, ...(promo.visuals || [])]; promo.bg = v; promo.desc = null; renderPromoAll(); } } catch (e) { prErr(e); }
+      } }, icon('plus'), 'Ma vidéo…'),
+      h('form', { class: 'pr-inline', onsubmit: (e) => { e.preventDefault(); if (linkIn.value.trim()) promoUseIg(linkIn.value.trim()); } }, linkIn,
+        h('button', { type: 'submit', class: 'ghost', 'data-busy': '1' }, 'Utiliser'))),
+    h('p', { class: 'hint' }, 'Comptes de visualizers : ouvre-en un, choisis une vidéo, puis « Utiliser cette vidéo ». Le nom du compte est mis dans la description.'),
+    h('div', { class: 'pr-acc' }, promoAccounts().map((u) => h('div', { class: 'pr-acard' },
+      h('span', { class: 'pr-av' }, u[0].toUpperCase()), h('b', {}, `@${u}`),
+      h('button', { type: 'button', class: 'ghost sm', onclick: () => prCall('ig.open', { user: u }).catch(prErr) }, 'Voir ses vidéos'),
+      h('button', { type: 'button', class: 'pr-x', title: 'Retirer ce compte', onclick: () => { promo.accounts = promoAccounts().filter((x) => x !== u); saveAccounts(); } }, icon('x'))))),
+    h('form', { class: 'pr-inline', onsubmit: (e) => {
+      e.preventDefault();
+      const u = addIn.value.trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//, '').replace(/\/.*$/, '');
+      if (/^[\w.]{1,30}$/.test(u) && !promoAccounts().includes(u)) { promo.accounts = [...promoAccounts(), u]; saveAccounts(); }
+    } }, addIn, h('button', { type: 'submit', class: 'ghost' }, 'Ajouter')));
+  renderPromoPreview();
+  renderPromoExport();
+  renderPromoDesc();
+}
+
+// ----- 4. Le style
+function renderPromoStyle() {
+  const el = $('#prStyle');
+  if (!el) return;
+  const styles = promo.hello?.styles || { impact: 'Impact', pixel: 'Pixel', bold: 'Gras' };
+  const seg = (opts, cur, set) => h('div', { class: 'seg' }, Object.entries(opts).map(([k, lab]) => h('button', { type: 'button', class: `seg-btn${cur === k ? ' active' : ''}`, onclick: () => { set(k); promo.result = null; renderPromoStyle(); renderPromoPreview(); } }, lab)));
+  prFill(el, 
+    h('h3', {}, h('span', { class: 'pr-n' }, '4'), 'Le style'),
+    h('div', { class: 'pr-row' }, seg(styles, promo.style, (k) => { promo.style = k; local.set('promoStyle', k); }),
+      seg({ haut: 'Haut', centre: 'Milieu', bas: 'Bas' }, promo.pos, (k) => { promo.pos = k; local.set('promoPos', k); })),
+    h('label', { class: 'pr-scale' }, 'Taille', h('input', { type: 'range', min: 0.7, max: 1.4, step: 0.05, value: promo.scale, oninput: (e) => {
+      promo.scale = Number(e.target.value); local.set('promoScale', promo.scale); promo.result = null; renderPromoPreview();
+    } })));
+}
+
+// ----- Aperçu (même rendu que la vidéo : 1080x1920 réduit)
+function renderPromoPreview() {
+  const bg = $('#prBg');
+  if (!bg) return;
+  const want = promo.bg ? prUrl(promo.bg.token) : '';
+  if (bg.dataset.src !== want) { bg.dataset.src = want; if (want) { bg.src = want; bg.muted = true; bg.play().catch(() => {}); } else bg.removeAttribute('src'); }
+  $('#prEmpty').hidden = Boolean(promo.bg);
+  const sub = $('#prSub');
+  const w = $('#prPhone').clientWidth || 300;
+  sub.className = `pr-sub ${promo.style} ${promo.pos}`;
+  sub.style.fontSize = `${(PROMO_STYLE_PX[promo.style] || 120) * promo.scale * w / 1080}px`;
+  sub.style.setProperty('--ow', `${(promo.style === 'impact' ? 7 : 6) * 2 * w / 1080}px`);
+  promoTick(true);
+}
+function promoNow() { const a = $('#prAudio'); return a && !a.paused ? a.currentTime - promo.start : (promo.lastT || 0); }
+function promoTick(once) {
+  const a = $('#prAudio');
+  const t = promoNow();
+  if (a && !a.paused && t >= promo.dur) { a.pause(); a.currentTime = promo.start; promo.lastT = 0; }
+  const i = promo.lines.findIndex((l) => t >= l.s && t < l.e);
+  const sub = $('#prSub');
+  if (sub && (i !== promo.cur || once)) {
+    promo.cur = i;
+    sub.textContent = i >= 0 ? promo.lines[i].t : '';
+    sub.classList.remove('pop'); void sub.offsetWidth; if (i >= 0) sub.classList.add('pop');
+  }
+  const tm = $('#prTime');
+  if (tm) tm.textContent = `${fmtSec(Math.max(0, t)).slice(0, -2)} / ${fmtSec(promo.dur).slice(0, -2)}`;
+  if (!once && a && !a.paused) promo.raf = requestAnimationFrame(() => promoTick());
+}
+function syncPromoPlay() {
+  const a = $('#prAudio');
+  const b = $('#prPlay');
+  if (!a || !b) return;
+  b.replaceChildren(icon(a.paused ? 'play' : 'pause'), a.paused ? 'Aperçu' : 'Pause');
+  if (!a.paused) { cancelAnimationFrame(promo.raf); promoTick(); } else promo.lastT = Math.max(0, a.currentTime - promo.start);
+}
+function promoPlay(from) {
+  const a = $('#prAudio');
+  if (!a || !promo.audio) { toast('Choisis d’abord ton son'); return; }
+  if (from == null && !a.paused) { a.pause(); return; }
+  if (isPlaying()) { player.userPaused = true; ytSend('pauseVideo'); }  // la prod du site se tait
+  const off = from != null ? from : (promo.lastT && promo.lastT < promo.dur - 0.2 ? promo.lastT : 0);
+  a.currentTime = promo.start + off;
+  a.play().catch(() => toast('Lecture impossible'));
+  const bg = $('#prBg');
+  if (promo.bg && bg) { bg.play().catch(() => {}); }
+}
+
+// ----- 5. La vidéo
+function renderPromoExport() {
+  const el = $('#prExport');
+  if (!el) return;
+  const ok = promo.audio && promo.bg && promo.lines.some((l) => l.t.trim());
+  const r = promo.result;
+  prFill(el, 
+    h('h3', {}, h('span', { class: 'pr-n' }, '5'), 'La vidéo'),
+    h('div', { class: 'pr-row' },
+      h('button', { type: 'button', class: 'primary', 'data-busy': '1', disabled: !ok || Boolean(promo.job), onclick: async () => {
+        try {
+          const lines = promo.lines.filter((l) => l.t.trim()).map((l) => ({ t: l.t.trim(), s: l.s, e: l.e }));
+          promo.result = await prCall('render', { audio: promo.audio.token, bg: promo.bg.token, start: promo.start, dur: promo.dur, lines,
+            style: promo.style, pos: promo.pos, scale: promo.scale, title: promo.audio.title }, 'Création de la vidéo…');
+          renderPromoExport();
+          toast('Vidéo prête : dans le dossier Promo de tes projets');
+        } catch (e) { prErr(e); }
+      } }, icon('down'), 'Créer la vidéo (1080x1920)'),
+      h('span', { class: 'hint' }, ok ? `${promo.dur} s · ${promo.lines.length} lignes` : 'Son, paroles et visuel d’abord.')),
+    r ? h('div', { class: 'pr-result' },
+      h('video', { src: prUrl(r.token), controls: true, playsinline: true, preload: 'metadata' }),
+      h('div', {}, h('b', {}, r.name), h('p', { class: 'hint' }, r.path),
+        h('button', { type: 'button', class: 'ghost', onclick: () => prCall('reveal', { token: r.token }).catch(prErr) }, 'Montrer dans le dossier'))) : null);
+  renderPromoJob();
+}
+
+// ----- 6. La description (à copier)
+function promoTags() { return [...new Set((promo.tags || []).map((t) => `#${String(t).replace(/[^\p{L}\p{N}_]/gu, '')}`).filter((t) => t.length > 1))]; }
+function promoDescText() {
+  const credit = promo.bg?.user ? `visuel : @${promo.bg.user}` : '';
+  return [promo.audio?.title || '', promoTags().join(' '), credit].filter(Boolean).join('\n\n');
+}
+function renderPromoDesc() {
+  const el = $('#prDesc');
+  if (!el) return;
+  if (promo.desc == null) promo.desc = promoDescText();
+  const ta = h('textarea', { class: 'pr-desc', rows: 5, oninput: (e) => { promo.desc = e.target.value; } });
+  ta.value = promo.desc;
+  const tagIn = h('input', { class: 'pc-input', placeholder: '#tag', 'aria-label': 'Ajouter un #' });
+  const saveTags = () => { if (promo.keepTags) local.set('promoTags', promoTags()); promo.desc = null; renderPromoDesc(); };
+  prFill(el, 
+    h('h3', {}, h('span', { class: 'pr-n' }, '6'), 'La description'),
+    h('div', { class: 'pr-tags' }, promoTags().map((t) => h('span', { class: 'chip on' }, t,
+      h('button', { type: 'button', class: 'pr-tx', 'aria-label': `Retirer ${t}`, onclick: () => { promo.tags = promoTags().filter((x) => x !== t); saveTags(); } }, '×')))),
+    h('form', { class: 'pr-inline', onsubmit: (e) => {
+      e.preventDefault();
+      const add = tagIn.value.split(/[\s,]+/).map((x) => x.replace(/^#*/, '#')).filter((x) => x.length > 1);
+      if (add.length) { promo.tags = [...promoTags(), ...add]; saveTags(); }
+    } }, tagIn, h('button', { type: 'submit', class: 'ghost' }, 'Ajouter')),
+    h('label', { class: 'pr-keep' }, h('input', { type: 'checkbox', checked: promo.keepTags, onchange: (e) => {
+      promo.keepTags = e.target.checked; local.set('promoKeepTags', promo.keepTags); if (promo.keepTags) local.set('promoTags', promoTags());
+    } }), 'Toujours mettre ces #'),
+    ta,
+    h('div', { class: 'pr-row' },
+      h('button', { type: 'button', class: 'primary', onclick: async () => {
+        try { await navigator.clipboard.writeText(promo.desc); toast('Description copiée'); } catch { ta.select(); document.execCommand('copy'); toast('Description copiée'); }
+      } }, icon('check'), 'Copier la description'),
+      h('button', { type: 'button', class: 'link', onclick: () => { promo.desc = null; renderPromoDesc(); } }, 'Refaire')));
+}
+
 applyDevice();
 syncLoopUi();
 syncBpmPill();
@@ -5590,5 +5952,6 @@ showView(location.hash.slice(1) || local.get('view', 'search'));
 }
 setupTarget();
 persist.init();
+promoInit();
 window.claude?.use?.('sample').then((s) => { sampleFn = s || null; }).catch(() => {});
 })();

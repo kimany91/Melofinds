@@ -160,6 +160,8 @@ class Panel:
         self.size = (0, 0)
         self.lock = threading.Lock()
         self.online = True  # (tests : ne pas mettre le PC en ligne)
+        self.service = None  # Promo (mf_promo.Service), branché par le logiciel
+        self.bridge = None
 
     def _set(self, state, detail=""):
         self.state, self.detail = state, detail
@@ -232,6 +234,7 @@ class Panel:
             self.hwnd = hwnd
             self._attach(host_hwnd)
             self._measure()
+            self._bridge()
             if first:
                 cfg = C.load_config()
                 cfg["panel_paired"] = True
@@ -276,6 +279,23 @@ class Panel:
             log(f"mesure impossible : {e}")
         self.resize(*self.size)
 
+    def _bridge(self):
+        if not self.service:
+            return
+        try:
+            self.bridge = Bridge(self.port, self.service, C.WEB_APP)
+            self.service.emit = self.bridge.event
+            log("pont Promo prêt")
+        except Exception as e:
+            self.bridge = None
+            log(f"pont Promo impossible : {e}")
+
+    def event(self, ev):
+        if self.bridge and self.bridge.alive:
+            self.bridge.event(ev)
+            return True
+        return False
+
     # --- depuis Tk
     def resize(self, w, h):
         self.size = (int(w), int(h))
@@ -309,6 +329,9 @@ class Panel:
         with self.lock:
             proc, port, bpath = self.proc, self.port, self.bpath
             self.proc = self.hwnd = None
+            br, self.bridge = self.bridge, None
+        if br:
+            br.close()
         if not proc:
             return
         try:
@@ -324,3 +347,184 @@ class Panel:
                 proc.kill()
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Pont site ↔ logiciel (page Promo) : le site appelle window.mfPc.call(cmd, args) ; les sons
+# et vidéos du PC lui sont servis à l'adresse …/__mfpc/<jeton> (interceptée ici, jamais sur
+# internet). Seulement pour le site Melofinds, dans la fenêtre du logiciel.
+
+SHIM = r"""(() => {
+  if (window.mfPc || typeof mfPcBridge !== 'function') return;
+  const wait = new Map(); const fns = new Set(); let n = 0;
+  window.mfPc = {
+    call(cmd, args) { return new Promise((ok, no) => { const id = ++n; wait.set(id, { ok, no }); mfPcBridge(JSON.stringify({ id, cmd, args: args || {} })); }); },
+    on(fn) { fns.add(fn); return () => fns.delete(fn); },
+    url(token) { return `${location.origin}${location.pathname.replace(/[^/]*$/, '')}__mfpc/${token}`; },
+  };
+  window.__mfPcReply = (id, ok, data) => { const w = wait.get(id); if (!w) return; wait.delete(id); if (ok) w.ok(data); else w.no(new Error(String(data || 'erreur'))); };
+  window.__mfPcEvent = (e) => { fns.forEach((f) => { try { f(e); } catch (x) { /* rien */ } }); };
+  window.dispatchEvent(new Event('mfpc-ready'));
+})();"""
+
+MIME = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm", ".mkv": "video/x-matroska",
+        ".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".flac": "audio/flac", ".ogg": "audio/ogg",
+        ".aac": "audio/aac", ".jpg": "image/jpeg", ".png": "image/png"}
+CHUNK = 2 * 1024 * 1024
+
+
+def parse_range(header, size):
+    """« bytes=a-b » → (début, fin incluse) bornés, ou None."""
+    import re
+    m = re.match(r"bytes=(\d*)-(\d*)$", str(header or "").strip())
+    if not m or size <= 0:
+        return None
+    a, b = m.group(1), m.group(2)
+    if a == "":
+        n = int(b or 0)
+        start, end = max(0, size - n), size - 1
+    else:
+        start = int(a)
+        end = min(size - 1, int(b) if b else start + CHUNK - 1)
+    if start >= size or end < start:
+        return None
+    return start, min(end, start + CHUNK - 1)
+
+
+class Bridge:
+    def __init__(self, port, service, allowed_prefix, log_fn=log):
+        import base64
+        self.b64 = base64.b64encode
+        self.service, self.allowed, self.log = service, allowed_prefix, log_fn
+        page = T._page(port, 15)
+        self.ws = T.WS(page["webSocketDebuggerUrl"])
+        self.lock = threading.Lock()
+        self.n = 0
+        self.wait = {}
+        self.alive = True
+        threading.Thread(target=self._read, daemon=True).start()
+        self.call("Runtime.enable")
+        self.call("Runtime.addBinding", {"name": "mfPcBridge"})
+        self.call("Page.enable")
+        self.call("Page.addScriptToEvaluateOnNewDocument", {"source": SHIM})
+        self.call("Fetch.enable", {"patterns": [{"urlPattern": "*__mfpc/*", "requestStage": "Request"}]})
+        self.call("Runtime.evaluate", {"expression": SHIM})
+
+    def send(self, method, params=None):
+        with self.lock:
+            self.n += 1
+            i = self.n
+            self.ws.send(json.dumps({"id": i, "method": method, "params": params or {}}))
+        return i
+
+    def call(self, method, params=None, timeout=15):
+        ev = threading.Event()
+        box = {}
+        with self.lock:
+            self.n += 1
+            i = self.n
+            self.wait[i] = (ev, box)
+            self.ws.send(json.dumps({"id": i, "method": method, "params": params or {}}))
+        if not ev.wait(timeout):
+            self.wait.pop(i, None)
+            raise EmbedError(f"{method} : pas de réponse")
+        if "error" in box:
+            raise EmbedError(str(box["error"]))
+        return box.get("result") or {}
+
+    def _read(self):
+        while self.alive:
+            try:
+                msg = json.loads(self.ws.recv())
+            except Exception:
+                self.alive = False
+                break
+            if "id" in msg:
+                w = self.wait.pop(msg["id"], None)
+                if w:
+                    ev, box = w
+                    if "error" in msg:
+                        box["error"] = (msg["error"] or {}).get("message")
+                    else:
+                        box["result"] = msg.get("result")
+                    ev.set()
+                continue
+            method, p = msg.get("method"), msg.get("params") or {}
+            if method == "Runtime.bindingCalled" and p.get("name") == "mfPcBridge":
+                threading.Thread(target=self._command, args=(p.get("payload"),), daemon=True).start()
+            elif method == "Fetch.requestPaused":
+                threading.Thread(target=self._serve, args=(p,), daemon=True).start()
+
+    def _page_ok(self):
+        try:
+            r = self.call("Runtime.evaluate", {"expression": "location.href", "returnByValue": True}, 5)
+            return str((r.get("result") or {}).get("value") or "").startswith(self.allowed)
+        except EmbedError:
+            return False
+
+    def js(self, expr):
+        try:
+            self.send("Runtime.evaluate", {"expression": expr})
+        except Exception:
+            pass
+
+    def event(self, ev):
+        self.js(f"window.__mfPcEvent && __mfPcEvent({json.dumps(ev, ensure_ascii=True)})")
+
+    def _command(self, payload):
+        try:
+            req = json.loads(payload)
+            rid, cmd, args = int(req["id"]), str(req["cmd"])[:40], req.get("args") or {}
+        except (ValueError, KeyError, TypeError):
+            return
+        if not self._page_ok():  # seulement le site Melofinds
+            self.js(f"__mfPcReply({rid}, false, {json.dumps('page non autorisée')})")
+            return
+
+        def progress(text="", pct=None):
+            self.event({"type": "progress", "id": rid, "cmd": cmd, "text": str(text)[:200], "pct": pct})
+        try:
+            res = self.service.call(cmd, args, progress)
+            self.js(f"__mfPcReply({rid}, true, {json.dumps(res, ensure_ascii=True)})")
+        except Exception as e:
+            self.log(f"Promo {cmd} : {e}")
+            self.js(f"__mfPcReply({rid}, false, {json.dumps(str(e)[:300], ensure_ascii=True)})")
+
+    def _serve(self, p):
+        rid = p.get("requestId")
+        req = p.get("request") or {}
+        url = str(req.get("url") or "")
+        token = url.split("__mfpc/", 1)[-1].split("?", 1)[0].split("/", 1)[0]
+        path = self.service.files.get(token) if url.startswith(self.allowed) else None
+        try:
+            if not path or not path.exists():
+                self.send("Fetch.fulfillRequest", {"requestId": rid, "responseCode": 404, "body": ""})
+                return
+            size = path.stat().st_size
+            headers = {k.lower(): v for k, v in (req.get("headers") or {}).items()}
+            rng = parse_range(headers.get("range"), size)
+            if rng is None and size > CHUNK and path.suffix.lower() not in (".jpg", ".png"):
+                rng = (0, CHUNK - 1)  # gros fichier : par morceaux (le lecteur redemande la suite)
+            with open(path, "rb") as f:
+                if rng:
+                    f.seek(rng[0])
+                    data = f.read(rng[1] - rng[0] + 1)
+                else:
+                    data = f.read()
+            hs = [{"name": "Content-Type", "value": MIME.get(path.suffix.lower(), "application/octet-stream")},
+                  {"name": "Accept-Ranges", "value": "bytes"}, {"name": "Cache-Control", "value": "no-store"},
+                  {"name": "Content-Length", "value": str(len(data))}]
+            if rng:
+                hs.append({"name": "Content-Range", "value": f"bytes {rng[0]}-{rng[0] + len(data) - 1}/{size}"})
+            self.send("Fetch.fulfillRequest", {"requestId": rid, "responseCode": 206 if rng else 200, "responseHeaders": hs,
+                                               "body": self.b64(data).decode()})
+        except Exception as e:
+            self.log(f"Promo : fichier non servi ({e})")
+            try:
+                self.send("Fetch.failRequest", {"requestId": rid, "errorReason": "Failed"})
+            except Exception:
+                pass
+
+    def close(self):
+        self.alive = False
+        self.ws.close()

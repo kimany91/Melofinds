@@ -1048,3 +1048,84 @@ body.mobile .chan-txt b { font-size: 17px; }
 .qr-frame { position: absolute; width: min(60vw, 260px); aspect-ratio: 1; border: 3px solid rgba(255, 255, 255, .9); border-radius: 8px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .25); pointer-events: none; top: 50%; left: 50%; transform: translate(-50%, -62%); }
 .qr-scan p { color: #fff; margin: 0; font-size: 15px; }
 .qr-scan .ghost { color: #fff; border-color: rgba(255, 255, 255, .5); background: transparent; }
+
+/* ================= Promo (dans Melofinds PC) ================= */
+.pr-intro { margin: 0; flex-basis: 100%; font-size: 14px; }
+.pr-cols { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 22px; align-items: start; padding-bottom: 40px; }
+.pr-steps { display: grid; gap: 14px; min-width: 0; }
+.pr-side { position: sticky; top: 76px; display: grid; gap: 10px; }
+.pr-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 12px; min-width: 0; }
+.pr-card h3 { margin: 0; display: flex; align-items: center; gap: 10px; font: 700 16px var(--f-display); }
+.pr-n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: var(--panel-3); color: var(--accent); font: 700 12px var(--f-mono); }
+.pr-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pr-inline { display: flex; gap: 8px; flex: 1 1 260px; min-width: 0; }
+.pr-inline .pc-input { padding: 9px 12px; font-size: 14px; }
+.pr-projs { display: grid; gap: 4px; max-height: 340px; overflow: auto; }
+.pr-proj { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding: 8px 6px; border-radius: 8px; }
+.pr-proj:hover { background: var(--panel-2); }
+.pr-proj b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.pr-proj em { font: 600 11.5px var(--f-mono); color: var(--faint); font-style: normal; }
+.pr-files { grid-column: 2 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
+.pr-files .chip { padding: 3px 9px; font-size: 12px; }
+.pr-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--accent); }
+.pr-sel { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.pr-sel b { font-size: 15px; }
+.pr-range { display: grid; gap: 8px; }
+.pr-range input[type=range], .pr-scale input { width: 100%; accent-color: var(--accent); }
+.pr-scale { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; font-weight: 600; font-size: 13px; color: var(--muted); }
+.pr-voc { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13.5px; }
+.pr-lines { display: grid; gap: 6px; max-height: 420px; overflow: auto; padding-right: 4px; }
+.pr-line { display: grid; grid-template-columns: 74px 26px 26px minmax(0, 1fr) 30px 30px; gap: 4px; align-items: center; }
+.pr-line input { min-width: 0; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--text); font: 600 14px var(--f-body); }
+.pr-line input:focus { outline: none; border-color: var(--accent); }
+.pr-line .pr-t { font: 600 12.5px var(--f-mono); text-align: center; padding: 7px 4px; }
+.pr-nudge { height: 30px; border: 1px solid var(--line); background: transparent; border-radius: 7px; color: var(--muted); font-weight: 700; display: grid; place-items: center; padding: 0; }
+.pr-nudge:hover { color: var(--text); border-color: var(--line-2); }
+.pr-nudge svg { width: 14px; height: 14px; }
+.pr-vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+.pr-vcard { position: relative; aspect-ratio: 9 / 16; border-radius: 9px; overflow: hidden; border: 2px solid transparent; background: var(--panel-3); padding: 0; transition: border-color .2s, transform .2s var(--ease); }
+.pr-vcard:hover { transform: translateY(-2px); }
+.pr-vcard.on { border-color: var(--accent); }
+.pr-vcard video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pr-vuser { position: absolute; left: 6px; right: 6px; bottom: 6px; font: 700 11px var(--f-body); color: #fff; text-shadow: 0 1px 3px #000; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-vdel { position: absolute; top: 5px; right: 5px; width: 22px; height: 22px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: #fff; display: none; place-items: center; }
+.pr-vdel svg { width: 13px; height: 13px; }
+.pr-vcard:hover .pr-vdel { display: grid; }
+.pr-ig { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 9px; border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); font-weight: 600; flex-wrap: wrap; }
+.pr-acc { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.pr-acard { position: relative; display: grid; justify-items: center; gap: 8px; padding: 16px 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); aspect-ratio: 3 / 4; align-content: center; }
+.pr-acard b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.pr-av { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: var(--panel-3); color: var(--accent); font: 700 20px var(--f-display); }
+.pr-x { position: absolute; top: 6px; right: 6px; border: 0; background: none; color: var(--faint); padding: 2px; }
+.pr-x:hover { color: var(--text); }
+.pr-x svg { width: 14px; height: 14px; }
+.ghost.sm { padding: 6px 10px; font-size: 12.5px; }
+.pr-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.pr-tags .chip { display: inline-flex; align-items: center; gap: 6px; }
+.pr-tx { border: 0; background: none; color: inherit; padding: 0 0 0 2px; font-size: 15px; line-height: 1; }
+.pr-keep { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--muted); }
+.pr-keep input { accent-color: var(--accent); }
+.pr-desc { width: 100%; resize: vertical; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--text); font: 500 14px/1.5 var(--f-body); }
+.pr-result { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; align-items: start; }
+.pr-result video { width: 150px; aspect-ratio: 9 / 16; border-radius: 9px; background: #000; }
+.pr-result .hint { overflow-wrap: anywhere; margin: 4px 0 10px; }
+.pr-phone { position: relative; width: 100%; aspect-ratio: 9 / 16; border-radius: 14px; overflow: hidden; background: #000; border: 1px solid var(--line-2); }
+.pr-phone video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pr-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #6f727b; font-weight: 600; }
+.pr-sub { position: absolute; left: 8%; right: 8%; text-align: center; color: #fff; line-height: 1.1; pointer-events: none; overflow-wrap: break-word;
+  -webkit-text-stroke: var(--ow, 3px) #000; paint-order: stroke fill; }
+.pr-sub.centre { top: 50%; transform: translateY(-50%); }
+.pr-sub.bas { bottom: 22.4%; }
+.pr-sub.haut { top: 18.75%; }
+.pr-sub.impact { font-family: "Anton", Impact, sans-serif; text-transform: uppercase; letter-spacing: .01em; text-shadow: 0 2px 2px rgba(0, 0, 0, .55); }
+.pr-sub.pixel { font-family: "Silkscreen", monospace; font-weight: 700; text-transform: lowercase; }
+.pr-sub.bold { font-family: "Archivo Black", sans-serif; text-shadow: 0 2px 2px rgba(0, 0, 0, .5); }
+.pr-sub.pop { animation: prPop .09s ease-out; }
+@keyframes prPop { from { scale: 1.12; } to { scale: 1; } }
+.pr-ctl { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pr-job { display: grid; gap: 6px; padding: 10px 12px; border-radius: 9px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; }
+.pr-bar { height: 5px; border-radius: 3px; background: var(--panel-3); overflow: hidden; }
+.pr-bar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.pr-bar i.indet { animation: prIndet 1.2s linear infinite; width: 35% !important; }
+@keyframes prIndet { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+@media (max-width: 860px) { .pr-cols { grid-template-columns: 1fr; } .pr-side { position: static; max-width: 320px; } }

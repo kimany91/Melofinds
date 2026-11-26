@@ -69,13 +69,14 @@ def _netscape(cookies, domains=DOMAINS):
     return "\n".join(lines) + "\n", n
 
 
-def export_cookies(browser=None, extra_args=None, domains=DOMAINS, timeout=30):
+def export_cookies(browser=None, extra_args=None, domains=DOMAINS, timeout=30, prof=None, out=None, check=None):
     """Relit le profil (navigateur invisible, quelques secondes) et écrit le fichier de cookies.
-    Renvoie True si une connexion YouTube s'y trouve."""
+    Renvoie True si une connexion s'y trouve (YouTube par défaut ; prof / out / check pour un
+    autre site, comme Instagram pour Promo)."""
     browser = browser or T.find_browser()
     if not browser:
         raise LoginError("Edge ou Chrome introuvable sur ce PC")
-    prof = profile_dir()
+    prof = Path(prof) if prof else profile_dir()
     if not prof.exists():
         return False
     port_file = prof / "DevToolsActivePort"
@@ -95,7 +96,7 @@ def export_cookies(browser=None, extra_args=None, domains=DOMAINS, timeout=30):
         text, n = _netscape(cookies, domains)
         if not n:
             return False
-        out = cookies_file()
+        out = Path(out) if out else cookies_file()
         tmp = out.with_suffix(".tmp")
         tmp.write_text(text, encoding="utf-8")
         try:
@@ -103,7 +104,7 @@ def export_cookies(browser=None, extra_args=None, domains=DOMAINS, timeout=30):
         except OSError:
             pass
         tmp.replace(out)
-        return connected()
+        return check(text) if check else connected()
     except T.TunebatError as e:
         raise LoginError(str(e))
     finally:

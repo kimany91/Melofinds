@@ -6,6 +6,7 @@ Appareils, Réglages.
 """
 
 import json
+import queue
 import os
 import re
 import subprocess
@@ -17,6 +18,7 @@ from pathlib import Path
 
 import mf_core as C
 import mf_embed as E
+import mf_promo as PM
 import mf_flmake as FM
 import mf_install as I
 import mf_library as L
@@ -571,6 +573,17 @@ def run_embedtest(root, show, panel, out):
                     res["page"] = json.loads(r) if isinstance(r, str) else r
                     w, h = panel.size  # le site remplit exactement la page (barre de titre et bords cachés)
                     res["fit"] = abs(res["page"]["iw"] - w) <= 3 and abs(res["page"]["ih"] - h) <= 3
+                    # pont Promo : le site appelle le PC, et lit un fichier du PC (servi en local)
+                    import tempfile as _tf
+                    probe = Path(_tf.mkdtemp(prefix="mf-pont-")) / "essai.wav"
+                    probe.write_bytes(b"RIFF" + b"\0" * 5000)
+                    tok = panel.service.token_for(probe) if panel.service else ""
+                    r2 = panel._eval("(async()=>{try{const h=await window.mfPc.call('hello');"
+                                     f"const f=await fetch(mfPc.url('{tok}'));const b=await f.arrayBuffer();"
+                                     "return JSON.stringify({ok:true,v:h.version,status:f.status,bytes:b.byteLength,"
+                                     "promo:!document.querySelector('#navPromo').hidden})}"
+                                     "catch(e){return JSON.stringify({ok:false,e:String(e)})}})()")
+                    res["bridge"] = json.loads(r2) if isinstance(r2, str) else r2
                     if E.WINDOWS:
                         import ctypes
                         res["parent_ok"] = bool(ctypes.windll.user32.GetParent(panel.hwnd))
@@ -780,7 +793,7 @@ def manager_window(selftest=False, embedtest=None):
     nav_ind = tk.Frame(side, bg=ACCENT2, width=3, height=24)  # indicateur de la page, il glisse
     pages, nav_items = {}, {}
     current = {"page": None}
-    NAV_ICONS = {"search": "search", "home": "list-music", "prods": "folder-open", "flmake": "file-music",
+    NAV_ICONS = {"search": "search", "promo": "sparkles", "home": "list-music", "prods": "folder-open", "flmake": "file-music",
                  "devices": "smartphone", "settings": "settings"}
 
     def nav_item(key, text, glyph):
@@ -808,7 +821,7 @@ def manager_window(selftest=False, embedtest=None):
         t.configure(fg=FG if (on or hover) else MUTED)
         g.configure(image=ico(NAV_ICONS.get(key, "circle-dot"), 20, "accent" if on else "fg" if hover else "muted"))
 
-    for k, txt, gl in (("search", "Rechercher", ""), ("home", "File d'attente", ""), ("prods", "Mes projets FL", ""), ("flmake", "FLmake", ""),
+    for k, txt, gl in (("search", "Rechercher", ""), ("promo", "Promo", ""), ("home", "File d'attente", ""), ("prods", "Mes projets FL", ""), ("flmake", "FLmake", ""),
                        ("devices", "Appareils", ""), ("settings", "Réglages", "")):
         nav_item(k, txt, gl)
 
@@ -942,7 +955,7 @@ def manager_window(selftest=False, embedtest=None):
             if k != key:
                 f.place_forget()
         f, t, s = pages[key]
-        if key == "search":
+        if key in ("search", "promo"):
             head.pack_forget()
         elif not head.winfo_ismapped():
             head.pack(fill="x", before=body)
@@ -957,7 +970,7 @@ def manager_window(selftest=False, embedtest=None):
         if slide["job"]:
             root.after_cancel(slide["job"])
             slide["job"] = None
-        t0, start = time.time(), (0 if same or key == "search" else 28)
+        t0, start = time.time(), (0 if same or key in ("search", "promo") else 28)
 
         def step():
             k = min(1.0, (time.time() - t0) / 0.18)
@@ -983,6 +996,39 @@ def manager_window(selftest=False, embedtest=None):
     web_btns.pack()
     panel = E.Panel()
     web = {"seen": None, "preload": None}
+    pages["promo"] = (s_outer, "Promo", "")
+
+    # Promo : le site demande un fichier → fenêtre de choix de Windows (dans le fil de Tk)
+    ui_q = queue.Queue()
+
+    def on_ui(fn, wait=900):
+        box, ev = {}, threading.Event()
+        ui_q.put((fn, box, ev))
+        ev.wait(wait)
+        if "e" in box:
+            raise box["e"]
+        return box.get("r")
+
+    def ui_pump():
+        try:
+            while True:
+                fn, box, ev = ui_q.get_nowait()
+                try:
+                    box["r"] = fn()
+                except Exception as e:
+                    box["e"] = e
+                ev.set()
+        except queue.Empty:
+            pass
+        root.after(120, ui_pump)
+    ui_pump()
+
+    def ask_file(kind):
+        types = ([("Vidéos", "*.mp4 *.mov *.webm *.mkv *.m4v")] if kind == "video"
+                 else [("Sons", "*.wav *.mp3 *.m4a *.flac *.ogg *.aac")])
+        return on_ui(lambda: filedialog.askopenfilename(parent=root, title="Choisis ta vidéo" if kind == "video" else "Choisis ton son",
+                                                         filetypes=types) or None)
+    panel.service = PM.Service(ask_file=ask_file)
 
     def web_start(force=False):
         if not E.WINDOWS:
@@ -1019,7 +1065,7 @@ def manager_window(selftest=False, embedtest=None):
         if st == "ready" and not panel.alive():  # navigateur fermé : on le relance à la prochaine visite
             panel.state = "idle"
             st = "idle"
-            if current["page"] == "search":
+            if current["page"] in ("search", "promo"):
                 web_start()
         if (st, panel.detail) != web["seen"]:
             web["seen"] = (st, panel.detail)
@@ -1028,7 +1074,13 @@ def manager_window(selftest=False, embedtest=None):
         root.after(300, web_poll)
 
     web_host.bind("<Configure>", lambda e: panel.resize(e.width, e.height))
-    on_show["search"] = lambda: (web_start(), root.after(200, panel.focus))
+    def open_view(view):
+        panel.service.want_view = view
+        web_start()
+        panel.event({"type": "open", "view": view})
+        root.after(200, panel.focus)
+    on_show["search"] = lambda: open_view("search")
+    on_show["promo"] = lambda: open_view("promo")
     web_poll()
 
     # ================= Accueil
@@ -2500,6 +2552,7 @@ def manager_window(selftest=False, embedtest=None):
     root.bind("<Configure>", lambda e: e.widget is root and current["page"] in nav_items and move_indicator(current["page"], instant=True), add="+")
     tick_player()
     def quit_all():
+        panel.service.close()
         panel.close()
         root.destroy()
     root.protocol("WM_DELETE_WINDOW", quit_all)
