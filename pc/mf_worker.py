@@ -21,6 +21,7 @@ import threading
 
 import mf_core as C
 import mf_flmake as FM
+import mf_lan as LAN
 import mf_library as L
 import mf_keybpm as K
 import mf_tunebat as T
@@ -642,9 +643,10 @@ class Remote:
         """Renvoie "ok", "budget" (limite ntfy.sh : à refaire plus tard) ou "error"."""
         meta = {"aud": f["id"], "p": it.id, "n": f["name"][:140], "v": f["label"], "m": int(f["mtime"])}
         reserve = self.LIB_RESERVE if auto else 0  # la synchro laisse toujours de la place à la liste
-        if auto and not C.ntfy_room(keep=keep):  # plus assez d'envois aujourd'hui : ça repartira plus tard
+        lan = C.lan_active(code)  # même Wi-Fi : en direct, aucune limite de ntfy.sh
+        if auto and not lan and not C.ntfy_room(keep=keep):  # plus assez d'envois aujourd'hui : ça repartira plus tard
             return "budget"
-        if not self._budget(1_000_000 + reserve):
+        if not lan and not self._budget(1_000_000 + reserve):
             if not auto:
                 C.reply(code, {"aud": f["id"], "err": "limite d'envoi atteinte (ntfy.sh) : réessaie dans un moment"})
             return "budget"
@@ -655,7 +657,7 @@ class Remote:
             if not auto:
                 C.reply(code, {"aud": f["id"], "err": f"copie d'écoute impossible : {e}"[:200]})
             return "error"
-        if not self._budget(len(data) + reserve):
+        if not lan and not self._budget(len(data) + reserve):
             if not auto:
                 C.reply(code, {"aud": f["id"], "err": "limite d'envoi atteinte (ntfy.sh) : réessaie dans un moment"})
             return "budget"
@@ -667,7 +669,8 @@ class Remote:
                 self.blocked_until = time.time() + 900  # ntfy.sh refuse : on réessaie dans 15 min
                 return "budget"
         now = time.time()
-        self._note(len(data))
+        if not lan:
+            self._note(len(data))
         pushed = self.st.setdefault("pushed", {})
         pushed[f["id"]] = int(now)
         self.st["pushed"] = dict(list(pushed.items())[-500:])
@@ -699,7 +702,8 @@ class Remote:
             code = d["code"]
             q = self.queue.get(code) or []
             done_dev = self.st.get("sent_dev", {}).get(code, {})
-            while q and sent < self.SYNC_PER_TICK and now >= self.blocked_until:
+            lan = C.lan_active(code)
+            while q and sent < (self.SYNC_PER_TICK * 3 if lan else self.SYNC_PER_TICK) and (lan or now >= self.blocked_until):
                 fid = q[0]
                 hit = self.fmap.get(fid)
                 rec = done_dev.get(fid)
@@ -835,12 +839,15 @@ class Remote:
             # à chaque changement : seulement aux appareils utilisés depuis 30 min (les autres la
             # demandent en ouvrant l'onglet PC) ; ntfy.sh limite les envois par jour
             active = now - self.active.get(code, 0) < 1800 or recently_used(st, code, 1800)
-            if not (code in self.want or (changed and active and C.ntfy_room(keep=C.KEEP_LIB) and (final or now - self.sent_at.get(code, 0) > 180))):
+            room = C.lan_active(code) or C.ntfy_room(keep=C.KEEP_LIB)
+            if not (code in self.want or (changed and active and room and (final or now - self.sent_at.get(code, 0) > 180))):
                 continue
+            lan = C.lan_active(code)
             if C.publish_attachment(code, body, "projets.json", {"lib": 1, "n": len(lib["projects"]), "at": lib["at"]}):
                 self.sig[code], self.sent_at[code] = sig, now
                 self.want.discard(code)
-                self._note(len(body))  # compte aussi dans les 20 Mo de ntfy.sh
+                if not lan:
+                    self._note(len(body))  # compte aussi dans les 20 Mo de ntfy.sh
         self.fmap = fmap
         if not final:
             self.new_sounds(devices, fmap, now)
@@ -1033,6 +1040,14 @@ def worker(once=False):
         except OSError:
             pass
     stop_watch = C.watch_windows_shutdown(windows_off)
+    # même Wi-Fi : le téléphone parle au PC en direct, sans ntfy.sh (ni sa limite d'envois)
+    if not once:
+        try:
+            hub = LAN.start()
+            log(f"Wi-Fi : le téléphone peut joindre le PC en direct ({', '.join(hub.addresses()) or 'pas de réseau local'})."
+                if hub else "Wi-Fi : canal direct indisponible (port occupé) : tout passe par ntfy.sh.")
+        except Exception as e:
+            log(f"Wi-Fi : canal direct indisponible ({e})")
     try:
         while True:
             if P.stop.exists():
@@ -1066,6 +1081,7 @@ def worker(once=False):
                         announced.add(d["code"])
                         alive_at[d["code"]] = time.time()
                         remote.want.add(d["code"])  # la liste des projets part tout de suite
+                LAN.resend_unfetched()  # téléphone parti du Wi-Fi : ses réponses repartent par ntfy.sh
                 # combien d'envois il reste aujourd'hui à cette connexion (téléphone compris)
                 left = C.ntfy_check()
                 if left is not None and left <= C.KEEP_FILL and not st.get("low_logged") == time.strftime("%Y-%m-%d"):
@@ -1075,6 +1091,8 @@ def worker(once=False):
                 # réessayé 5 min plus tard s'il n'est pas parti. Prioritaire sur tout l'automatique.
                 for d in devices:  # seulement aux appareils utilisés ces 3 derniers jours (limite d'envois)
                     code = d["code"]
+                    if C.lan_active(code):  # il relève en direct : il sait déjà que le PC est là
+                        alive_at[code] = time.time()
                     if code in announced and time.time() - alive_at.get(code, 0) > 3000 and recently_used(st, code, 3 * 86400) \
                             and time.time() - alive_at.get(("try", code), 0) > 300 and C.ntfy_room(keep=C.KEEP_ALIVE):
                         alive_at[("try", code)] = time.time()

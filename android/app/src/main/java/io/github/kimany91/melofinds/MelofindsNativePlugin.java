@@ -89,6 +89,7 @@ public class MelofindsNativePlugin extends Plugin {
         features.put("usedBy");
         features.put("ytPlaylist");
         features.put("phone");
+        features.put("wifiPc");
         r.put("features", features);
         call.resolve(r);
     }
@@ -135,6 +136,39 @@ public class MelofindsNativePlugin extends Plugin {
             })
             .addOnCanceledListener(() -> call.reject("Annulé", "cancel"))
             .addOnFailureListener(e -> call.reject("Scanner indisponible : " + e.getMessage(), "fail"));
+    }
+
+    // ------------------------------------------------------------------ PC sur le même Wi-Fi
+
+    private static final ExecutorService LAN = Executors.newFixedThreadPool(4);
+
+    /**
+     * Requête directe à Melofinds PC sur le réseau local (voir LanHttp : adresses privées et
+     * chemins « /mf/… » seulement). { host, port, path, body?, timeout?, bin? } → { status, text | b64 }.
+     */
+    @PluginMethod
+    public void wifiPc(PluginCall call) {
+        String host = call.getString("host", "");
+        int port = call.getInt("port", 0);
+        String path = call.getString("path", "");
+        String body = call.getString("body", null);
+        int timeout = Math.max(1000, Math.min(35000, call.getInt("timeout", 8000)));
+        boolean bin = Boolean.TRUE.equals(call.getBoolean("bin", false));
+        if (!LanHttp.allowed(host, port, path)) { call.reject("Adresse refusée", "refused"); return; }
+        if (body != null && body.length() > 20000) { call.reject("Envoi trop gros", "refused"); return; }
+        LAN.submit(() -> {
+            try {
+                LanHttp.Res r = LanHttp.request(host, port, body != null ? "POST" : "GET", path,
+                    body != null ? body.getBytes(java.nio.charset.StandardCharsets.UTF_8) : null, timeout);
+                JSObject o = new JSObject();
+                o.put("status", r.status);
+                if (bin) o.put("b64", android.util.Base64.encodeToString(r.body, android.util.Base64.NO_WRAP));
+                else o.put("text", new String(r.body, java.nio.charset.StandardCharsets.UTF_8));
+                call.resolve(o);
+            } catch (Exception e) {
+                call.reject("PC injoignable sur le Wi-Fi", "net");
+            }
+        });
     }
 
     // descriptions complètes : 6 à la fois

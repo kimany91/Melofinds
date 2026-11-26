@@ -2712,3 +2712,113 @@ class DossierFourreTout(unittest.TestCase):
         time.sleep(1.1)
         (fl / "AILES 0.3.flp").write_bytes(b"FLhd")
         self.assertNotEqual(L.folder_sig(cfg), sig1)  # un nouveau fichier : la liste sera relue
+
+
+import urllib.request
+import urllib.error
+
+
+class WifiDirect(unittest.TestCase):
+    """Même Wi-Fi : le téléphone parle au programme du PC en direct (sans ntfy.sh ni sa limite)."""
+    CODE = "melofinds-" + "c" * 32
+
+    def setUp(self):
+        import mf_lan
+        self.L = mf_lan
+        self.d = Path(tempfile.mkdtemp(prefix="mf-wifi-"))
+        mpc.P.set(self.d)
+        cfg = mpc.load_config()
+        inst.add_device(cfg, f"{self.CODE}.{KEY}", "Téléphone")
+        mpc.save_config(cfg)
+        self.hub = mf_lan.start(port=0)
+        self.base = f"http://127.0.0.1:{self.hub.port}"
+        self.posted = []
+        self.p = mock.patch.object(mpc, "http_post", lambda url, data, timeout=15: self.posted.append(url) or b"{}")
+        self.p.start()
+
+    def tearDown(self):
+        self.p.stop()
+        self.L.stop()
+        mpc.LOCAL_CODES.discard(self.CODE)
+
+    def get(self, path, timeout=10):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            with opener.open(self.base + path, timeout=timeout) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+    def post(self, path, body):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            with opener.open(urllib.request.Request(self.base + path, data=body.encode()), timeout=10) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+    def test_adresses_locales_seulement(self):
+        P = self.L.private
+        for ip in ("192.168.1.20", "10.0.0.3", "172.20.1.1", "127.0.0.1", "::ffff:192.168.0.2"):
+            self.assertTrue(P(ip), ip)
+        for ip in ("8.8.8.8", "172.32.0.1", "169.254.1.1", "0.0.0.0", "pas une ip"):
+            self.assertFalse(P(ip), ip)
+
+    def test_appareil_inconnu_refuse(self):
+        st, _ = self.post("/mf/melofinds-" + "d" * 32 + "/send", "{}")
+        self.assertEqual(st, 403)
+        st, _ = self.get("/mf/pas-un-code/recv")
+        self.assertEqual(st, 404)
+        self.assertFalse(any(mpc.P.inbox.glob("*.json")) if mpc.P.inbox.exists() else False)
+
+    def test_envoi_puis_reponse_en_direct(self):
+        st, body = self.post(f"/mf/{self.CODE}/send", '{"signé":1}')
+        self.assertEqual(st, 200)
+        evs = mpc.inbox_take()
+        self.assertEqual([(e["topic"], e["message"]) for e in evs], [(self.CODE, '{"signé":1}')])
+        self.assertNotIn(self.CODE, mpc.LOCAL_CODES)  # pas le site du logiciel : pas de boîte de sortie
+        self.assertTrue(mpc.lan_active(self.CODE))
+        self.assertTrue(mpc.reply(self.CODE, {"pong": "1", "version": "x"}))
+        self.assertTrue(mpc.publish_attachment(self.CODE, b"projets", "projets.json", {"lib": 1}))
+        self.assertEqual(self.posted, [])  # rien par ntfy.sh
+        st, raw = self.get(f"/mf/{self.CODE}/recv?since=0&wait=0")
+        d = json.loads(raw)
+        self.assertEqual(st, 200)
+        msgs = [json.loads(e["message"]) for e in d["ev"]]
+        self.assertEqual(msgs[0]["pong"], "1")
+        self.assertIn("lan", msgs[0])  # le téléphone apprend les adresses du PC
+        fid = d["ev"][1]["attachment"]["lan"]
+        self.assertEqual(self.get(f"/mf/{self.CODE}/file/{fid}"), (200, b"projets"))
+        self.assertEqual(self.get(f"/mf/{self.CODE}/file/{'0' * 24}")[0], 404)
+        st, raw = self.get(f"/mf/{self.CODE}/recv?since={d['seq']}&wait=0")
+        self.assertEqual(json.loads(raw)["ev"], [])
+
+    def test_attente_reveillee_par_une_reponse(self):
+        self.hub.seen[self.CODE] = time.time()
+        threading.Timer(0.3, lambda: mpc.reply(self.CODE, {"v": "abc", "ok": True})).start()
+        t = time.time()
+        st, raw = self.get(f"/mf/{self.CODE}/recv?since=0&wait=10", timeout=15)
+        self.assertLess(time.time() - t, 5)
+        self.assertEqual(json.loads(json.loads(raw)["ev"][0]["message"])["v"], "abc")
+
+    def test_telephone_parti_repli_ntfy(self):
+        self.hub.seen[self.CODE] = time.time()
+        mpc.reply(self.CODE, {"v": "abc", "ok": True})
+        mpc.publish_attachment(self.CODE, b"son", "son.m4a", {"aud": "x"})
+        self.assertEqual(self.posted, [])
+        self.assertEqual(self.L.resend_unfetched(), 0)  # pas encore
+        for e in self.hub.events[self.CODE]:
+            e["_at"] -= 200
+        self.hub.seen[self.CODE] = 0
+        self.assertEqual(self.L.resend_unfetched(), 1)  # le message repart ; le son sera redemandé
+        self.assertEqual(len(self.posted), 1)
+        self.assertEqual(self.L.resend_unfetched(), 0)  # une seule fois
+        self.assertFalse(mpc.lan_active(self.CODE))
+        mpc.reply(self.CODE, {"v": "def"})
+        self.assertEqual(len(self.posted), 2)  # plus relevé en direct : ntfy.sh
+
+    def test_qr_code_avec_adresses(self):
+        url = mpc.pairing_url(self.CODE, KEY, ["192.168.1.20:47833"])
+        self.assertTrue(url.endswith(f"#pair={self.CODE}.{KEY}&lan=192.168.1.20:47833"))
+        self.assertTrue(mpc.pairing_url(self.CODE, KEY).endswith(f"#pair={self.CODE}.{KEY}"))
+

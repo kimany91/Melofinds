@@ -1283,7 +1283,7 @@ body.mobile .chan-txt b { font-size: 17px; }
         <button type="button" class="link" id="howBtn">Comment j’ai cherché</button>
       </div>
     </div>
-    <p class="build-stamp">Version du 26/11/2026 à 17:59</p>
+    <p class="build-stamp">Version du 26/11/2026 à 18:54</p>
   </section>
 
   <!-- ================= FAVORIS ================= -->
@@ -4404,7 +4404,9 @@ if (isNative()) {
       nativeYt.used = f.includes('usedBy');
       nativeYt.playlist = f.includes('ytPlaylist');
       nativeYt.phone = f.includes('phone');
+      nativeYt.wifi = f.includes('wifiPc');
       if (nativeYt.phone) phoneSetup();
+      if (nativeYt.wifi) wifiStart();
     } catch { /* ancienne version de l'APK */ }
     nativeYt.checked = true;
   })();
@@ -6883,7 +6885,7 @@ async function onPcDesc(d) {
   const url = pcAttachment(d);
   if (!url) return;
   let body;
-  try { const res = await fetch(url); if (!res.ok) return; body = await res.json(); } catch { return; }
+  try { const res = await pcGet(url); if (!res.ok) return; body = await res.json(); } catch { return; }
   const found = body && typeof body.d === 'object' ? body.d : {};
   const n = applyDescFound(found);
   if (n) setStatus(`Ton PC a lu ${n} description${n > 1 ? 's' : ''} : licences vérifiées`, 1, true);
@@ -8561,6 +8563,8 @@ async function ntfyPublish(payload) {
   if (br) {
     try { const r = await br.call('send', { code: pcCode(), body }); pcLocal.at = Date.now(); pcLocal.online = !!r?.online; return; } catch { /* repli : ntfy.sh */ }
   }
+  // Appli Android sur le même Wi-Fi que le PC : en direct, sans ntfy.sh ni sa limite d'envois
+  if (await wifiSend(body)) return;
   let last = null;
   for (const wait of [0, 1500, 6000]) {  // coupure d'une seconde, ou ntfy.sh qui demande de ralentir (429)
     if (wait) await new Promise((r) => setTimeout(r, wait));
@@ -8600,6 +8604,7 @@ function handlePcMsg(d) {
     }
     return;
   }
+  if (Array.isArray(m.lan)) wifiLearn(m.lan);
   if (m.pc === 'online' || m.pc === 'alive' || m.pc === 'offline' || m.pong) {
     const at = (d.time || 0) * 1000;
     if (at >= (pc.info?.at || 0)) {
@@ -8645,6 +8650,77 @@ function handlePcMsg(d) {
     toast(m.ok ? (m.deja ? `Déjà sur ton PC : ${String(m.file || displayTitle(cur.t)).slice(0, 80)}` : m.lic === 'fnp' ? `Sur ton PC : ${displayTitle(cur.t)} · le PC a lu toute la description : pas libre pour Spotify, rangée en [F]` : `Sur ton PC : ${displayTitle(cur.t)}`)
       : `Le PC n’a pas pu télécharger : ${String(m.err || '').slice(0, 80)}`);
   }}
+// --- Même Wi-Fi que le PC (appli Android) : le téléphone parle au programme du PC en direct,
+// sans ntfy.sh. Chez toi, le téléphone et le PC partagent la limite d'envois de ntfy.sh (même
+// connexion internet) : en direct, plus de limite. Loin de chez toi : ntfy.sh, comme avant.
+const WIFI_RE = /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}):(\d{4,5})$/;
+const wifi = { addrs: (local.get('pcWifi', []) || []).filter((a) => WIFI_RE.test(a)).slice(0, 6), seq: 0, ok: 0, fail: 0, running: false };
+const wifiOn = () => Date.now() - wifi.ok < 75e3;
+function wifiLearn(list, first = false) {
+  const got = (list || []).map(String).filter((a) => WIFI_RE.test(a)).slice(0, 4);
+  if (!got.length) return;
+  const next = first ? [...got, ...wifi.addrs.filter((a) => !got.includes(a))] : [...wifi.addrs.filter((a) => got.includes(a)), ...got.filter((a) => !wifi.addrs.includes(a))];
+  wifi.addrs = next.slice(0, 6);
+  local.set('pcWifi', wifi.addrs);
+  wifiStart();
+}
+async function wifiCall(path, body, timeout, bin = false) {
+  if (!nativeYt.wifi || !wifi.addrs.length) return null;
+  for (const a of [...wifi.addrs]) {
+    const [host, port] = a.split(':');
+    try {
+      const r = await mfn().wifiPc({ host, port: Number(port), path, ...(body != null ? { body } : {}), timeout, bin });
+      if (wifi.addrs[0] !== a) { wifi.addrs = [a, ...wifi.addrs.filter((x) => x !== a)]; local.set('pcWifi', wifi.addrs); }
+      return r;
+    } catch { /* adresse suivante */ }
+  }
+  return null;
+}
+async function wifiSend(body) {
+  if (!nativeYt.wifi || !wifi.addrs.length || !pcCode() || (wifi.fail && Date.now() - wifi.fail < 20e3 && !wifiOn())) return false;
+  const r = await wifiCall(`/mf/${pcCode()}/send`, body, 3000);
+  if (r?.status === 200) { wifi.ok = Date.now(); wifiStart(); return true; }
+  wifi.fail = Date.now();
+  return false;
+}
+// Relève les réponses du PC en continu, tant que l'appli est ouverte et le PC joignable
+async function wifiStart() {
+  if (wifi.running || !nativeYt.wifi || !wifi.addrs.length || !pcCode()) return;
+  wifi.running = true;
+  try {
+    while (document.visibilityState === 'visible' && wifi.addrs.length && pcCode()) {
+      const code = pcCode();
+      const r = await wifiCall(`/mf/${code}/recv?since=${wifi.seq}&wait=20`, null, 26000);
+      if (code !== pcCode()) continue;
+      let d = null;
+      try { d = r?.status === 200 ? JSON.parse(r.text || '{}') : null; } catch { d = null; }
+      if (!d) {
+        const was = wifiOn();
+        wifi.ok = 0;
+        if (was) syncPcUi();
+        await new Promise((res) => setTimeout(res, 30e3));
+        continue;
+      }
+      const was = wifiOn();
+      wifi.ok = Date.now();
+      if (Number(d.seq) < wifi.seq) wifi.seq = 0;  // le programme du PC a redémarré
+      // le PC répond en direct (il ne répond qu'à un appareil relié) : il est en ligne
+      pc.info = { ...(pc.info || {}), at: Date.now(), offline: false, why: '', version: String(d.v || pc.info?.version || '') };
+      local.set('pcInfo', pc.info);
+      for (const ev of Array.isArray(d.ev) ? d.ev : []) {
+        wifi.seq = Math.max(wifi.seq, Number(ev.seq) || 0);
+        const fid = String(ev?.attachment?.lan || '');
+        if (/^[a-f0-9]{24}$/.test(fid)) ev.attachment = { ...ev.attachment, url: `wifi:${fid}` };
+        handlePcMsg(ev);
+      }
+      if (!was) { syncPcUi(); pcPairDone(); }
+    }
+  } finally {
+    wifi.running = false;
+  }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wifiStart(); });
+
 function listenPc() {
   if (!WEB || pc.es || typeof EventSource === 'undefined') return;
   const since = Math.floor((Date.now() - 12 * 3600e3) / 1000);
@@ -8731,7 +8807,7 @@ async function sendToPc(item) {
 // renvoyée avant d'expirer (et dès que le réseau revient) : elle arrive dès que
 // le PC se rallume, même des jours plus tard. Le PC ignore les doublons.
 // Le PC se signale toutes les 50 min (limite de 250 envois par jour sur ntfy.sh)
-const pcOn = () => !!pc.info && !pc.info.offline && Date.now() - (pc.info.at || 0) < 110 * 60e3;
+const pcOn = () => (!!pc.info && !pc.info.offline && Date.now() - (pc.info.at || 0) < 110 * 60e3) || wifiOn();
 let resending = false;
 async function resendPending() {
   if (!WEB || !pc.info || resending || !navigator.onLine) return;
@@ -8896,8 +8972,18 @@ const pcAudioStore = {
 
 const pcAttachment = (d) => {
   const u = String(d?.attachment?.url || '');
-  return u.startsWith(`${NTFY}/file/`) ? u : null;
+  return u.startsWith(`${NTFY}/file/`) || /^wifi:[a-f0-9]{24}$/.test(u) ? u : null;
 };
+// Fichier envoyé par le PC : par ntfy.sh, ou en direct sur le Wi-Fi (« wifi:<id> »)
+async function pcGet(u) {
+  if (!u.startsWith('wifi:')) return fetch(u);
+  const r = await wifiCall(`/mf/${pcCode()}/file/${u.slice(5)}`, null, 30000, true);
+  if (!r || r.status !== 200) return new Response(null, { status: r?.status || 502 });
+  const bin = atob(r.b64 || '');
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Response(bytes, { status: 200 });
+}
 function pcSeen(d) {
   if (!pc.info) return;
   pc.info = { ...pc.info, at: Math.max(pc.info.at || 0, (d.time || 0) * 1000), offline: false };
@@ -8955,7 +9041,7 @@ async function onPcLib(d, m) {
   const at = Number(m.at) || 0;
   if (!url || (pcLib.data && pcLib.data.at >= at)) return;
   try {
-    const res = await fetch(url);
+    const res = await pcGet(url);
     if (!res.ok) return;
     const lib = sanitizeLib(await res.json());
     if (!lib || (pcLib.data && pcLib.data.at >= lib.at)) return;
@@ -8989,7 +9075,7 @@ async function onPcAudio(d, m, fresh) {
   if (e.urls.some((x) => !x)) return;
   delete pcLib.parts[key];
   try {
-    const blobs = await Promise.all(e.urls.map(async (u) => { const r = await fetch(u); if (!r.ok) throw new Error(String(r.status)); return r.blob(); }));
+    const blobs = await Promise.all(e.urls.map(async (u) => { const r = await pcGet(u); if (!r.ok) throw new Error(String(r.status)); return r.blob(); }));
     const blob = new Blob(blobs, { type: 'audio/mp4' });
     if (!blob.size || blob.size > 16e6) return;
     await pcAudioStore.put({ id: fid, m: mt, blob, n: String(m.n || '').slice(0, 140), v: String(m.v || '').slice(0, 20), p: String(m.p || '').slice(0, 260), at: Date.now() });
@@ -9478,7 +9564,8 @@ function pairFromText(t) {
   let raw = m ? m[1] : s;
   try { raw = decodeURIComponent(raw); } catch { /* tel quel */ }
   const p = raw.toLowerCase().match(PAIR_RE);
-  return p ? { code: p[1], key: p[2] } : null;
+  const lan = (s.match(/[#&]lan=([^&\s]+)/) || [])[1] || '';
+  return p ? { code: p[1], key: p[2], lan: decodeURIComponent(lan).split(',').filter(Boolean) } : null;
 }
 async function pcPairWith(p, pcwin = false) {
   if (!WEB || !p) return;
@@ -9493,19 +9580,24 @@ async function pcPairWith(p, pcwin = false) {
     pcLib.data = null;
     pcLib.cmds = [];
     savePcLib();
+    wifi.seq = 0;
   }
+  if (p.lan?.length) wifiLearn(p.lan, true);
   listenPc();
+  wifiStart();
   haptic();
   // « Relié » seulement quand le PC a répondu (pcPairDone, appelé par listenPc)
   const job = { at: Date.now() };
   pc.pairing = job;
   toast(pcwin ? 'Fenêtre Melofinds : je la relie à ce PC…' : 'QR code lu : je préviens ton PC…');
   syncPcUi();
-  const ping = async () => { try { await ntfyPublish({ ping: 1 }); return true; } catch { return false; } };
+  let pairErr = null;
+  const ping = async () => { try { await ntfyPublish({ ping: 1 }); return true; } catch (e) { pairErr = e; return false; } };
   if (!(await ping())) {
     if (pc.pairing === job) pc.pairing = null;
     haptic('warn');
-    toast('Envoi impossible : vérifie ta connexion internet, puis rescanne le QR code du PC');
+    toast(pairErr?.limit ? 'ntfy.sh (le relais gratuit) bloque les envois de ta connexion pour aujourd’hui. Mets le téléphone sur le même Wi-Fi que le PC, mets Melofinds PC à jour, puis rescanne le QR code : ça passera en direct.'
+      : 'Envoi impossible : vérifie ta connexion internet, puis rescanne le QR code du PC');
     return;
   }
   setTimeout(() => { if (pc.pairing === job) ping(); }, 20e3);

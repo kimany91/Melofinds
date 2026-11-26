@@ -2130,7 +2130,12 @@ def manager_window(selftest=False, embedtest=None):
         label(f, "Ajouter un appareil", 14, bold=True).pack(anchor="w")
         # 1) QR code : le PC crée le code, le téléphone le scanne (rien à copier)
         qcode, qkey = C.new_pairing()
-        rows = C.qr_rows(C.pairing_url(qcode, qkey))
+        try:  # adresses du PC sur le Wi-Fi : le téléphone le joint en direct (sans la limite de ntfy.sh)
+            import mf_lan
+            wifi = mf_lan.pairing_addresses()
+        except Exception:
+            wifi = []
+        rows = C.qr_rows(C.pairing_url(qcode, qkey, wifi))
         qr = {"dev": None, "done": False, "msg": None}
         qstop = threading.Event()
         if rows:
@@ -2163,6 +2168,9 @@ def manager_window(selftest=False, embedtest=None):
             cv.pack(anchor="center")
             qstat = label(f, "En attente du téléphone…", 10, MUTED)
             qstat.pack(anchor="center", pady=(8, 4))
+            if wifi:
+                label(f, "Même Wi-Fi que le PC : le téléphone le joint en direct, sans limite. Si Windows demande "
+                         "l'accès au réseau pour Melofinds PC, clique « Autoriser ».", 9, MUTED, wrap=520).pack(anchor="w", pady=(2, 0))
             label(f, "Ou colle le code du téléphone (Melofinds Web → Mon PC → Copier) :", 9, MUTED).pack(anchor="w", pady=(10, 6))
         else:
             label(f, "Sur le téléphone : Melofinds Web → Mon PC → Copier, puis colle le code ici.", 9, MUTED).pack(anchor="w", pady=(4, 12))

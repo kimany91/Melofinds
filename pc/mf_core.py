@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.29.0"
+VERSION = "1.30.0"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -365,8 +365,10 @@ def new_pairing():
     return f"melofinds-{secrets.token_hex(16)}", secrets.token_hex(32)
 
 
-def pairing_url(code, key):
-    return f"{WEB_APP}#pair={code}.{key}"
+def pairing_url(code, key, lan=None):
+    """Lien du QR code ; `lan` : adresses du PC sur le Wi-Fi (le téléphone le joint en direct)."""
+    extra = "&lan=" + ",".join(lan) if lan else ""
+    return f"{WEB_APP}#pair={code}.{key}{extra}"
 
 
 def qr_rows(text):
@@ -834,16 +836,23 @@ def http_post(url, data, timeout=15):
 # les réponses à ces appareils partent aussi par une boîte locale (lue par le logiciel).
 LOCAL_CODES = set()
 INBOX_MAX = 20_000
+# Canal direct sur le même Wi-Fi (mf_lan.Hub), dans le programme en ligne seulement
+LAN = None
 
 
-def inbox_put(code, body):
+def lan_active(code):
+    """Le téléphone relève ses réponses en direct sur le Wi-Fi en ce moment."""
+    return LAN is not None and LAN.active(code)
+
+
+def inbox_put(code, body, lan=False):
     """Envoi signé du site (fenêtre du logiciel) → boîte du programme en ligne. Renvoie le fichier."""
     if not CODE_RE.match(str(code or "")) or not isinstance(body, str) or not body or len(body) > INBOX_MAX:
         raise ValueError("envoi refusé")
     P.inbox.mkdir(parents=True, exist_ok=True)
     f = P.inbox / f"{time.time():.6f}-{secrets.token_hex(4)}.json"
     tmp = f.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"code": code, "message": body, "time": int(time.time())}), encoding="utf-8")
+    tmp.write_text(json.dumps({"code": code, "message": body, "time": int(time.time()), "lan": bool(lan)}), encoding="utf-8")
     tmp.replace(f)
     return f
 
@@ -862,7 +871,8 @@ def inbox_take():
         except (OSError, ValueError):
             continue
         if isinstance(d, dict) and CODE_RE.match(str(d.get("code") or "")) and isinstance(d.get("message"), str):
-            LOCAL_CODES.add(d["code"])
+            if not d.get("lan"):  # le site dans le logiciel (pas le téléphone sur le Wi-Fi)
+                LOCAL_CODES.add(d["code"])
             out.append({"id": f"local-{f.stem}", "time": int(d.get("time") or time.time()), "event": "message",
                         "topic": d["code"], "message": d["message"][:INBOX_MAX], "local": True})
     return out
@@ -984,9 +994,18 @@ def ntfy_room(auto=True, keep=60):
 
 
 def reply(code, payload, timeout=15):
-    """Prévient l'app (sujet <code>-ok) ; le site dans le logiciel l'apprend aussi tout de suite (boîte locale)."""
+    """Prévient l'app (sujet <code>-ok) ; le site dans le logiciel l'apprend aussi tout de suite (boîte locale).
+    Téléphone sur le même Wi-Fi : en direct, sans ntfy.sh (ni sa limite d'envois)."""
     if code in LOCAL_CODES:
         outbox_put(code, payload)
+    if LAN is not None and ("pc" in payload or "pong" in payload):
+        payload = {**payload, "lan": LAN.addresses()}  # le téléphone apprend où joindre le PC en direct
+    if lan_active(code):
+        return LAN.push(code, payload)
+    return reply_ntfy(code, payload, timeout)
+
+
+def reply_ntfy(code, payload, timeout=15):
     try:
         http_post(f"{NTFY}/{code}-ok", json.dumps(payload, ensure_ascii=False).encode("utf-8"), timeout=timeout)
         ntfy_note()
@@ -1052,6 +1071,8 @@ def video_descriptions(ids, workers=6):
 
 def publish_attachment(code, data, filename, meta, timeout=60):
     """Envoie un fichier (pièce jointe) à l'app, avec un petit message JSON. Renvoie True/False."""
+    if lan_active(code):  # même Wi-Fi : en direct
+        return LAN.push(code, meta, data, filename)
     headers = {"User-Agent": f"melofinds-pc/{VERSION}", "Filename": re.sub(r"[^\w.\-]", "_", filename)[:80],
                "X-Message": json.dumps(meta, ensure_ascii=True, separators=(",", ":"))}
     try:
