@@ -312,6 +312,27 @@ def clean_lines(lines, dur=None):
     return out[:400]
 
 
+def _run_whisper(cmd, exe, dur, say):
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                            creationflags=C.NO_WINDOW, cwd=str(exe.parent))
+    tail = []
+    end = time.time() + max(600, dur * 30)
+    for raw in iter(proc.stdout.readline, b""):
+        line = raw.decode("utf-8", "replace").strip()
+        if line:
+            tail = (tail + [line])[-12:]
+        m = re.search(r"progress\s*=\s*(\d+)%", line)
+        if m:
+            say("Écoute des paroles…", int(m.group(1)))
+        if time.time() > end:
+            proc.kill()
+            raise PromoError("la transcription a pris trop de temps")
+    proc.wait(timeout=60)
+    if proc.returncode != 0:
+        C.log("whisper : " + " | ".join(tail[-6:]))
+    return proc.returncode, tail
+
+
 def audio_duration(path):
     d = C.audio_seconds(path)
     return round(d, 2) if d else None
@@ -339,34 +360,29 @@ def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr"
         if r.returncode != 0 or not wav.exists():
             raise PromoError(f"son illisible : {C.last_line(r.stderr)}")
         say("Écoute des paroles…", 0)
-        cmd = [str(exe), "-m", str(model), "-f", str(wav), "-l", lang, "-ojf", "-of", str(Path(tmp) / "paroles"),
-               "-t", str(threads or max(2, min(8, (os.cpu_count() or 4)))), "-pp", "--dtw", MODEL_DTW, "--prompt", PROMPT]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                creationflags=C.NO_WINDOW, cwd=str(exe.parent))
-        tail = []
-        end = time.time() + max(600, dur * 30)
-        for raw in iter(proc.stdout.readline, b""):
-            line = raw.decode("utf-8", "replace").strip()
-            if line:
-                tail = (tail + [line])[-8:]
-            m = re.search(r"progress\s*=\s*(\d+)%", line)
-            if m:
-                say("Écoute des paroles…", int(m.group(1)))
-            if time.time() > end:
-                proc.kill()
-                raise PromoError("la transcription a pris trop de temps")
-        proc.wait(timeout=60)
+        base = [str(exe), "-m", str(model), "-f", str(wav), "-l", lang, "-ojf", "-of", str(Path(tmp) / "paroles"),
+                "-t", str(threads or max(2, min(8, (os.cpu_count() or 4)))), "-pp", "--dtw", MODEL_DTW, "--prompt", PROMPT]
         out = Path(tmp) / "paroles.json"
-        if proc.returncode != 0 or not out.exists():
-            raise PromoError("transcription impossible : " + (tail[-1] if tail else f"code {proc.returncode}"))
+        # « -nfa » : l'alignement mot à mot (DTW) ne marche pas avec l'accélération « flash attention »
+        # (activée d'office dans les versions récentes) ; sans cette option si la version ne la connaît pas
+        for cmd in (base + ["-nfa"], base):
+            code, tail = _run_whisper(cmd, exe, dur, say)
+            if code == 0 and out.exists():
+                break
+            if not any(re.search(r"unknown|invalid|usage", t, re.I) for t in tail):
+                break
+        if code != 0 or not out.exists():
+            raise PromoError("transcription impossible : " + (tail[-1] if tail else f"code {code}"))
         data = json.loads(out.read_bytes().decode("utf-8", "surrogateescape"))
+    dtw = sum(1 for seg in data.get("transcription") or [] for t in seg.get("tokens") or []
+              if isinstance(t.get("t_dtw"), (int, float)) and t["t_dtw"] >= 0)
     words = []
     for w in words_from_json(data):
         s, e = w["s"] - pad, w["e"] - pad
         if e <= 0 or s >= dur:
             continue
         words.append({"w": w["w"], "s": round(max(0.0, s), 2), "e": round(min(dur, e), 2)})
-    return {"words": words, "lines": lines_from_words(words), "dur": round(dur, 2)}
+    return {"words": words, "lines": lines_from_words(words), "dur": round(dur, 2), "dtw": dtw}
 
 
 # ---------------------------------------------------------------------------

@@ -172,7 +172,7 @@ def promotest(out):
         t1 = time.time()
         r = PM.transcribe(song, 0, 12, None, lambda *a: None, lang="en")
         res["transcribe_s"] = round(time.time() - t1, 1)
-        res["words"], res["lines"] = r["words"], r["lines"]
+        res["words"], res["lines"], res["dtw_tokens"] = r["words"], r["lines"], r.get("dtw")
         t2 = time.time()
         vid = PM.render(bg, song, 0, 12, r["lines"], d / "promo.mp4", "impact")
         res["render_s"] = round(time.time() - t2, 1)
