@@ -2533,6 +2533,7 @@ def manager_window(selftest=False, embedtest=None):
 
     root._show, root._select, root._style, root._sounds = show, lambda cid: select(cid), lambda: do_style(), lambda: do_play()  # (tests : captures d'écran)
     if not selftest:
+        threading.Thread(target=C.refresh_icons, daemon=True).start()  # nouveau logo : icônes de Windows relues
         I.ensure_autostart()
         if I.wants_online() and not I.worker_running():
             I.start_worker()  # ouvrir le panneau remet en ligne s'il le faut

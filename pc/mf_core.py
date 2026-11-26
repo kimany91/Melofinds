@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.26.0"
+VERSION = "1.26.1"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -250,6 +250,31 @@ def save_config(cfg):
                 out.pop(k, None)
     _write_json(P.config, out, private=True)
     _remember_base(cfg)
+
+
+def refresh_icons(cfg=None, force=False):
+    """Windows garde les icônes des raccourcis en cache : après une mise à jour qui change le
+    logo, on lui demande de les relire (une fois par version). Sans effet hors de Windows."""
+    if not WINDOWS:
+        return False
+    cfg = cfg if cfg is not None else load_config()
+    if not force and cfg.get("icons_version") == VERSION:
+        return False
+    try:
+        exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "ie4uinit.exe"
+        if exe.exists():
+            subprocess.run([str(exe), "-show"], timeout=30, creationflags=NO_WINDOW, stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        import ctypes
+        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0x0000, None, None)  # SHCNE_ASSOCCHANGED : icônes relues
+    except (OSError, subprocess.SubprocessError, AttributeError) as e:
+        log(f"Icônes non rafraîchies : {e}")
+    cfg["icons_version"] = VERSION
+    try:
+        save_config(cfg)
+    except OSError:
+        pass
+    return True
 
 
 def load_state():

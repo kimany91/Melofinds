@@ -1442,6 +1442,31 @@ class FichierOccupe(unittest.TestCase):
             self.assertEqual(len(mpc.load_config()["devices"]), 1)
 
 
+class IconesWindows(unittest.TestCase):
+    """Nouveau logo : Windows relit ses icônes une fois par version (sinon l'ancien logo reste)."""
+
+    def setUp(self):
+        mpc.P.set(Path(tempfile.mkdtemp(prefix="mf-icones-")))
+
+    def test_une_fois_par_version(self):
+        calls = []
+        with mock.patch.object(mpc, "WINDOWS", True), mock.patch.object(mpc.subprocess, "run", lambda a, **k: calls.append(a)), \
+                mock.patch.object(Path, "exists", lambda self_: True if self_.name == "ie4uinit.exe" else Path.is_file(self_)):
+            import ctypes
+            if not hasattr(ctypes, "windll"):
+                ctypes.windll = mock.Mock()
+                self.addCleanup(delattr, ctypes, "windll")
+            self.assertTrue(mpc.refresh_icons())
+            self.assertFalse(mpc.refresh_icons())  # même version : rien
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1:], ["-show"])
+        self.assertEqual(mpc.load_config()["icons_version"], mpc.VERSION)
+
+    def test_rien_hors_windows(self):
+        with mock.patch.object(mpc, "WINDOWS", False):
+            self.assertFalse(mpc.refresh_icons())
+
+
 class LimiteNtfy(unittest.TestCase):
     """ntfy.sh limite les requêtes et les envois par connexion internet : avec plusieurs
     appareils (téléphone, fenêtre Melofinds…), le PC ne doit pas la dépasser."""
@@ -2360,6 +2385,20 @@ class RechercheDansLeLogiciel(unittest.TestCase):
         self.assertIn("--window-position=100,80", a)
         self.assertIn("--window-size=900,600", a)
         self.assertIn("--remote-debugging-port=0", a)
+
+    def test_la_page_du_site_pas_une_page_cachee_d_edge(self):
+        E = self.E
+        import io
+        lst = [{"type": "page", "url": "edge://shopping-sidebar/", "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/A"},
+               {"type": "service_worker", "url": "https://kimany91.github.io/Melofinds/sw.js", "webSocketDebuggerUrl": "ws://x/B"},
+               {"type": "page", "url": "https://kimany91.github.io/Melofinds/#pair=x", "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/C"}]
+        with mock.patch("urllib.request.urlopen", lambda *a, **k: io.BytesIO(json.dumps(lst).encode())):
+            self.assertTrue(E.site_page(1)["webSocketDebuggerUrl"].endswith("/C"))
+        with mock.patch("urllib.request.urlopen", lambda *a, **k: io.BytesIO(json.dumps(lst[:1]).encode())), \
+                mock.patch.object(E.time, "sleep", lambda s: None):
+            with self.assertRaises(E.EmbedError) as e:
+                E.site_page(1, seconds=0.01)
+            self.assertIn("edge://shopping-sidebar", str(e.exception))
 
     def test_hors_windows_erreur_propre(self):
         E = self.E

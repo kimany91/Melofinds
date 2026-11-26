@@ -98,6 +98,28 @@ def title_offset(m, host_w):
     return frame_sizes(m, host_w)[0]
 
 
+def site_page(port, prefix=None, seconds=15):
+    """La page du site Melofinds dans le navigateur (DevTools). Edge ouvre parfois d'autres pages
+    cachées (pages intégrées d'Edge) : on prend celle dont l'adresse est le site, jamais la
+    première venue."""
+    import urllib.request
+    prefix = prefix or C.WEB_APP
+    end, seen = time.time() + seconds, []
+    while time.time() < end:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=3) as r:
+                targets = json.loads(r.read())
+        except (OSError, ValueError):
+            targets = []
+        pages = [t for t in targets if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
+        seen = [str(t.get("url") or "")[:80] for t in pages]
+        mine = [t for t in pages if str(t.get("url") or "").startswith(prefix)]
+        if mine:
+            return mine[0]
+        time.sleep(0.3)
+    raise EmbedError(f"page Melofinds introuvable dans le navigateur ({', '.join(seen) or 'aucune page'})")
+
+
 if WINDOWS:
     import ctypes
     from ctypes import wintypes
@@ -262,7 +284,7 @@ class Panel:
         _U.ShowWindow(h, 5)  # SW_SHOW
 
     def _eval(self, expr):
-        page = T._page(self.port, 15)
+        page = site_page(self.port)
         c = T.CDP(page["webSocketDebuggerUrl"])
         try:
             return c.eval(expr)
@@ -416,7 +438,7 @@ class Bridge:
         import base64
         self.b64 = base64.b64encode
         self.service, self.allowed, self.log = service, allowed_prefix, log_fn
-        page = T._page(port, 15)
+        page = site_page(port, allowed_prefix)
         self.ws = T.WS(page["webSocketDebuggerUrl"])
         self.lock = threading.Lock()
         self.n = 0

@@ -39,6 +39,8 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=force
 RestartApplications=no
+; Windows garde les icônes en cache : on lui dit de les relire (nouveau logo après une mise à jour)
+ChangesAssociations=yes
 VersionInfoVersion={#AppVersion}
 VersionInfoCompany=Melofinds
 VersionInfoProductName=Melofinds PC
@@ -63,6 +65,8 @@ Name: "{userdesktop}\Melofinds PC"; Filename: "{app}\MelofindsPC.exe"; Comment: 
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "MelofindsPC"; ValueData: """{app}\MelofindsPC.exe"" --background"; Flags: uninsdeletevalue
 
 [Run]
+; Icônes des raccourcis et de la barre des tâches : cache de Windows rafraîchi (sinon l'ancien logo reste)
+Filename: "{sys}\ie4uinit.exe"; Parameters: "-show"; Flags: runhidden skipifdoesntexist waituntilterminated
 ; Réglages choisis dans l'installateur (dossier des prods, code du téléphone) : pas en mise à jour silencieuse.
 Filename: "{app}\MelofindsPC.exe"; Parameters: "--configure --dossier ""{code:BeatsDir}"" {code:PairArg}"; Flags: runhidden waituntilterminated; StatusMsg: "Réglages…"; Check: not WizardSilent
 ; La remise en ligne est faite dans DeinitializeSetup (même si l'installation échoue).
