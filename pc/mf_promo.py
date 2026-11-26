@@ -55,6 +55,9 @@ POSITIONS = {"centre": (5, 0), "bas": (2, 430), "haut": (8, 360)}
 HALLU = re.compile(r"amara\.org|sous-titr|merci d'avoir regard|abonnez-vous|n'oubliez pas de vous abonner|"
                    r"thanks for watching|subtitles by", re.I)
 PROMPT = "Paroles d'un morceau de rap français, avec de l'argot."
+# Whisper (alignement DTW) date les mots en retard : mesuré mot par mot sur une voix aux moments
+# connus, posée sur un beat (CI Windows) : 0,09 à 0,30 s, 0,17 s en moyenne, jamais en avance.
+DTW_SHIFT = 0.14
 
 
 class PromoError(Exception):
@@ -516,6 +519,9 @@ def transcribe(audio, start=0.0, dur=None, vocals=None, progress=None, lang="fr"
             if e <= 0 or s >= dur:
                 continue
             words.append({"w": w["w"], "s": round(max(0.0, s), 2), "e": round(min(dur, e), 2), "g": w.get("g", 0)})
+        if dtw:  # retard de Whisper corrigé (les mots restent dans l'ordre)
+            for w in words:
+                w["s"] = round(max(0.0, w["s"] - DTW_SHIFT), 2)
         if how != "mix" and snap:  # voix seule : chaque mot recalé sur l'attaque réelle de la voix
             say("Calage des mots sur ta voix…", None)
             words = snap_words(words, voice, off + pad, dur)
@@ -546,7 +552,7 @@ def _voice_env(voice, off, dur):
     return env
 
 
-def snap_words(words, voice, off, dur, reach=0.22):
+def snap_words(words, voice, off, dur, reach=0.12):
     """Recale les mots sur les attaques de la voix seule (montées d'énergie). Mise en
     correspondance globale dans l'ordre (programmation dynamique) : chaque mot prend une attaque
     différente, la plus proche de son moment Whisper (±reach s) ; sinon il garde ce moment."""
