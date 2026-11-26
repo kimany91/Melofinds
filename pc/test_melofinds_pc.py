@@ -731,6 +731,8 @@ class Reconnexion(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp(prefix="mf-reco-"))
         mpc.P.set(self.d)
+        mpc._ntfy.update(day="", n=0, blocked=0.0)  # compteur de ntfy.sh remis à zéro (état du module)
+        mpc.LOCAL_CODES.clear()
         self.cfg = {"dossier": str(self.d / "Prods"), "devices": [{"id": "d1", "name": "Tel", "code": self.CODE, "cle": "b" * 64}],
                     "flmake": {"on": False, "dossier": str(self.d / "Projets")}}
         mpc.save_config(self.cfg)
@@ -841,6 +843,7 @@ class EcouteEtGestionDepuisLApp(unittest.TestCase):
     CODE = "melofinds-" + "c" * 32
 
     def setUp(self):
+        mpc._ntfy.update(day="", n=0, blocked=0.0)  # compteur de ntfy.sh remis à zéro
         self.d = Path(tempfile.mkdtemp(prefix="mf-remote-"))
         mpc.P.set(self.d / "prog")
         self.root = self.d / "Projets FL"
@@ -1494,6 +1497,49 @@ class LimiteNtfy(unittest.TestCase):
         self.assertEqual(single, [])
         self.assertGreaterEqual(calls[1][1], now)  # le tour suivant repart du dernier envoi
         self.assertEqual(sum(1 for r in self.replies if r.get("pong") == "9" * 16), 1)  # traité une seule fois
+
+    def test_site_dans_le_logiciel_sans_internet(self):
+        """ntfy.sh refuse tout (limite) : la prod envoyée depuis le site du logiciel arrive quand même
+        au programme en ligne (boîte locale), et sa réponse revient au site (boîte locale)."""
+        import urllib.error
+        msg = {"mf": 2, "n": "7" * 16, "ping": 1}
+        mpc.inbox_put(self.CODE, json.dumps(msg))
+
+        def many(codes, since):
+            raise urllib.error.HTTPError("u", 429, "Too Many Requests", {}, None)
+        real_reply = mpc.reply.__wrapped__ if hasattr(mpc.reply, "__wrapped__") else None
+        self.patches[-1].stop()  # vraie fonction reply (elle écrit la boîte locale), réseau coupé
+        try:
+            with mock.patch.object(mpc, "poll_many", many), mock.patch.object(mpc, "http_post", lambda *a, **k: (_ for _ in ()).throw(urllib.error.HTTPError("u", 429, "x", {}, None))), \
+                    mock.patch.object(mpc, "verify", lambda raw, key: json.loads(raw)), mock.patch.object(W, "_sleep", lambda s: None):
+                W.worker(once=True)
+        finally:
+            self.patches[-1].start()
+        out = mpc.outbox_take()
+        pongs = [json.loads(o["message"]) for o in out if o["code"] == self.CODE]
+        self.assertTrue(any(p.get("pong") == "7" * 16 for p in pongs))
+        self.assertEqual(list(mpc.P.inbox.glob("*.json")), [])
+        self.assertFalse(mpc.ntfy_room())  # ntfy.sh a dit « trop » : rien d'automatique pendant 10 min
+
+    def test_boite_locale_protegee(self):
+        with self.assertRaises(ValueError):
+            mpc.inbox_put("pas-un-code", "x")
+        with self.assertRaises(ValueError):
+            mpc.inbox_put(self.CODE, "x" * 30_000)
+        import mf_promo as PM
+        with self.assertRaises(PM.PromoError):
+            PM.Service().call("send", {"code": "melofinds-" + "f" * 32, "body": "{}"}, lambda *a: None)
+        with mock.patch("mf_install.worker_running", lambda: True):
+            self.assertEqual(PM.Service().call("send", {"code": self.CODE, "body": "{}"}, lambda *a: None), {"online": True})
+
+    def test_budget_du_jour(self):
+        mpc._ntfy.update(day="", n=0, blocked=0.0)
+        for _ in range(mpc.NTFY_AUTO_MAX):
+            mpc.ntfy_note()
+        self.assertFalse(mpc.ntfy_room())  # automatique : stop
+        self.assertTrue(mpc.ntfy_room(auto=False))  # l'essentiel passe toujours
+        mpc._ntfy.update(day="")
+        self.assertFalse(mpc.ntfy_room())  # relu du fichier (redémarrage)
 
     def test_requete_multi_sujets(self):
         got = {}

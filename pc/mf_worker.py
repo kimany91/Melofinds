@@ -40,7 +40,7 @@ def _sleep(seconds):
     """Attend, mais réagit tout de suite à une demande d'arrêt."""
     end = time.time() + seconds
     while time.time() < end:
-        if P.stop.exists() or P.kick.exists():
+        if P.stop.exists() or P.kick.exists() or C.inbox_waiting():  # un envoi du site dans le logiciel : tout de suite
             return
         time.sleep(0.5)
 
@@ -630,6 +630,8 @@ class Remote:
         """Renvoie "ok", "budget" (limite ntfy.sh : à refaire plus tard) ou "error"."""
         meta = {"aud": f["id"], "p": it.id, "n": f["name"][:140], "v": f["label"], "m": int(f["mtime"])}
         reserve = self.LIB_RESERVE if auto else 0  # la synchro laisse toujours de la place à la liste
+        if auto and not C.ntfy_room():  # assez d'envois aujourd'hui : la synchro reprend demain
+            return "budget"
         if not self._budget(1_000_000 + reserve):
             if not auto:
                 C.reply(code, {"aud": f["id"], "err": "limite d'envoi atteinte (ntfy.sh) : réessaie dans un moment"})
@@ -818,7 +820,7 @@ class Remote:
             # à chaque changement : seulement aux appareils utilisés depuis 30 min (les autres la
             # demandent en ouvrant l'onglet PC) ; ntfy.sh limite les envois par jour
             active = now - self.active.get(code, 0) < 1800 or recently_used(st, code, 1800)
-            if not (code in self.want or (changed and active and (final or now - self.sent_at.get(code, 0) > 180))):
+            if not (code in self.want or (changed and active and C.ntfy_room() and (final or now - self.sent_at.get(code, 0) > 180))):
                 continue
             if C.publish_attachment(code, body, "projets.json", {"lib": 1, "n": len(lib["projects"]), "at": lib["at"]}):
                 self.sig[code], self.sent_at[code] = sig, now
@@ -1028,9 +1030,10 @@ def worker(once=False):
                     pass
                 for d in C.load_config()["devices"]:
                     remote.want.add(d["code"])
-            if time.time() - last_cycle > 180:  # retour de veille : on se réannonce
+            # retour de veille : on se réannonce. Mesuré pendant l'attente seulement (un long
+            # téléchargement n'est pas une veille : sinon on renvoyait tout à tous les appareils)
+            if time.time() - last_cycle > 180 + C.POLL_SECONDS:
                 announced.clear()
-            last_cycle = time.time()
             try:
                 cfg = C.load_config()  # relu à chaque tour : dossier et appareils modifiables à chaud
                 devices = cfg["devices"]
@@ -1048,7 +1051,7 @@ def worker(once=False):
                 if time.time() - last_alive > 3000:
                     last_alive = time.time()
                     for d in devices:  # seulement aux appareils utilisés ces 3 derniers jours (limite d'envois)
-                        if recently_used(st, d["code"], 3 * 86400):
+                        if recently_used(st, d["code"], 3 * 86400) and C.ntfy_room():
                             C.reply(d["code"], {"pc": "alive", "version": C.VERSION})
                 if time.time() - last_maint > 6 * 3600 and not once:  # mises à jour : toutes les 6 h
                     last_maint = time.time()
@@ -1077,10 +1080,11 @@ def worker(once=False):
                     else:
                         announced.clear()  # se réannoncer quand le réseau revient
                     events_all, complete = None, False
+                local = C.inbox_take()  # envois du site dans le logiciel : marchent même sans internet
                 by_topic = {}
-                for ev in events_all or []:
+                for ev in (events_all or []) + local:
                     by_topic.setdefault(ev.get("topic"), []).append(ev)
-                for d in sorted(devices if events_all is not None else [], key=lambda x: x["code"] in st["since"]):
+                for d in sorted(devices if events_all is not None or local else [], key=lambda x: x["code"] in st["since"]):
                     code, key = d["code"], d["cle"]
                     events = by_topic.get(code, [])
                     msgs = [(ev, C.verify(ev.get("message") or "", key)) for ev in events]
@@ -1088,7 +1092,8 @@ def worker(once=False):
                     note_cancels(cancels, msgs)
                     peeked = time.time()
                     for n, (ev, msg) in enumerate(msgs):
-                        st["since"][code] = ev.get("id") or st["since"].get(code)
+                        if not ev.get("local"):
+                            st["since"][code] = ev.get("id") or st["since"].get(code)
                         if not msg:
                             log(f"Envoi ignoré (« {d.get('name', '?')} ») : signature absente ou fausse.")
                             continue
@@ -1127,7 +1132,7 @@ def worker(once=False):
                         if P.stop.exists():
                             complete = False
                             break
-                if complete and events_all:  # tout traité : la prochaine requête part du dernier envoi
+                if complete and events_all:  # tout traité : la prochaine requête part du dernier envoi (ntfy.sh)
                     st["since_all"] = max(int(st.get("since_all") or 0), int(events_all[-1].get("time") or 0))
                 elif complete and not st.get("since_all"):
                     st["since_all"] = since_all
@@ -1149,6 +1154,7 @@ def worker(once=False):
                 break
             # un téléphone vient d'envoyer une commande (écoute sur le PC…) : réponse plus rapide
             busy = any(time.time() - t < 180 for t in remote.active.values())
+            last_cycle = time.time()
             _sleep(min(C.POLL_SECONDS, 8) if busy else C.POLL_SECONDS)
     finally:
         if reason not in ("update", "shutdown"):  # mise à jour : le nouveau programme se réannonce tout de suite

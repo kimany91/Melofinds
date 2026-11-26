@@ -4446,89 +4446,94 @@ async function ntfyPublish(payload) {
   // Corps en texte brut, sans en-tête spécial : pas de requête préalable CORS.
   // Signé une fois : un envoi répété garde le même numéro, le PC ne le traite qu'une fois.
   const body = await signed(payload);
+  // Site affiché dans Melofinds PC : directement au programme du PC, sans internet ni limite
+  const br = typeof window.mfPc === 'object' && window.mfPc;
+  if (br) {
+    try { const r = await br.call('send', { code: pcCode(), body }); pcLocal.at = Date.now(); pcLocal.online = !!r?.online; return; } catch { /* repli : ntfy.sh */ }
+  }
   let last = null;
   for (const wait of [0, 1500, 6000]) {  // coupure d'une seconde, ou ntfy.sh qui demande de ralentir (429)
     if (wait) await new Promise((r) => setTimeout(r, wait));
     let res;
     try { res = await fetch(`${NTFY}/${pcCode()}`, { method: 'POST', body }); } catch { last = Object.assign(new Error('network'), { net: true }); continue; }
     if (res.ok) return;
-    last = Object.assign(new Error(`ntfy ${res.status}`), { limit: res.status === 429 });
+    last = Object.assign(new Error(`ntfy ${res.status}`), { limit: res.status === 429, status: res.status });
     if (res.status !== 429 && res.status < 500) break;
   }
   throw last;
 }
 // Message d'erreur d'envoi au PC : vraie coupure, ou limite du relais gratuit ntfy.sh
 const NTFY_LIMIT_MSG = 'ntfy.sh (le relais gratuit entre le site et ton PC) limite les envois depuis ta connexion : réessaie dans une minute';
-function netMsg(e) { return e?.limit ? NTFY_LIMIT_MSG : 'Pas de réseau'; }
+function netMsg(e) { return e?.limit ? NTFY_LIMIT_MSG : e?.status ? `ntfy.sh a refusé l’envoi (erreur ${e.status}) : réessaie dans un moment` : 'Pas de réseau'; }
+const pcLocal = { at: 0, online: false };  // dernier envoi direct au PC (site dans le logiciel)
 
+// Message du PC (ntfy.sh, ou boîte locale quand le site est dans le logiciel)
+function handlePcMsg(d) {
+  if (d?.event && d.event !== 'message') return;
+  let m;
+  try { m = JSON.parse(d.message || '{}'); } catch { return; }
+  if (!m || typeof m !== 'object') return;
+  const fresh = (d.time || 0) * 1000 > Date.now() - 90e3;
+  if (onPcViewMessage(d, m, fresh)) return;
+  if (m.update) {
+    if (fresh) {
+      if (m.update === 'none') toast(`Ton PC est déjà à jour (version ${String(m.version || '')})`);
+      else if (m.update === 'start') toast(`Ton PC installe la version ${String(m.version || '')}…`);
+      else toast(`Mise à jour impossible : ${String(m.err || '').slice(0, 80)}`);
+    }
+    return;
+  }
+  if (m.pc === 'online' || m.pc === 'alive' || m.pc === 'offline' || m.pong) {
+    const at = (d.time || 0) * 1000;
+    if (at >= (pc.info?.at || 0)) {
+      pc.info = { ...(pc.info || {}), at, offline: m.pc === 'offline', why: m.pc === 'offline' ? String(m.why || '').slice(0, 20) : '', version: String(m.version || pc.info?.version || ''), dossier: String(m.dossier || pc.info?.dossier || ''), name: String(m.name || pc.info?.name || '') };
+      local.set('pcInfo', pc.info);
+    }
+    if (m.pong && pc.onPong) pc.onPong(m);
+    if (m.pong || m.pc === 'online' || m.pc === 'alive') pcPairDone();
+    // Le PC vient de se rallumer : on renvoie ce qui a pu expirer pendant qu'il était éteint.
+    if (m.pc === 'online' && fresh) { setTimeout(resendPending, 15e3); setTimeout(() => pcSync(true), 20e3); }
+    syncPcUi();
+    return;
+  }
+  const id = String(m.v || '');
+  if (!/^[\w-]{11}$/.test(id)) return;
+  if (m.cancel) {  // le PC a bien sauté la prod annulée
+    if (pc.queue[id] && pc.queue[id].state !== 'done' && (pc.queue[id].lastSent || 0) <= (d.time || 0) * 1000 + 5000) { delete pc.queue[id]; savePc(); syncPcUi(); }
+    return;
+  }
+  const cur = pc.queue[id] || { t: id, at: (d.time || 0) * 1000 };
+  // Réponse à un envoi plus ancien (relue au rechargement de la page) : on l'ignore,
+  // sinon une vieille réponse « téléchargée » validerait un nouvel envoi pas encore fait.
+  if (cur.lastSent && (d.time || 0) * 1000 < cur.lastSent - 5000) return;
+  if (cur.state === 'done' && !m.ok) return;
+  const was = cur.state;
+  // Ce que le PC a trouvé sur Tunebat (affiché en bleu dans l'app)
+  if (m.ok && m.tb && typeof m.tb === 'object') {
+    const bpm = Number(m.tb.bpm) >= 50 && Number(m.tb.bpm) <= 220 ? Math.round(Number(m.tb.bpm)) : null;
+    const key = /^[A-G][#b]? (min|maj)$/.test(String(m.tb.key || '')) ? String(m.tb.key) : null;
+    if (bpm || key) {
+      tbStore(id, { ...(tbFor(id) || {}), ...(bpm ? { bpm } : {}), ...(key ? { key } : {}), at: Date.now() });
+      const it = session?.items?.get(id);
+      if (it) refreshItem(it);
+    }
+  }
+  pc.queue[id] = { ...cur, state: m.ok ? 'done' : 'error', file: m.file ? String(m.file) : cur.file, err: m.err ? String(m.err) : null, ...(m.lic ? { lic: String(m.lic) } : {}) };
+  if (pc.cur?.v === id) pc.cur = null;
+  pc.info = { ...(pc.info || {}), at: Math.max(pc.info?.at || 0, (d.time || 0) * 1000) };
+  local.set('pcInfo', pc.info);
+  savePc();
+  syncPcUi();
+  if (fresh && was !== pc.queue[id].state) {
+    toast(m.ok ? (m.deja ? `Déjà sur ton PC : ${String(m.file || displayTitle(cur.t)).slice(0, 80)}` : m.lic === 'fnp' ? `Sur ton PC : ${displayTitle(cur.t)} · le PC a lu toute la description : pas libre pour Spotify, rangée en [F]` : `Sur ton PC : ${displayTitle(cur.t)}`)
+      : `Le PC n’a pas pu télécharger : ${String(m.err || '').slice(0, 80)}`);
+  }}
 function listenPc() {
   if (!WEB || pc.es || typeof EventSource === 'undefined') return;
   const since = Math.floor((Date.now() - 12 * 3600e3) / 1000);
   const es = new EventSource(`${NTFY}/${pcCode()}-ok/sse?since=${since}`);
   pc.es = es;
-  es.onmessage = (e) => {
-    let d;
-    try { d = JSON.parse(e.data); } catch { return; }
-    if (d?.event && d.event !== 'message') return;
-    let m;
-    try { m = JSON.parse(d.message || '{}'); } catch { return; }
-    if (!m || typeof m !== 'object') return;
-    const fresh = (d.time || 0) * 1000 > Date.now() - 90e3;
-    if (onPcViewMessage(d, m, fresh)) return;
-    if (m.update) {
-      if (fresh) {
-        if (m.update === 'none') toast(`Ton PC est déjà à jour (version ${String(m.version || '')})`);
-        else if (m.update === 'start') toast(`Ton PC installe la version ${String(m.version || '')}…`);
-        else toast(`Mise à jour impossible : ${String(m.err || '').slice(0, 80)}`);
-      }
-      return;
-    }
-    if (m.pc === 'online' || m.pc === 'alive' || m.pc === 'offline' || m.pong) {
-      const at = (d.time || 0) * 1000;
-      if (at >= (pc.info?.at || 0)) {
-        pc.info = { ...(pc.info || {}), at, offline: m.pc === 'offline', why: m.pc === 'offline' ? String(m.why || '').slice(0, 20) : '', version: String(m.version || pc.info?.version || ''), dossier: String(m.dossier || pc.info?.dossier || ''), name: String(m.name || pc.info?.name || '') };
-        local.set('pcInfo', pc.info);
-      }
-      if (m.pong && pc.onPong) pc.onPong(m);
-      if (m.pong || m.pc === 'online' || m.pc === 'alive') pcPairDone();
-      // Le PC vient de se rallumer : on renvoie ce qui a pu expirer pendant qu'il était éteint.
-      if (m.pc === 'online' && fresh) { setTimeout(resendPending, 15e3); setTimeout(() => pcSync(true), 20e3); }
-      syncPcUi();
-      return;
-    }
-    const id = String(m.v || '');
-    if (!/^[\w-]{11}$/.test(id)) return;
-    if (m.cancel) {  // le PC a bien sauté la prod annulée
-      if (pc.queue[id] && pc.queue[id].state !== 'done' && (pc.queue[id].lastSent || 0) <= (d.time || 0) * 1000 + 5000) { delete pc.queue[id]; savePc(); syncPcUi(); }
-      return;
-    }
-    const cur = pc.queue[id] || { t: id, at: (d.time || 0) * 1000 };
-    // Réponse à un envoi plus ancien (relue au rechargement de la page) : on l'ignore,
-    // sinon une vieille réponse « téléchargée » validerait un nouvel envoi pas encore fait.
-    if (cur.lastSent && (d.time || 0) * 1000 < cur.lastSent - 5000) return;
-    if (cur.state === 'done' && !m.ok) return;
-    const was = cur.state;
-    // Ce que le PC a trouvé sur Tunebat (affiché en bleu dans l'app)
-    if (m.ok && m.tb && typeof m.tb === 'object') {
-      const bpm = Number(m.tb.bpm) >= 50 && Number(m.tb.bpm) <= 220 ? Math.round(Number(m.tb.bpm)) : null;
-      const key = /^[A-G][#b]? (min|maj)$/.test(String(m.tb.key || '')) ? String(m.tb.key) : null;
-      if (bpm || key) {
-        tbStore(id, { ...(tbFor(id) || {}), ...(bpm ? { bpm } : {}), ...(key ? { key } : {}), at: Date.now() });
-        const it = session?.items?.get(id);
-        if (it) refreshItem(it);
-      }
-    }
-    pc.queue[id] = { ...cur, state: m.ok ? 'done' : 'error', file: m.file ? String(m.file) : cur.file, err: m.err ? String(m.err) : null, ...(m.lic ? { lic: String(m.lic) } : {}) };
-    if (pc.cur?.v === id) pc.cur = null;
-    pc.info = { ...(pc.info || {}), at: Math.max(pc.info?.at || 0, (d.time || 0) * 1000) };
-    local.set('pcInfo', pc.info);
-    savePc();
-    syncPcUi();
-    if (fresh && was !== pc.queue[id].state) {
-      toast(m.ok ? (m.deja ? `Déjà sur ton PC : ${String(m.file || displayTitle(cur.t)).slice(0, 80)}` : m.lic === 'fnp' ? `Sur ton PC : ${displayTitle(cur.t)} · le PC a lu toute la description : pas libre pour Spotify, rangée en [F]` : `Sur ton PC : ${displayTitle(cur.t)}`)
-        : `Le PC n’a pas pu télécharger : ${String(m.err || '').slice(0, 80)}`);
-    }
-  };
+  es.onmessage = (e) => { let d; try { d = JSON.parse(e.data); } catch { return; } handlePcMsg(d); };
   es.onerror = () => { /* EventSource se reconnecte tout seul */ };
 }
 
@@ -4590,10 +4595,13 @@ async function sendToPc(item) {
     await ntfyPublish(msg);
     pc.queue[id].state = 'sent';
     pc.queue[id].lastSent = Date.now();
-    toast(pcOn() ? 'Envoyée à ton PC' : 'Ton PC est éteint : la prod est en file d’attente, elle arrivera dès qu’il se rallume');
+    const direct = Date.now() - pcLocal.at < 3000;
+    toast(direct ? (pcLocal.online ? 'Envoyée à ton PC' : 'Envoyée : elle arrive dès que Melofinds PC est en ligne')
+      : pcOn() ? 'Envoyée à ton PC' : 'Ton PC est éteint : la prod est en file d’attente, elle arrivera dès qu’il se rallume');
   } catch (e) {
     pc.queue[id].state = 'unsent';
     toast(e?.limit ? 'ntfy.sh (le relais gratuit entre le site et ton PC) limite les envois depuis ta connexion : la prod repartira toute seule dans 1 à 2 minutes'
+      : e?.status ? `ntfy.sh a refusé l’envoi (erreur ${e.status}) : la prod repartira toute seule`
       : 'Pas de réseau : la prod partira toute seule dès que tu en auras');
     setTimeout(resendPending, e?.limit ? 90e3 : 30e3);
   }
@@ -5608,6 +5616,7 @@ function promoInit() {
     if (e?.type === 'progress' && promo.job && e.cmd === promo.job.cmd) { promo.job.text = e.text || promo.job.text; promo.job.pct = e.pct; renderPromoJob(); }
     if (e?.type === 'open' && e.view) showView(e.view);
     if (e?.type === 'ig-url') { promo.igUrl = e.url || null; renderPromoVisual(); }
+    if (e?.type === 'pc-msg' && e.code === pcCode() && typeof e.message === 'string') handlePcMsg({ event: 'message', time: e.time || Math.floor(Date.now() / 1000), message: e.message });
   });
   b.call('hello').then((r) => {
     promo.hello = r;

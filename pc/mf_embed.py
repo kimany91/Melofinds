@@ -451,6 +451,16 @@ class Bridge:
         self.call("Page.addScriptToEvaluateOnNewDocument", {"source": SHIM})
         self.call("Fetch.enable", {"patterns": [{"urlPattern": "*__mfpc/*", "requestStage": "Request"}]})
         self.call("Runtime.evaluate", {"expression": SHIM})
+        threading.Thread(target=self._outbox, daemon=True).start()
+
+    def _outbox(self):
+        """Réponses du programme en ligne à ce site (prod reçue, clé / BPM…) : tout de suite, sans internet."""
+        while self.alive:
+            for d in C.outbox_take():
+                if time.time() - float(d.get("time") or 0) > 600:  # réponse ancienne (logiciel fermé) : ignorée
+                    continue
+                self.event({"type": "pc-msg", "code": d.get("code"), "message": d.get("message"), "time": d.get("time")})
+            time.sleep(0.4)
 
     def send(self, method, params=None):
         with self.lock:

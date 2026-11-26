@@ -33,7 +33,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-VERSION = "1.26.1"
+VERSION = "1.26.2"
 REPO = "kimany91/Melofinds"
 RELEASES = f"https://github.com/{REPO}/releases"
 MANIFEST_URL = f"{RELEASES}/latest/download/version.json"
@@ -97,6 +97,8 @@ class Paths:
         self.kick = b / "kick"  # le panneau a changé un projet : le programme en ligne prévient l'app tout de suite
         self.listen = b / "listen.json"  # prod jouée sur le PC depuis le téléphone (affichée par le panneau)
         self.listen_cmd = b / "listen-cmd.json"  # boutons de la barre d'écoute du panneau
+        # le site dans la fenêtre du logiciel ↔ le programme en ligne, sans internet (boîtes locales)
+        self.inbox, self.outbox = b / "inbox", b / "outbox"
         return self
 
 
@@ -828,12 +830,126 @@ def http_post(url, data, timeout=15):
         return res.read()
 
 
+# Le site affiché DANS le logiciel envoie ses prods par une boîte locale (pas par internet) :
+# les réponses à ces appareils partent aussi par une boîte locale (lue par le logiciel).
+LOCAL_CODES = set()
+INBOX_MAX = 20_000
+
+
+def inbox_put(code, body):
+    """Envoi signé du site (fenêtre du logiciel) → boîte du programme en ligne. Renvoie le fichier."""
+    if not CODE_RE.match(str(code or "")) or not isinstance(body, str) or not body or len(body) > INBOX_MAX:
+        raise ValueError("envoi refusé")
+    P.inbox.mkdir(parents=True, exist_ok=True)
+    f = P.inbox / f"{time.time():.6f}-{secrets.token_hex(4)}.json"
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"code": code, "message": body, "time": int(time.time())}), encoding="utf-8")
+    tmp.replace(f)
+    return f
+
+
+def inbox_take():
+    """Envois arrivés par la boîte locale → évènements comme ceux de ntfy.sh (fichiers effacés)."""
+    out = []
+    try:
+        files = sorted(P.inbox.glob("*.json"))
+    except OSError:
+        return out
+    for f in files[:50]:
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            f.unlink()
+        except (OSError, ValueError):
+            continue
+        if isinstance(d, dict) and CODE_RE.match(str(d.get("code") or "")) and isinstance(d.get("message"), str):
+            LOCAL_CODES.add(d["code"])
+            out.append({"id": f"local-{f.stem}", "time": int(d.get("time") or time.time()), "event": "message",
+                        "topic": d["code"], "message": d["message"][:INBOX_MAX], "local": True})
+    return out
+
+
+def inbox_waiting():
+    try:
+        return any(P.inbox.glob("*.json"))
+    except OSError:
+        return False
+
+
+def outbox_put(code, payload):
+    try:
+        P.outbox.mkdir(parents=True, exist_ok=True)
+        if sum(1 for _ in P.outbox.glob("*.json")) > 300:  # logiciel fermé longtemps : on n'entasse pas
+            return
+        f = P.outbox / f"{time.time():.6f}-{secrets.token_hex(4)}.json"
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"code": code, "message": json.dumps(payload, ensure_ascii=False), "time": int(time.time())},
+                                  ensure_ascii=False), encoding="utf-8")
+        tmp.replace(f)
+    except OSError:
+        pass
+
+
+def outbox_take():
+    out = []
+    try:
+        files = sorted(P.outbox.glob("*.json"))
+    except OSError:
+        return out
+    for f in files[:100]:
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            f.unlink()
+        except (OSError, ValueError):
+            continue
+        if isinstance(d, dict):
+            out.append(d)
+    return out
+
+
+# Envois à ntfy.sh comptés par jour (il limite les envois par connexion internet) : les envois
+# automatiques (synchro du téléphone, liste des projets, signes de vie) s'arrêtent bien avant la
+# limite, pour qu'il reste toujours de la place pour l'essentiel (prods, réponses à l'app).
+NTFY_AUTO_MAX = 120
+_ntfy = {"day": "", "n": 0, "blocked": 0.0}
+
+
+def _ntfy_load():
+    day = time.strftime("%Y-%m-%d")
+    if _ntfy["day"] != day:
+        d = _read_json(P.base / "ntfy-jour.json")
+        _ntfy.update(day=day, n=int(d.get("n") or 0) if d.get("day") == day else 0)
+    return _ntfy
+
+
+def ntfy_note(err=None):
+    st = _ntfy_load()
+    if err is not None:
+        if limited(err):
+            st["blocked"] = time.time() + 600  # ntfy.sh refuse : rien d'automatique pendant 10 min
+        return
+    st["n"] += 1
+    try:
+        _write_json(P.base / "ntfy-jour.json", {"day": st["day"], "n": st["n"]})
+    except OSError:
+        pass
+
+
+def ntfy_room(auto=True):
+    """Peut-on envoyer quelque chose d'automatique à ntfy.sh maintenant ?"""
+    st = _ntfy_load()
+    return time.time() >= st["blocked"] and (not auto or st["n"] < NTFY_AUTO_MAX)
+
+
 def reply(code, payload, timeout=15):
-    """Prévient l'app (sujet <code>-ok)."""
+    """Prévient l'app (sujet <code>-ok) ; le site dans le logiciel l'apprend aussi tout de suite (boîte locale)."""
+    if code in LOCAL_CODES:
+        outbox_put(code, payload)
     try:
         http_post(f"{NTFY}/{code}-ok", json.dumps(payload, ensure_ascii=False).encode("utf-8"), timeout=timeout)
+        ntfy_note()
         return True
     except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as e:
+        ntfy_note(e)
         log(f"Impossible de prévenir l'app : {e}" + (" (limite de ntfy.sh atteinte depuis ta connexion)" if limited(e) else ""))
         return False
 
@@ -899,8 +1015,10 @@ def publish_attachment(code, data, filename, meta, timeout=60):
         req = urllib.request.Request(f"{NTFY}/{code}-ok", data=data, headers=headers, method="PUT")
         with urllib.request.urlopen(req, timeout=timeout) as res:
             res.read()
+        ntfy_note()
         return True
     except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as e:
+        ntfy_note(e)
         log(f"Envoi d'un fichier à l'app impossible : {e}")
         return False
 

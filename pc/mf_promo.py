@@ -751,6 +751,13 @@ class Service:
                     "folder": str(promo_dir(cfg))}
         if cmd == "projects":
             return self.projects(cfg)
+        if cmd == "send":  # prod / commande du site : directement au programme en ligne, sans internet
+            code = str(args.get("code") or "")
+            if not any(d.get("code") == code for d in cfg.get("devices", [])):
+                raise PromoError("appareil inconnu de ce PC")
+            C.inbox_put(code, str(args.get("body") or ""))
+            import mf_install as I
+            return {"online": bool(I.worker_running())}
         if cmd == "pick":
             kind = "video" if args.get("kind") == "video" else "audio"
             p = self.ask_file(kind)
