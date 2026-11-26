@@ -731,8 +731,78 @@ def make_ass(lines, style="impact", pos="centre", scale=1.0):
     return "\n".join(head + ev) + "\n"
 
 
-def render(bg, audio, start, dur, lines, out, style="impact", pos="centre", scale=1.0, progress=None):
-    """Vidéo 1080x1920 : visuel (recadré, en boucle) + extrait du son + paroles incrustées."""
+SPEEDS = (0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
+
+
+def media_duration(path):
+    d = C.audio_seconds(path)
+    return round(d, 2) if d else None
+
+
+def clip_visual(bg, out, vstart=0.0, vlen=None, speed=1.0, w=W, h=H, fps=30, crf=18, total=None):
+    """La partie choisie du visuel (à partir de `vstart` s, `vlen` s du visuel, vitesse `speed`)
+    → clip propre en portrait w x h, images régulières, sans son : c'est lui qui tourne en boucle
+    derrière les paroles (horodatage remis à zéro : la vidéo défile toujours, jamais figée)."""
+    ffmpeg = C.tool_path("ffmpeg.exe")
+    if not ffmpeg:
+        raise PromoError("ffmpeg manquant")
+    speed = min(4.0, max(0.25, float(speed or 1.0)))
+    total = total if total is not None else (media_duration(bg) or 0.0)
+    vstart = max(0.0, float(vstart or 0.0))
+    if total:
+        vstart = min(vstart, max(0.0, total - 0.3))
+    span = float(vlen) if vlen else (total - vstart if total else 60.0)
+    span = max(0.3, min(180.0 * speed, span, (total - vstart) if total else span))
+    vf = (f"setpts=(PTS-STARTPTS)/{speed:.4f},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
+          f"setsar=1,fps={fps},format=yuv420p")
+    r = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{vstart:.3f}", "-t", f"{span:.3f}",
+                        "-i", str(bg), "-an", "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf), str(out)],
+                       capture_output=True, timeout=600, creationflags=C.NO_WINDOW, stdin=subprocess.DEVNULL)
+    if r.returncode != 0 or not Path(out).exists() or Path(out).stat().st_size < 500:
+        raise PromoError(f"visuel illisible : {C.last_line(r.stderr)}")
+    return Path(out), round(span / speed, 3)
+
+
+def preview_stream(clip, offset=0.0, fps=12):
+    """Images PNG du clip d'aperçu, au rythme réel et en boucle (pour l'aperçu qui bouge)."""
+    ffmpeg = C.tool_path("ffmpeg.exe")
+    if not ffmpeg:
+        return None
+    return subprocess.Popen([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-re", "-stream_loop", "-1",
+                             "-ss", f"{max(0.0, offset):.3f}", "-i", str(clip), "-vf", f"fps={fps}", "-f", "image2pipe",
+                             "-vcodec", "png", "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                            creationflags=C.NO_WINDOW)
+
+
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+
+
+def png_frames(f):
+    """Découpe un flux d'images PNG collées les unes aux autres (sortie de preview_stream)."""
+    while True:
+        sig = f.read(8)
+        if len(sig) < 8 or sig != PNG_SIG:
+            return
+        parts = [sig]
+        while True:
+            head = f.read(8)
+            if len(head) < 8:
+                return
+            n = int.from_bytes(head[:4], "big")
+            if n > 50_000_000:
+                return
+            body = f.read(n + 4)
+            if len(body) < n + 4:
+                return
+            parts += [head, body]
+            if head[4:8] == b"IEND":
+                break
+        yield b"".join(parts)
+
+
+def render(bg, audio, start, dur, lines, out, style="impact", pos="centre", scale=1.0, progress=None, visual=None):
+    """Vidéo 1080x1920 : visuel (la partie choisie, recadré, en boucle) + extrait du son + paroles incrustées.
+    visual : {"start": s dans la vidéo, "len": s utilisées (None : jusqu'à la fin), "speed": vitesse}."""
     say = progress or (lambda *_: None)
     ffmpeg = C.tool_path("ffmpeg.exe")
     if not ffmpeg:
@@ -750,11 +820,13 @@ def render(bg, audio, start, dur, lines, out, style="impact", pos="centre", scal
         for f in Path(fonts).glob("*.ttf"):
             shutil.copyfile(f, fd / f.name)
         part = tmp / "promo.mp4"
-        vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30,"
-              "ass=paroles.ass:fontsdir=fonts")
+        vis = visual or {}
+        say("Préparation du visuel…", None)
+        seg, _ = clip_visual(bg, tmp / "visuel.mp4", vis.get("start") or 0.0, vis.get("len"), vis.get("speed") or 1.0)
+        vf = "ass=paroles.ass:fontsdir=fonts"
         af = f"afade=t=in:d=0.03,afade=t=out:st={max(0.0, dur - 0.4):.2f}:d=0.4"
         cmd = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-progress", "pipe:1", "-nostats",
-               "-stream_loop", "-1", "-i", str(bg), "-ss", f"{float(start):.3f}", "-t", f"{dur:.3f}", "-i", str(audio),
+               "-stream_loop", "-1", "-i", str(seg), "-ss", f"{float(start):.3f}", "-t", f"{dur:.3f}", "-i", str(audio),
                "-map", "0:v:0", "-map", "1:a:0", "-vf", vf, "-af", af, "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-t", f"{dur:.3f}", "-movflags", "+faststart",
                str(part)]
@@ -1166,7 +1238,8 @@ class Service:
             bg = self.path_of(args.get("bg"), VIDEO_EXT)
             out = render(bg, audio, float(args.get("start") or 0), float(args.get("dur") or 15), args.get("lines") or [],
                          out_name(args.get("title") or audio.stem, cfg), str(args.get("style") or "impact"),
-                         str(args.get("pos") or "centre"), float(args.get("scale") or 1), progress)
+                         str(args.get("pos") or "centre"), float(args.get("scale") or 1), progress,
+                         visual={k: args["visual"].get(k) for k in ("start", "len", "speed")} if isinstance(args.get("visual"), dict) else None)
             return {**self.media(out), "path": str(out)}
         if cmd == "visuals":
             return [self._visual(v, cfg) for v in visuals(cfg)]

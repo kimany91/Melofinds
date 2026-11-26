@@ -6,6 +6,7 @@ tâches longues tournent en arrière-plan et rendent la main à Tk par une file 
 Tk depuis un autre fil).
 """
 
+import base64
 import queue
 import re
 import tempfile
@@ -72,7 +73,9 @@ def build(ctx):
           "vocals": None, "vocals_auto": False, "start": 0.0, "dur": 20, "lines": [], "words": [], "mode": cfg0.get("promo_mode", "court"), "quality": cfg0.get("promo_quality", PM.QUALITY), "visuals": None, "bg": None, "style": cfg0.get("promo_style", "impact"),
           "pos": cfg0.get("promo_pos", "centre"), "scale": float(cfg0.get("promo_scale", 1.0) or 1.0), "busy": None, "result": None,
           "ig_url": None, "accounts": list(cfg0.get("promo_accounts") or PM.ACCOUNTS), "tags": cfg0.get("promo_tags", DEFAULT_TAGS),
-          "keep": cfg0.get("promo_keep_tags", True), "frame": None, "playing": False, "cur": -1, "thumbs": {}, "fonts": False}
+          "keep": cfg0.get("promo_keep_tags", True), "frame": None, "playing": False, "cur": -1, "thumbs": {}, "fonts": False,
+          # partie du visuel : début dans la vidéo, durée utilisée (None : jusqu'à la fin), vitesse
+          "vis": {"start": 0.0, "len": None, "speed": 1.0}, "vdur": 0.0, "pclip": None, "vstream": None, "vimg": None}
     q = queue.Queue()
     tmpdir = Path(tempfile.mkdtemp(prefix="melofinds-promo-ui-"))
 
@@ -240,7 +243,8 @@ def build(ctx):
             draw_preview()
             return
         path = PM.visuals_dir() / st["bg"]["file"]
-        dest = tmpdir / f"frame-{abs(hash(str(path)))}.png"
+        at = float(st["vis"]["start"] or 0.0)
+        dest = tmpdir / f"frame-{abs(hash(str(path)))}-{int(at * 10)}.png"
 
         def done(p):
             try:
@@ -248,7 +252,7 @@ def build(ctx):
             except Exception:
                 st["frame"] = None
             draw_preview()
-        bg(lambda: dest if dest.exists() else PM.frame_png(path, dest), done)
+        bg(lambda: dest if dest.exists() else PM.frame_png(path, dest, at=at + 0.05), done)
 
     def toggle_play():
         if not st["audio"]:
@@ -262,11 +266,79 @@ def build(ctx):
             return
         st["playing"] = True
         play_btn.configure(text="❚❚  Pause")
+        start_video(0.0)
         tick_play()
+
+    # ---------- l'aperçu bouge : la partie choisie du visuel défile derrière les paroles
+    def vis_key():
+        v = st["vis"]
+        return (st["bg"]["file"], round(float(v["start"] or 0), 2), v["len"] and round(float(v["len"]), 2), float(v["speed"] or 1))
+
+    def start_video(t):
+        stop_video()
+        if not st["bg"]:
+            return
+        key, path, vis, total = vis_key(), PM.visuals_dir() / st["bg"]["file"], dict(st["vis"]), st["vdur"] or None
+        token = object()
+        st["vstream"] = {"token": token, "proc": None, "data": None, "n": 0, "shown": 0}
+
+        def run():
+            vs = st["vstream"]
+            try:
+                if not (st["pclip"] and st["pclip"][0] == key and Path(st["pclip"][1]).exists()):
+                    dest = tmpdir / f"apercu-{abs(hash(key))}.mp4"
+                    clip, length = PM.clip_visual(path, dest, vis["start"], vis["len"], vis["speed"], PREVIEW_W, PREVIEW_H,
+                                                  fps=15, crf=30, total=total)
+                    st["pclip"] = (key, clip, length)
+                _, clip, length = st["pclip"]
+                if not vs or vs["token"] is not token:
+                    return
+                proc = PM.preview_stream(clip, (t % length) if length else 0.0, fps=15)
+                if not proc:
+                    return
+                vs["proc"] = proc
+                for png in PM.png_frames(proc.stdout):
+                    if st["vstream"] is not vs:
+                        break
+                    vs["data"] = png
+                    vs["n"] += 1
+            except Exception as e:
+                C.log(f"Promo : aperçu du visuel impossible ({e})")
+            finally:
+                p = vs.get("proc") if vs else None
+                if p and p.poll() is None:
+                    p.kill()
+        threading.Thread(target=run, daemon=True).start()
+
+    def stop_video():
+        vs, st["vstream"] = st["vstream"], None
+        if vs and vs.get("proc") and vs["proc"].poll() is None:
+            try:
+                vs["proc"].kill()
+            except OSError:
+                pass
+        if st["vimg"] is not None:
+            st["vimg"] = None
+            draw_preview()
+
+    def show_video_frame():
+        vs = st["vstream"]
+        if not vs or vs["n"] == vs["shown"] or not vs["data"]:
+            return
+        vs["shown"] = vs["n"]
+        try:
+            st["vimg"] = tk.PhotoImage(data=base64.b64encode(vs["data"]).decode("ascii"))
+        except Exception:
+            return
+        prev.delete("vid")
+        prev.create_image(0, 0, image=st["vimg"], anchor="nw", tags="vid")
+        prev.tag_raise("sub")
+    ctx.on_close.append(stop_video)
 
     def stop_play():
         st["playing"] = False
         play_btn.configure(text="▶  Aperçu")
+        stop_video()
         if PLAYER.path and st["audio"] and PLAYER.is_(st["audio"]):
             PLAYER.stop()
 
@@ -280,6 +352,7 @@ def build(ctx):
             draw_sub()
             time_lbl.configure(text="")
             return
+        show_video_frame()
         i = next((n for n, ln in enumerate(st["lines"]) if ln["s"] <= t < ln["e"]), -1)
         if i != st["cur"]:
             st["cur"] = i
@@ -512,6 +585,7 @@ def build(ctx):
         if PLAYER.play_at(st["audio"], st["start"] + t):
             st["playing"] = True
             play_btn.configure(text="❚❚  Pause")
+            start_video(t)
             tick_play()
 
     def add_line():
@@ -538,6 +612,85 @@ def build(ctx):
         bg(lambda: PM.frame_png(src, dest, 72, 128), done)
         return None
 
+    def choose_visual(v):
+        if st["playing"]:
+            stop_play()
+        st.update(bg=v, result=None, vis={"start": 0.0, "len": None, "speed": 1.0}, vdur=0.0, pclip=None)
+        load_frame()
+        render_visuals()
+        render_out()
+        render_desc()
+        path = PM.visuals_dir() / v["file"]
+        bg(lambda: PM.media_duration(path) or 0.0,
+           lambda d: (st.update(vdur=d), render_visuals()) if st["bg"] is v else None)
+
+    def vis_changed(refresh_frame=False):
+        st["result"], st["pclip"] = None, None
+        if st["playing"]:  # pendant que tu bouges le curseur : l'aperçu repart une fois arrêté
+            if st.get("video_job"):
+                root.after_cancel(st["video_job"])
+            st["video_job"] = root.after(450, lambda: st["playing"] and start_video(max(0.0, PLAYER.position() / 1000 - st["start"])))
+        if refresh_frame:
+            if st.get("frame_job"):
+                root.after_cancel(st["frame_job"])
+            st["frame_job"] = root.after(250, load_frame)
+
+    def render_cut():
+        """Moment, durée et vitesse du visuel derrière les paroles."""
+        box = tk.Frame(s_vis, bg=PANEL2, padx=10, pady=8)
+        box.pack(fill="x", pady=(8, 0))
+        vd, v = st["vdur"], st["vis"]
+        label(box, "Partie du visuel", 10, FG, bold=True).pack(anchor="w")
+        if not vd:
+            label(box, "Lecture de la vidéo…", 9, MUTED).pack(anchor="w")
+            return
+        start_lbl = label(box, "", 9, FG, wrap=370)
+        start_lbl.pack(anchor="w", pady=(4, 0))
+        sc = tk.Scale(box, from_=0, to=max(0.1, vd - 0.3), orient="horizontal", resolution=0.1, showvalue=False,
+                      bg=PANEL2, troughcolor=PANEL3, highlightthickness=0, bd=0, sliderrelief="flat", activebackground=ACCENT)
+        sc.set(v["start"])
+        sc.pack(fill="x")
+        len_lbl = label(box, "", 9, FG, wrap=370)
+        len_lbl.pack(anchor="w", pady=(6, 0))
+        sl = tk.Scale(box, from_=0.5, to=max(0.6, vd), orient="horizontal", resolution=0.1, showvalue=False,
+                      bg=PANEL2, troughcolor=PANEL3, highlightthickness=0, bd=0, sliderrelief="flat", activebackground=ACCENT)
+        sl.set(v["len"] or vd)
+        sl.pack(fill="x")
+
+        def texts():
+            left_ = max(0.3, vd - v["start"])
+            used = min(v["len"] or left_, left_)
+            start_lbl.configure(text=f"Commence à {_mmss(v['start'])[:-2]} de la vidéo (sur {_mmss(vd)[:-2]})")
+            loop = used / (v["speed"] or 1)
+            len_lbl.configure(text=f"Durée utilisée : {used:.1f} s" + ("" if v["len"] else " (jusqu'à la fin)")
+                                   + (f" · tourne en boucle toutes les {loop:.1f} s" if loop < st["dur"] else ""))
+
+        def on_start(x):
+            x = float(x)
+            if abs(x - v["start"]) < 0.05:
+                return
+            v["start"] = x
+            texts()
+            vis_changed(refresh_frame=True)
+
+        def on_len(x):
+            x = float(x)
+            new = None if x >= vd - 0.05 else x
+            if new == v["len"]:
+                return
+            v["len"] = new
+            texts()
+            vis_changed()
+        sc.configure(command=on_start)
+        sl.configure(command=on_len)
+        texts()
+        sp = tk.Frame(box, bg=PANEL2)
+        sp.pack(anchor="w", pady=(6, 0))
+        label(sp, "Vitesse", 9, MUTED).pack(side="left", padx=(0, 8))
+        for k in PM.SPEEDS:
+            chip(sp, f"x{k:g}", lambda k=k: (v.update(speed=k), vis_changed(), render_visuals()), on=float(v["speed"]) == k).pack(side="left", padx=(0, 3))
+        label(box, "Lance l'aperçu pour voir la vidéo défiler derrière tes paroles.", 8, FAINT).pack(anchor="w", pady=(6, 0))
+
     def render_visuals():
         clear(s_vis)
         if st["ig_url"]:
@@ -562,8 +715,10 @@ def build(ctx):
             tk.Label(cell, text=(f"@{v['user']}" if v.get("user") else "Ma vidéo")[:12], bg=ACCENT if on else PANEL,
                      fg="#1b1204" if on else MUTED, font=(FONT, 7, "bold")).pack(fill="x")
             for w in (cell, pic):
-                w.bind("<Button-1>", lambda e, v=v: (st.update(bg=v, result=None), load_frame(), render_visuals(), render_out(), render_desc()))
+                w.bind("<Button-1>", lambda e, v=v: choose_visual(v))
                 w.bind("<Button-3>", lambda e, v=v: remove_visual(v))
+        if st["bg"]:
+            render_cut()
         row = tk.Frame(s_vis, bg=PANEL)
         row.pack(fill="x", pady=(8, 0))
         Btn(row, "Ma vidéo…", pick_video, padx=10, pady=4).pack(side="left")
@@ -662,6 +817,7 @@ def build(ctx):
         stop_play()
         audio, bgv = st["audio"], PM.visuals_dir() / st["bg"]["file"]
         args = (st["start"], st["dur"], lines, PM.out_name(st["title"] or audio.stem), st["style"], st["pos"], st["scale"])
+        vis = dict(st["vis"])
 
         heard = list(st["words"])
 
@@ -674,7 +830,7 @@ def build(ctx):
                     pass
             render_out()
             ctx.toast("Vidéo prête : dans le dossier Promo de tes projets")
-        bg(lambda: PM.render(bgv, audio, args[0], args[1], args[2], args[3], args[4], args[5], args[6], progress), done,
+        bg(lambda: PM.render(bgv, audio, args[0], args[1], args[2], args[3], args[4], args[5], args[6], progress, visual=vis), done,
            busy="Création de la vidéo…")
 
     def render_out():
@@ -753,6 +909,7 @@ def build(ctx):
     render_visuals()
     # (tests / captures : actions de la page)
     st["api"] = {"set_audio": set_audio, "render_all": render_all, "load_frame": load_frame, "draw_preview": draw_preview,
-                 "render_visuals": render_visuals, "norm": lambda: norm_lines(st["lines"], st["dur"])}
+                 "render_visuals": render_visuals, "norm": lambda: norm_lines(st["lines"], st["dur"]),
+                 "choose_visual": choose_visual, "start_video": start_video, "stop_video": stop_video, "show_frame": show_video_frame}
     ctx.root._promo = st
     return st

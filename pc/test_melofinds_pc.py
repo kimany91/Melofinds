@@ -1660,6 +1660,48 @@ class Promo(unittest.TestCase):
         self.assertEqual(len(PM.lexicon()), PM.LEX_MAX)  # gardé court : les plus récents
         self.assertIn(f"mot{PM.LEX_MAX + 19}x", PM.lexicon())
 
+    def test_images_png_decoupees(self):
+        import io
+        import struct
+        import zlib
+
+        def png(color):
+            raw = b"\x00" + bytes(color)
+            def ch(t, d):
+                return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+            return (self.PM.PNG_SIG + ch(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+                    + ch(b"IDAT", zlib.compress(raw)) + ch(b"IEND", b""))
+        a, b = png((255, 0, 0)), png((0, 0, 255))
+        self.assertEqual(list(self.PM.png_frames(io.BytesIO(a + b + a[:20]))), [a, b])  # la dernière, coupée, est ignorée
+        self.assertEqual(list(self.PM.png_frames(io.BytesIO(b"pas une image"))), [])
+
+    def test_partie_du_visuel_qui_defile(self):
+        """Moment, durée et vitesse choisis : le clip commence au bon endroit, dure ce qu'il faut et bouge."""
+        PM = self.PM
+        ff = mpc.tool_path("ffmpeg.exe")
+        if not ff:
+            self.skipTest("ffmpeg absent")
+        import subprocess
+        src = self.d / "visuel.mp4"
+        subprocess.run([ff, "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x568:rate=30", "-t", "4",
+                        "-pix_fmt", "yuv420p", str(src)], check=True, timeout=120)
+        clip, length = PM.clip_visual(src, self.d / "part.mp4", 1.0, 2.0, 0.5, 108, 192, fps=15)
+        self.assertAlmostEqual(length, 4.0, places=2)  # 2 s de vidéo à vitesse x0,5
+        self.assertAlmostEqual(PM.media_duration(clip), 4.0, delta=0.15)
+        clip2, length2 = PM.clip_visual(src, self.d / "fin.mp4", 3.5, None, 2.0, 108, 192, fps=15)
+        self.assertAlmostEqual(length2, 0.25, places=2)  # jusqu'à la fin (0,5 s) à x2
+        frames = []
+        p = PM.preview_stream(clip, 1.0, fps=15)
+        for png in PM.png_frames(p.stdout):
+            frames.append(png)
+            if len(frames) >= 8:
+                break
+        p.kill()
+        self.assertEqual(len(frames), 8)
+        self.assertGreater(len(set(frames)), 4)  # l'aperçu bouge
+        with self.assertRaises(PM.PromoError):
+            PM.clip_visual(self.d / "absent.mp4", self.d / "x.mp4")
+
     def test_deux_moteurs(self):
         PM = self.PM
         self.assertEqual(PM.QUALITY, "precise")
