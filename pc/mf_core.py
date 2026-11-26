@@ -165,19 +165,40 @@ def log(msg):
         pass
 
 
+# Windows : un fichier lu au même moment par un autre fil ou programme (panneau, programme en
+# ligne, page Promo) refuse d'être remplacé ou lu (« accès refusé ») ; ça dure quelques ms.
+_BUSY_TRIES = 40
+
+
 def _read_json(path):
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    for i in range(_BUSY_TRIES):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except PermissionError:  # en cours de remplacement : jamais lu « vide » par erreur
+            time.sleep(0.05)
+        except (OSError, ValueError):
+            return {}
+    return {}
 
 
 def _write_json(path, data, private=False):
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(f".{os.getpid()}.tmp")  # panneau et programme en ligne : pas le même fichier
+    # un fichier temporaire par programme ET par fil (panneau, programme en ligne, page Promo)
+    tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    for i in range(_BUSY_TRIES):
+        try:
+            tmp.replace(path)
+            break
+        except PermissionError:
+            if i == _BUSY_TRIES - 1:
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+                raise
+            time.sleep(0.05)
     if private:
         try:
             os.chmod(path, 0o600)

@@ -236,9 +236,12 @@ class Panel:
             self._measure()
             self._bridge()
             if first:
-                cfg = C.load_config()
-                cfg["panel_paired"] = True
-                C.save_config(cfg)
+                try:
+                    cfg = C.load_config()
+                    cfg["panel_paired"] = True
+                    C.save_config(cfg)
+                except OSError as e:  # réglage non noté : la page sera simplement reliée de nouveau
+                    log(f"réglage non enregistré : {e}")
             self._set("ready")
         except Exception as e:
             self._set("error", str(e)[:200])

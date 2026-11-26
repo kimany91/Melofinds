@@ -1403,6 +1403,45 @@ class LicenceEtAnnulation(unittest.TestCase):
         self.assertEqual(got, ["jNQXAC9IVRw"])  # B annulée pendant le téléchargement de A
 
 
+class FichierOccupe(unittest.TestCase):
+    """Windows : config.json lu par un autre programme pendant qu'on le remplace (« accès refusé »)."""
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp(prefix="mf-occupe-"))
+        mpc.P.set(self.d)
+
+    def test_ecriture_reessayee(self):
+        cfg = mpc.load_config()
+        cfg["x"] = 1
+        real = Path.replace
+        n = {"fails": 0}
+
+        def flaky(self_, target):
+            if n["fails"] < 3:
+                n["fails"] += 1
+                raise PermissionError(5, "Access is denied")
+            return real(self_, target)
+        with mock.patch.object(Path, "replace", flaky), mock.patch.object(mpc.time, "sleep", lambda s: None):
+            mpc.save_config(cfg)
+        self.assertEqual(mpc.load_config()["x"], 1)
+        self.assertEqual(list(self.d.glob("*.tmp")), [])
+
+    def test_lecture_jamais_vide_par_erreur(self):
+        cfg = mpc.load_config()
+        cfg["devices"] = [{"id": "d1", "name": "Tel", "code": "melofinds-" + "a" * 32, "cle": "b" * 64}]
+        mpc.save_config(cfg)
+        real = Path.read_text
+        n = {"fails": 0}
+
+        def flaky(self_, *a, **k):
+            if self_.name == "config.json" and n["fails"] < 2:
+                n["fails"] += 1
+                raise PermissionError(13, "Permission denied")
+            return real(self_, *a, **k)
+        with mock.patch.object(Path, "read_text", flaky), mock.patch.object(mpc.time, "sleep", lambda s: None):
+            self.assertEqual(len(mpc.load_config()["devices"]), 1)
+
+
 class LimiteNtfy(unittest.TestCase):
     """ntfy.sh limite les requêtes et les envois par connexion internet : avec plusieurs
     appareils (téléphone, fenêtre Melofinds…), le PC ne doit pas la dépasser."""
